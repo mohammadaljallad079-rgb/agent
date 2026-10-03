@@ -58,10 +58,32 @@ durable and recoverable behind the existing ABCs, with no agent-core changes.
 - [x] Idempotent run creation via an idempotency key.
 - [x] Migrations (Alembic) and a documented schema; `docker-compose.yml` for
       local Postgres/Redis; a worker CLI (`worker/main.py`).
-- [ ] Structured, correlated logging (tenant/user/run ids) and metrics
-      (latency, tool error rate, retry rate, approval latency).
-- [ ] OpenTelemetry traces spanning API → agent loop → model → tool.
-- [ ] Health/readiness endpoints that check dependencies (DB, model, sinks).
+
+---
+
+## Phase 1b — Observability & hardening (done)
+
+Phase 1 made runs durable; this phase made them observable. Observability lives in
+its own dependency-light package (`observability/`) so the agent core depends on
+interfaces, never on a vendor SDK.
+
+- [x] Structured, correlated JSON logging: request/run/job/tenant/user/worker ids
+      bound through `ContextVar`s and injected into every log record; secret
+      values redacted in both messages and structured fields.
+- [x] In-process metrics registry (counters, gauges, histograms) with
+      Prometheus text exposition at `GET /metrics`: run latency and outcomes,
+      tool call/retry rates, model call/retry rates, job throughput and queue
+      depth, approval latency, rate-limit rejections, recovery counts.
+- [x] Tracing: `Tracer` + `span()` covering API → run → model → tool, with an
+      optional OpenTelemetry exporter used only when the SDK is installed and
+      `AAP_OTEL_ENABLED` is set.
+- [x] Readiness at `GET /readyz` probing the live dependencies (Postgres,
+      Redis, model route, audit sink); returns 503 when a critical dependency is
+      unreachable, while `/health` stays a liveness probe.
+- [x] Correlation middleware echoing/generating `X-Request-ID`.
+- [x] Test coverage: `tests/test_observability.py`,
+      `tests/test_readiness_integration.py`, plus API/worker instrumentation
+      assertions.
 
 ## Phase 2 — Model breadth
 
@@ -136,9 +158,9 @@ durable and recoverable behind the existing ABCs, with no agent-core changes.
 
 ## Known gaps / honest notes
 
-- Persistence is in-memory; restarting the process loses runs, approvals,
-  tasks, memory, and audit history. This is intentional for the foundation and
-  is the first thing Phase 1 fixes.
+- Persistence is in-memory *by default*; with `AAP_DATABASE_URL` set, runs,
+  approvals, tasks, memory and audit history are durable in Postgres. The
+  in-memory default remains for local/offline use and for the unit test suite.
 - Only one provider family (OpenAI-compatible) is implemented.
 - Only the tool set listed in Phase 0 exists; the rest are planned.
 - The desktop runtime and workflow engine are designed (interfaces exist) but

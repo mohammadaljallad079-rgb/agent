@@ -37,8 +37,11 @@ for later is listed in [`TODO.md`](TODO.md); nothing pretends to work.
 - ✅ Redis-backed distributed rate limiting, locking and idempotency
 - ✅ Reliable Redis job queue and a recoverable worker runtime (leases,
   heartbeats, bounded recovery after worker loss)
-- ⏳ Structured logging/metrics/tracing, desktop runtime, workflow triggers,
-  document and media tools, social/ERP connectors (see `TODO.md`)
+- ✅ Observability: correlated structured logs, Prometheus metrics at `/metrics`,
+  in-process tracing with an optional OpenTelemetry bridge, and a dependency-aware
+  readiness probe at `/readyz`
+- ⏳ Desktop runtime, workflow triggers, document and media tools,
+  social/ERP connectors (see `TODO.md`)
 
 ## Architecture
 
@@ -63,7 +66,9 @@ uv run agent-platform
 Health check:
 
 ```bash
-curl localhost:8000/health
+curl localhost:8000/health   # liveness: process is up
+curl localhost:8000/readyz   # readiness: DB/Redis/model/audit reachable (503 if not)
+curl localhost:8000/metrics  # Prometheus metrics
 ```
 
 ### Production (durable + queued)

@@ -31,6 +31,7 @@ class RunService:
     def __init__(self, platform: Platform, *, settings: Settings | None = None) -> None:
         self._platform = platform
         self._settings = settings or platform.settings
+        self._metrics = platform.metrics
         self._executor = RunExecutor(platform=platform, runs=platform.runs, settings=self._settings)
 
     async def start(
@@ -74,6 +75,7 @@ class RunService:
                 return existing
             raise
 
+        self._metrics.run_started(mode=self._settings.execution_mode)
         if self._settings.execution_mode == "queued":
             job = Job(
                 type=JobType.START_RUN,
@@ -82,6 +84,7 @@ class RunService:
                 user_id=record.user_id,
             )
             await self._platform.queue.enqueue(job)
+            self._metrics.job_enqueued(job_type=job.type.value)
             await self._platform.audit.record(
                 AuditEventType.JOB_ENQUEUED,
                 tenant_id=record.tenant_id,
@@ -152,6 +155,14 @@ class RunService:
             message=f"approval {resolved.status.value}",
             data={"approval_id": approval_id, "approved": approve},
         )
+        wait_seconds = (
+            max(0.0, (resolved.resolved_at - approval.created_at).total_seconds())
+            if resolved.resolved_at is not None
+            else None
+        )
+        self._metrics.approval_resolved(
+            decision="approved" if approve else "denied", wait_seconds=wait_seconds
+        )
 
         record = await self._platform.runs.get(resolved.run_id, tenant_id=principal.tenant_id)
         if not approve:
@@ -166,6 +177,7 @@ class RunService:
                 payload={"approval_id": approval_id},
             )
             await self._platform.queue.enqueue(job)
+            self._metrics.job_enqueued(job_type=job.type.value)
             return record
 
         await self._executor.execute_resume(

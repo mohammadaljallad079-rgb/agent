@@ -7,6 +7,8 @@ approval beats allow), records audit events, and returns a structured outcome.
 
 from __future__ import annotations
 
+import time
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..audit.base import AuditEventType, AuditLog
@@ -18,6 +20,8 @@ from ..infrastructure.idempotency import (
     digest,
     make_key,
 )
+from ..observability.metrics import Metrics
+from ..observability.tracing import Tracer, span
 from ..permissions.approvals import Approval, ApprovalStore
 from ..permissions.base import Permission, PolicyDecision, Principal
 from ..permissions.policy import PolicyEngine
@@ -57,6 +61,8 @@ class ToolExecutor:
         approval_ttl_seconds: int = 3600,
         idempotency: IdempotencyGuard | None = None,
         idempotency_ttl_seconds: int = 86_400,
+        metrics: Metrics | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self._registry = registry
         self._policy = policy
@@ -65,6 +71,8 @@ class ToolExecutor:
         self._ttl = approval_ttl_seconds
         self._idempotency = idempotency
         self._idempotency_ttl = idempotency_ttl_seconds
+        self._metrics = metrics
+        self._tracer = tracer
 
     async def execute(
         self,
@@ -75,6 +83,7 @@ class ToolExecutor:
         principal: Principal,
     ) -> ExecutionOutcome:
         tool = self._registry.get(tool_name)
+        started = time.perf_counter()
         decisions = self._evaluate(principal, tool)
 
         # Deny wins over everything.
@@ -92,6 +101,7 @@ class ToolExecutor:
                     "effect": denial.effect.value,
                 },
             )
+            self._record_tool_metric(tool_name, "denied", started)
             return ExecutionOutcome(
                 kind=ExecutionOutcomeKind.DENIED,
                 tool=tool_name,
@@ -127,6 +137,9 @@ class ToolExecutor:
                     "permission": approval_decision.permission.value,
                 },
             )
+            if self._metrics is not None:
+                self._metrics.approval_requested()
+            self._record_tool_metric(tool_name, "approval_required", started)
             return ExecutionOutcome(
                 kind=ExecutionOutcomeKind.APPROVAL_REQUIRED,
                 tool=tool_name,
@@ -136,13 +149,28 @@ class ToolExecutor:
             )
 
         # Allowed: run it.
-        result = await self._invoke(tool, arguments, context, principal)
+        with span(
+            "tool.execute",
+            attributes={"tool": tool_name, "permission_count": len(decisions)},
+            tracer=self._tracer,
+        ):
+            result = await self._invoke(tool, arguments, context, principal)
+        self._record_tool_metric(tool_name, "completed" if result.ok else "error", started)
         return ExecutionOutcome(
             kind=ExecutionOutcomeKind.COMPLETED,
             tool=tool_name,
             result=result,
             decisions=decisions,
             reason="allowed",
+        )
+
+    def _record_tool_metric(self, tool_name: str, outcome: str, started: float) -> None:
+        if self._metrics is None:
+            return
+        self._metrics.tool_call(
+            tool=tool_name,
+            outcome=outcome,
+            duration_seconds=time.perf_counter() - started,
         )
 
     async def execute_approved(
@@ -165,9 +193,11 @@ class ToolExecutor:
                 reason="approval is not granted",
             )
         tool = self._registry.get(approval.tool_name)
+        started = time.perf_counter()
         decisions = self._evaluate(principal, tool)
         denial = next((d for d in decisions if d.effect is PermissionEffect.DENY), None)
         if denial is not None:
+            self._record_tool_metric(approval.tool_name, "denied", started)
             return ExecutionOutcome(
                 kind=ExecutionOutcomeKind.DENIED,
                 tool=approval.tool_name,
@@ -186,7 +216,13 @@ class ToolExecutor:
                 "approval_id": approval.id,
             },
         )
-        result = await self._invoke(tool, dict(approval.arguments), context, principal)
+        with span(
+            "tool.execute_approved",
+            attributes={"tool": approval.tool_name, "approval_id": approval.id},
+            tracer=self._tracer,
+        ):
+            result = await self._invoke(tool, dict(approval.arguments), context, principal)
+        self._record_tool_metric(approval.tool_name, "completed" if result.ok else "error", started)
         return ExecutionOutcome(
             kind=ExecutionOutcomeKind.COMPLETED,
             tool=approval.tool_name,

@@ -100,6 +100,20 @@ class Settings(BaseSettings):
     # Injected via environment only; never stored in source control.
     api_keys: SecretStr = SecretStr("")
 
+    # --- Observability -----------------------------------------------------
+    # Structured JSON logs with correlation ids. On by default; disable only
+    # for a human-readable local console.
+    log_json: bool = True
+    log_level: str = "INFO"
+    # In-process metrics exposed at /metrics (Prometheus text format).
+    metrics_enabled: bool = True
+    # Tracing is recorded in-process; the OpenTelemetry exporter is used only
+    # when the SDK is installed and this is enabled.
+    otel_enabled: bool = False
+    otel_service_name: str = "arabic-agent"
+    # Timeout for each dependency readiness probe.
+    readiness_timeout_seconds: float = Field(default=2.0, gt=0)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:

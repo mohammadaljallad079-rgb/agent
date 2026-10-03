@@ -39,6 +39,10 @@ from ..core.errors import (
     PlatformError,
     ValidationError,
 )
+from ..core.ids import PREFIX_REQUEST, new_id
+from ..observability import configure_observability
+from ..observability.context import correlation_scope
+from ..observability.metrics import render_prometheus
 from ..permissions.base import Principal
 from ..runs.base import RunRecord
 from .auth import ApiKeyAuth, build_principal_dependency
@@ -48,6 +52,8 @@ from .schemas import (
     AuditSummary,
     HealthResponse,
     MemorySummary,
+    ReadinessProbeResponse,
+    ReadinessResponse,
     RunRequest,
     RunResponse,
     RunSummary,
@@ -57,6 +63,11 @@ from .schemas import (
 from .service import RunService
 
 logger = logging.getLogger(__name__)
+
+
+def new_request_id() -> str:
+    """Generate a correlation id for an inbound request."""
+    return new_id(PREFIX_REQUEST)
 
 
 def _run_response(record: RunRecord) -> RunResponse:
@@ -115,12 +126,32 @@ def create_app(
         )
         if not await limiter.allow(key):
             retry_after = await limiter.retry_after_seconds(key)
+            platform.metrics.rate_limit_denied(scope="api")
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={"detail": "rate limit exceeded"},
                 headers={"Retry-After": str(retry_after)},
             )
         return await call_next(request)
+
+    @app.middleware("http")
+    async def correlation_middleware(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        # Outermost middleware: every downstream log line, metric and span
+        # inherits the request id. Honour an inbound id so a request can be
+        # traced across an edge/proxy, but never trust it as identity.
+        request_id = request.headers.get("X-Request-ID") or new_request_id()
+        tenant_id = None
+        api_key = request.headers.get("X-API-Key")
+        if api_key:
+            principal = auth.resolve(api_key)
+            if principal is not None:
+                tenant_id = principal.tenant_id
+        with correlation_scope(request_id=request_id, tenant_id=tenant_id):
+            response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
     @app.exception_handler(PlatformError)
     async def platform_error_handler(_: Request, exc: PlatformError) -> JSONResponse:
@@ -158,6 +189,41 @@ def create_app(
             durable=platform.durable,
             distributed=platform.distributed,
         )
+
+    @app.get("/readyz", response_model=ReadinessResponse)
+    async def readyz() -> JSONResponse:
+        """Readiness: can this process serve traffic right now?
+
+        Returns 503 when a critical dependency (Postgres, Redis, the model
+        route) is unreachable, so an orchestrator routes traffic elsewhere.
+        Liveness (``/health``) stays 200 as long as the process is up.
+        """
+        report = await platform.readiness.check()
+        body = ReadinessResponse(
+            ready=report.ready,
+            checks=[
+                ReadinessProbeResponse(
+                    name=r.name,
+                    ok=r.ok,
+                    critical=r.critical,
+                    detail=r.detail,
+                    duration_ms=r.duration_ms,
+                )
+                for r in report.results
+            ],
+        )
+        for result in report.results:
+            platform.metrics.dependency_up(dependency=result.name, up=result.ok)
+        code = status.HTTP_200_OK if report.ready else status.HTTP_503_SERVICE_UNAVAILABLE
+        return JSONResponse(status_code=code, content=body.model_dump())
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        """Prometheus text exposition of the platform's metrics."""
+        if not settings.metrics_enabled:
+            raise HTTPException(status_code=404, detail="metrics disabled")
+        body = render_prometheus(platform.metrics.registry)
+        return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     # --- Tools ----------------------------------------------------------
     @app.get("/tools", response_model=list[ToolSummary])
@@ -330,8 +396,9 @@ def main() -> None:
     import uvicorn
 
     settings = Settings()
+    configure_observability(settings)
     try:
-        app = build_default_app()
+        app = create_app(Platform.build(settings), settings=settings)
     except ConfigurationError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc

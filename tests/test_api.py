@@ -116,3 +116,81 @@ def test_approval_flow_over_http(settings, tmp_path):
     written = list((tmp_path / "data" / "workspaces").rglob("a.txt"))
     assert written, "approved write did not land in the run workspace"
     assert written[0].read_text(encoding="utf-8") == "hi"
+
+
+def test_metrics_endpoint_exposes_prometheus_text(settings):
+    responder = scripted_responder(
+        plan=plan_json(("echo", "echo")),
+        tool_calls=[("echo", {"text": "hi"}), ("finish", {"result": "تم"})],
+        verification=verify_json(True, "تم"),
+    )
+    with _client(settings, responder) as client:
+        client.post("/runs", json={"goal": "قل مرحبا"})
+        response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    body = response.text
+    assert "aap_runs_started_total" in body
+    assert "aap_runs_finished_total" in body
+    assert "aap_tool_calls_total" in body
+    assert "aap_model_calls_total" in body
+
+
+def test_readyz_reports_probes(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        response = client.get("/readyz")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is True
+    names = {c["name"] for c in body["checks"]}
+    # The in-memory local runtime has a model route and an audit sink but no
+    # Postgres/Redis, so those probes are absent rather than falsely green.
+    assert names == {"model", "audit"}
+
+
+def test_readyz_returns_503_when_critical_dependency_down(settings):
+    from arabic_agent.container import Platform
+    from arabic_agent.observability.readiness import ProbeResult, ReadinessProbe, ReadinessService
+
+    class _Down(ReadinessProbe):
+        name = "database"
+        critical = True
+
+        async def check(self) -> ProbeResult:
+            return self._result(False, "query failed", started=0.0)
+
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(responder))
+    platform = Platform.build(settings, provider_registry=registry, default_model="fake/model")
+    platform.readiness = ReadinessService([_Down()])
+    app = create_app(platform, settings=settings)
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["ready"] is False
+
+
+def test_request_id_is_echoed_and_generated(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        generated = client.get("/health")
+        assert generated.headers["X-Request-ID"].startswith("req_")
+        supplied = client.get("/health", headers={"X-Request-ID": "req_custom_123"})
+        assert supplied.headers["X-Request-ID"] == "req_custom_123"
+
+
+def test_metrics_endpoint_can_be_disabled(settings):
+    from arabic_agent.container import Platform
+
+    disabled = settings.model_copy(update={"metrics_enabled": False})
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(responder))
+    platform = Platform.build(disabled, provider_registry=registry, default_model="fake/model")
+    app = create_app(platform, settings=disabled)
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 404
+        # Liveness must stay up even with metrics off.
+        assert client.get("/health").status_code == 200

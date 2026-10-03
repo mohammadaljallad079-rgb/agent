@@ -20,6 +20,7 @@ PREFIX_MEMORY = "mem"
 PREFIX_MESSAGE = "msg"
 PREFIX_JOB = "job"
 PREFIX_IDEMPOTENCY = "idm"
+PREFIX_REQUEST = "req"
 
 
 def new_id(prefix: str) -> str:

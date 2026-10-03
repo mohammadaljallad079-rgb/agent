@@ -45,6 +45,18 @@ from .memory.policy import MemoryPolicy
 from .models.gateway import ModelGateway
 from .models.providers.openai_compatible import OpenAICompatibleProvider
 from .models.registry import ProviderRegistry
+from .observability.logging import configure_logging
+from .observability.metrics import Metrics
+from .observability.otel import otel_exporter
+from .observability.readiness import (
+    AuditProbe,
+    DatabaseProbe,
+    ModelProbe,
+    ReadinessProbe,
+    ReadinessService,
+    RedisProbe,
+)
+from .observability.tracing import Exporter, Tracer, configure_tracing
 from .permissions.approvals import ApprovalStore, InMemoryApprovalStore
 from .permissions.policy import PolicyEngine
 from .persistence.database import Database
@@ -103,6 +115,9 @@ class Platform:
         idempotency: IdempotencyGuard,
         database: Database | None = None,
         redis_client: aioredis.Redis | None = None,
+        metrics: Metrics | None = None,
+        tracer: Tracer | None = None,
+        readiness: ReadinessService | None = None,
     ) -> None:
         self.settings = settings
         self.gateway = gateway
@@ -123,6 +138,13 @@ class Platform:
         self.idempotency = idempotency
         self.database = database
         self.redis_client = redis_client
+        self.metrics = metrics or Metrics()
+        self.tracer = tracer or configure_tracing(
+            enabled=settings.otel_enabled, service=settings.otel_service_name
+        )
+        self.readiness = readiness or ReadinessService(
+            [], timeout_seconds=settings.readiness_timeout_seconds
+        )
 
     @property
     def durable(self) -> bool:
@@ -179,6 +201,8 @@ class Platform:
         queue: JobQueue | None = None,
         database: Database | None = None,
         redis_client: aioredis.Redis | None = None,
+        metrics: Metrics | None = None,
+        tracer: Tracer | None = None,
     ) -> Platform:
         """Construct a platform from settings.
 
@@ -195,6 +219,22 @@ class Platform:
             else RuntimeProfile.cloud()
         )
 
+        # --- Observability -------------------------------------------------
+        if settings.log_json:
+            configure_logging(
+                level=getattr(logging, settings.log_level.upper(), logging.INFO),
+                service=settings.otel_service_name,
+                environment=settings.environment,
+            )
+        metrics = metrics or Metrics()
+        if tracer is None:
+            exporter: Exporter | None = None
+            if settings.otel_enabled:
+                exporter = otel_exporter(settings.otel_service_name)
+            tracer = configure_tracing(
+                enabled=True, service=settings.otel_service_name, exporter=exporter
+            )
+
         # --- Model providers -------------------------------------------
         if provider_registry is not None:
             if default_model is None:
@@ -206,6 +246,8 @@ class Platform:
                 settings=settings,
                 default_model=default_model,
                 fallbacks=fallbacks,
+                metrics=metrics,
+                tracer=tracer,
             )
         else:
             registry = ProviderRegistry()
@@ -245,6 +287,8 @@ class Platform:
                 settings=settings,
                 default_model=candidates[0],
                 fallbacks=tuple(candidates[1:]),
+                metrics=metrics,
+                tracer=tracer,
             )
         logger.info("model gateway ready: default=%s", gateway.default_model)
 
@@ -330,7 +374,17 @@ class Platform:
             audit=audit,
             approval_ttl_seconds=settings.approval_ttl_seconds,
             idempotency=idempotency,
+            metrics=metrics,
+            tracer=tracer,
         )
+
+        # --- Readiness probes ------------------------------------------
+        probes: list[ReadinessProbe] = [ModelProbe(gateway), AuditProbe(audit)]
+        if database is not None:
+            probes.append(DatabaseProbe(database))
+        if redis_client is not None:
+            probes.append(RedisProbe(redis_client))
+        readiness = ReadinessService(probes, timeout_seconds=settings.readiness_timeout_seconds)
 
         # --- Integrations ----------------------------------------------
         integrations = IntegrationRegistry()
@@ -356,6 +410,9 @@ class Platform:
             idempotency=idempotency,
             database=database,
             redis_client=redis_client,
+            metrics=metrics,
+            tracer=tracer,
+            readiness=readiness,
         )
 
     def memory_policy_for(self, tenant_id: str) -> MemoryPolicy:

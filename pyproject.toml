@@ -56,6 +56,8 @@ markers = [
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# Alembic-generated migration files use long op.* lines; they are not hand-edited.
+extend-exclude = ["migrations"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "ASYNC", "S", "RUF"]

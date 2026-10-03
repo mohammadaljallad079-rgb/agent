@@ -21,6 +21,7 @@ import sys
 from ..container import Platform
 from ..core.config import Settings
 from ..core.errors import ConfigurationError
+from ..observability import configure_observability
 from ..runs.store import RunStore
 from .queue import RedisJobQueue
 from .runtime import Worker
@@ -55,11 +56,14 @@ async def _run_worker(settings: Settings) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
     settings = Settings()
+    if settings.log_json:
+        configure_observability(settings)
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
     try:
         asyncio.run(_run_worker(settings))
     except ConfigurationError as exc:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -30,6 +31,7 @@ from ..core.config import Settings
 from ..core.enums import RunStatus
 from ..core.errors import ConflictError, PlatformError
 from ..core.ids import new_id
+from ..observability.context import correlation_scope
 from ..permissions.base import Permission, Principal
 from ..runs.base import RunRecord
 from ..runs.store import RunStore
@@ -42,6 +44,18 @@ logger = logging.getLogger(__name__)
 
 #: A run in one of these states is already finished; a worker must not touch it.
 _FINISHED = (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED)
+
+
+def _failure_reason(error: str) -> str:
+    """Collapse an error message into a bounded metric label.
+
+    Metric labels must be low-cardinality; a raw error string would explode the
+    series. We keep only the leading token, which is enough to distinguish the
+    common failure classes without embedding run-specific detail.
+    """
+    token = error.strip().split(maxsplit=1)[0] if error.strip() else "unknown"
+    token = token.strip(":;,.!?()[]{}")
+    return (token or "unknown")[:48]
 
 
 def principal_from_run(record: RunRecord) -> Principal:
@@ -79,6 +93,7 @@ class RunExecutor:
         self._runs = runs
         self._settings = settings
         self._worker_id = worker_id or settings.worker_id or f"worker-{new_id('wkr')}"
+        self._metrics = platform.metrics
 
     @property
     def worker_id(self) -> str:
@@ -110,7 +125,13 @@ class RunExecutor:
                 )
             return await self._run_agent(leased, recovered=recovered)
 
-        return await self._execute_leased(record, call)
+        with correlation_scope(
+            run_id=run_id,
+            tenant_id=record.tenant_id,
+            user_id=record.user_id,
+            worker_id=self._worker_id,
+        ):
+            return await self._execute_leased(record, call)
 
     async def execute_resume(
         self,
@@ -134,7 +155,13 @@ class RunExecutor:
                 workspace_dir=leased.workspace_dir,
             )
 
-        return await self._execute_leased(record, call)
+        with correlation_scope(
+            run_id=run_id,
+            tenant_id=record.tenant_id,
+            user_id=record.user_id,
+            worker_id=self._worker_id,
+        ):
+            return await self._execute_leased(record, call)
 
     async def _execute_leased(
         self,
@@ -156,6 +183,7 @@ class RunExecutor:
             return None
 
         heartbeat = asyncio.create_task(self._heartbeat(leased))
+        started = time.perf_counter()
         try:
             result = await call(leased)
         except PlatformError as exc:
@@ -179,6 +207,11 @@ class RunExecutor:
                 await heartbeat
 
         await self._persist_outcome(leased, result)
+        self._metrics.run_finished(
+            status=result.status.value, duration_seconds=time.perf_counter() - started
+        )
+        if result.status is RunStatus.FAILED and result.error:
+            self._metrics.run_failed(reason=_failure_reason(result.error))
         return result
 
     async def _run_agent(self, record: RunRecord, *, recovered: bool) -> AgentRunResult:
@@ -267,6 +300,7 @@ class Worker:
             platform=platform, runs=runs, settings=settings, worker_id=worker_id
         )
         self._audit: AuditLog = platform.audit
+        self._metrics = platform.metrics
         self._stop = asyncio.Event()
 
     @property
@@ -279,41 +313,52 @@ class Worker:
         if claimed is None:
             return False
         job = claimed.job
-        await self._audit.record(
-            AuditEventType.JOB_CLAIMED,
+        self._metrics.job_claimed(job_type=job.type.value)
+        with correlation_scope(
+            job_id=job.id,
+            run_id=job.run_id,
             tenant_id=job.tenant_id,
             user_id=job.user_id,
-            run_id=job.run_id,
-            message=f"claimed job {job.type.value}",
-            data={"job_id": job.id, "attempt": job.attempts, "worker_id": self.worker_id},
-        )
-        try:
-            await self._dispatch_job(job)
-        except Exception as exc:
-            logger.exception("job %s failed", job.id)
+            worker_id=self.worker_id,
+        ):
             await self._audit.record(
-                AuditEventType.JOB_FAILED,
+                AuditEventType.JOB_CLAIMED,
                 tenant_id=job.tenant_id,
                 user_id=job.user_id,
                 run_id=job.run_id,
-                message=f"job failed: {exc}",
-                data={"job_id": job.id, "attempt": job.attempts},
+                message=f"claimed job {job.type.value}",
+                data={"job_id": job.id, "attempt": job.attempts, "worker_id": self.worker_id},
             )
-            requeue = job.attempts < self._settings.job_max_attempts
-            await self._queue.nack(claimed, requeue=requeue)
-            if not requeue:
-                await self._mark_failed(job, f"job exceeded max attempts: {exc}")
+            try:
+                await self._dispatch_job(job)
+            except Exception as exc:
+                logger.exception("job %s failed", job.id)
+                await self._audit.record(
+                    AuditEventType.JOB_FAILED,
+                    tenant_id=job.tenant_id,
+                    user_id=job.user_id,
+                    run_id=job.run_id,
+                    message=f"job failed: {exc}",
+                    data={"job_id": job.id, "attempt": job.attempts},
+                )
+                requeue = job.attempts < self._settings.job_max_attempts
+                await self._queue.nack(claimed, requeue=requeue)
+                self._metrics.job_nacked(job_type=job.type.value, requeue=requeue)
+                if not requeue:
+                    self._metrics.job_failed(job_type=job.type.value)
+                    await self._mark_failed(job, f"job exceeded max attempts: {exc}")
+                return True
+            await self._audit.record(
+                AuditEventType.JOB_COMPLETED,
+                tenant_id=job.tenant_id,
+                user_id=job.user_id,
+                run_id=job.run_id,
+                message=f"completed job {job.type.value}",
+                data={"job_id": job.id},
+            )
+            await self._queue.ack(claimed)
+            self._metrics.job_acked(job_type=job.type.value)
             return True
-        await self._audit.record(
-            AuditEventType.JOB_COMPLETED,
-            tenant_id=job.tenant_id,
-            user_id=job.user_id,
-            run_id=job.run_id,
-            message=f"completed job {job.type.value}",
-            data={"job_id": job.id},
-        )
-        await self._queue.ack(claimed)
-        return True
 
     async def _dispatch_job(self, job: Job) -> None:
         if job.type in (JobType.START_RUN, JobType.RESUME_RUN):
@@ -367,6 +412,7 @@ class Worker:
                     user_id=record.user_id,
                 )
             )
+            self._metrics.run_recovered()
             count += 1
         if count:
             logger.info("recovered %d stale run(s)", count)
@@ -391,10 +437,13 @@ class Worker:
         while not self._stop.is_set():
             await asyncio.sleep(self._settings.recovery_interval_seconds)
             try:
-                await self._queue.reclaim_stale(
+                reclaimed = await self._queue.reclaim_stale(
                     older_than_seconds=self._settings.worker_lease_seconds
                 )
+                if reclaimed:
+                    self._metrics.jobs_reclaimed(count=reclaimed)
                 await self.recover_stale()
+                self._metrics.queue_depth(depth=await self._queue.depth())
             except Exception:
                 logger.warning("recovery sweep failed", exc_info=True)
 

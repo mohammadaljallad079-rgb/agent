@@ -376,6 +376,34 @@ The model never receives the whole store; it receives the necessary slice.
 The audit log answers: what was the plan, which tools ran, what did they return,
 what failed, what was retried, who approved what, and how long it took.
 
+### 12a. Observability package (Phase 1b)
+
+`arabic_agent/observability/` is a dependency-light package the whole platform
+depends on — the agent core never imports a vendor SDK.
+
+- **Correlation** (`context.py`): a frozen `CorrelationContext`
+  (`request_id`, `run_id`, `job_id`, `tenant_id`, `user_id`, `worker_id`) held in
+  a `ContextVar`, so it is isolated per task and survives `await` boundaries.
+  `correlation_scope(...)` sets/restores fields; the API middleware generates or
+  echoes `X-Request-ID`, the worker binds run/job ids around execution.
+- **Logging** (`logging.py`): `JsonLogFormatter` injects the correlation context
+  into every record and redacts secrets in both the message and structured
+  fields. `configure_logging()` installs it process-wide.
+- **Metrics** (`metrics.py`): a thread-safe registry of counters, gauges and
+  histograms with Prometheus text exposition (`render_prometheus`). `Metrics` is
+  the typed facade instrumented by the runtime: runs started/finished/failed/
+  recovered, run and tool and model latency, tool/model retries, job
+  enqueue/claim/ack/nack/fail, queue depth, approval latency, rate-limit
+  rejections, dependency up/down. Label values are redacted and bounded (raw
+  error text is never a label).
+- **Tracing** (`tracing.py`): `Tracer` + `span()` cover API → run → model → tool;
+  spans record correlation ids, status and error. `otel.py` bridges finished
+  spans to OpenTelemetry **only** when the SDK is installed and enabled.
+- **Readiness** (`readiness.py`): `ReadinessService` runs `DatabaseProbe`,
+  `RedisProbe`, `ModelProbe` and `AuditProbe` with a timeout. Critical failures
+  make `GET /readyz` return 503; `/health` stays a liveness probe. Probe errors
+  are reported as `unreachable` so a connection string never leaks.
+
 ---
 
 ## 13. Local / Cloud runtime boundary

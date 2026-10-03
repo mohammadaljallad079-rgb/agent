@@ -161,3 +161,37 @@ async def test_poison_job_fails_run_after_max_attempts(settings: Settings, tmp_p
     final = await runs.get(record.id, tenant_id="t1")
     assert final.status is RunStatus.FAILED
     assert "max attempts" in (final.error or "")
+
+
+async def test_worker_records_run_and_job_metrics(settings: Settings, tmp_path):
+    platform, runs, queue = _build(settings, _responder())
+    record = await runs.create(
+        RunRecord(tenant_id="t1", user_id="u1", goal="قل مرحبا", workspace_dir=str(tmp_path))
+    )
+    await queue.enqueue(Job(type=JobType.START_RUN, run_id=record.id, tenant_id="t1", user_id="u1"))
+
+    worker = _worker(platform, runs, queue, settings)
+    await worker.process_one()
+
+    registry = platform.metrics.registry
+    assert registry.counter_value("aap_jobs_claimed_total", labels={"type": "start_run"}) == 1
+    assert registry.counter_value("aap_jobs_acked_total", labels={"type": "start_run"}) == 1
+    assert registry.counter_value("aap_runs_finished_total", labels={"status": "completed"}) == 1
+    assert registry.histogram_count("aap_run_duration_seconds", labels={"status": "completed"}) == 1
+
+
+async def test_recovery_records_recovery_metric(settings: Settings, tmp_path):
+    platform, runs, queue = _build(settings, _responder())
+    record = await runs.create(
+        RunRecord(tenant_id="t1", user_id="u1", goal="استأنف", workspace_dir=str(tmp_path))
+    )
+    dead = record.transition(
+        RunStatus.RUNNING,
+        worker_id="worker-dead",
+        lease_expires_at=datetime.now(UTC) - timedelta(seconds=30),
+    )
+    await runs.update(dead, expected_version=record.version)
+
+    worker = _worker(platform, runs, queue, settings)
+    assert await worker.recover_stale() == 1
+    assert platform.metrics.registry.counter_value("aap_runs_recovered_total") == 1

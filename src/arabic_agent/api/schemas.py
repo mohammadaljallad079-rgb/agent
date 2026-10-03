@@ -141,3 +141,20 @@ class HealthResponse(BaseModel):
     execution_mode: str = "inline"
     durable: bool = False
     distributed: bool = False
+
+
+class ReadinessProbeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    ok: bool
+    critical: bool
+    detail: str = ""
+    duration_ms: float = 0.0
+
+
+class ReadinessResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ready: bool
+    checks: list[ReadinessProbeResponse]

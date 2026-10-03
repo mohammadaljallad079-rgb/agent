@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
 from ..core.config import Settings
 from ..core.enums import ModelCapability
 from ..core.errors import ExternalServiceError, PlatformError, TransientError
+from ..observability.metrics import Metrics
+from ..observability.tracing import Tracer, span
 from .base import ModelProvider, ModelRequest, ModelResponse, ModelStreamDelta
 from .registry import ProviderRegistry
 
@@ -49,12 +52,16 @@ class ModelGateway:
         settings: Settings,
         default_model: str | None = None,
         fallbacks: Sequence[str] = (),
+        metrics: Metrics | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self._registry = registry
         self._settings = settings
         self._default_model = default_model or settings.default_model
         self._fallbacks = tuple(fallbacks)
         self.stats = GatewayStats()
+        self._metrics = metrics
+        self._tracer = tracer
         # Validate the default model is routable at construction time so
         # misconfiguration fails fast instead of on the first user request.
         self._registry.resolve(self._default_model)
@@ -109,10 +116,17 @@ class ModelGateway:
         for index, model_id in enumerate(models):
             provider, bare_model = self._resolve(model_id, capability)
             routed = request.model_copy(update={"model": bare_model})
+            started = time.perf_counter()
             try:
-                response = await self._complete_with_retry(provider, routed, model_id)
+                with span(
+                    "model.complete",
+                    attributes={"model": model_id, "capability": capability.value},
+                    tracer=self._tracer,
+                ):
+                    response = await self._complete_with_retry(provider, routed, model_id)
             except PlatformError as exc:
                 last_error = exc
+                self._record_model_metric(model_id, "error", started)
                 if not exc.retryable and not isinstance(exc, TransientError):
                     # Non-retryable: don't try other models, surface immediately.
                     raise
@@ -120,6 +134,7 @@ class ModelGateway:
                 if index < len(models) - 1:
                     continue
                 raise
+            self._record_model_metric(model_id, "ok", started)
             self.stats.record(
                 model_id, response.usage.prompt_tokens, response.usage.completion_tokens
             )
@@ -129,6 +144,13 @@ class ModelGateway:
 
         # Unreachable in practice, but keeps the type checker and runtime honest.
         raise last_error or ExternalServiceError("no model candidates available")
+
+    def _record_model_metric(self, model_id: str, outcome: str, started: float) -> None:
+        if self._metrics is None:
+            return
+        self._metrics.model_call(
+            model=model_id, outcome=outcome, duration_seconds=time.perf_counter() - started
+        )
 
     async def _complete_with_retry(
         self, provider: ModelProvider, request: ModelRequest, model_id: str
@@ -144,6 +166,8 @@ class ModelGateway:
                 if not exc.retryable:
                     raise
                 self.stats.retries += 1
+                if self._metrics is not None:
+                    self._metrics.model_retry(model=model_id)
                 if attempt < attempts - 1:
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 4.0)
