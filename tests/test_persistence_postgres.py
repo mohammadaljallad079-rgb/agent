@@ -171,3 +171,56 @@ async def test_memory_upsert_and_tenant_scope(postgres_database):
 async def test_memory_permission_enum_is_stable():
     # Guards against silently renaming a permission the DB/policy depend on.
     assert PermissionEffect.ALLOW.value == "allow"
+
+
+async def test_audit_sequence_is_durable_and_monotonic(postgres_database):
+    """Sequences come from shared storage, not a per-process counter.
+
+    This is the API+worker case: two processes write events for the same run and
+    must not collide on ``(run_id, sequence)``.
+    """
+    from arabic_agent.audit.base import AuditEvent, AuditEventType
+    from arabic_agent.persistence.stores import PostgresAuditStore
+
+    store = PostgresAuditStore(postgres_database)
+
+    def event(sequence: int) -> AuditEvent:
+        return AuditEvent.create(
+            AuditEventType.TOOL_CALLED,
+            tenant_id="tnt_1",
+            user_id="usr_1",
+            run_id="run_shared",
+            sequence=sequence,
+            message="x",
+        )
+
+    # Two independent writers both start from sequence 1 (as separate processes
+    # would). The sink must resolve the collision, not raise.
+    await store.emit(event(1))
+    await store.emit(event(1))
+    await store.emit(event(1))
+
+    history = await store.list_for_run(tenant_id="tnt_1", run_id="run_shared")
+    sequences = [e.sequence for e in history]
+    assert sequences == [1, 2, 3]
+    # The next sequence is derived from durable storage, so a restarted process
+    # continues the run's numbering instead of restarting at 1.
+    assert await store.next_sequence(run_id="run_shared") == 4
+
+
+async def test_audit_log_resolves_sequence_from_durable_sink(postgres_database):
+    """The fan-out ``AuditLog`` defers sequence assignment to a durable sink."""
+    from arabic_agent.audit.base import AuditEventType, AuditLog
+    from arabic_agent.persistence.stores import PostgresAuditStore
+
+    log = AuditLog([PostgresAuditStore(postgres_database)])
+    for _ in range(3):
+        await log.record(
+            AuditEventType.STEP_STARTED,
+            tenant_id="tnt_1",
+            user_id="usr_1",
+            run_id="run_log",
+            message="step",
+        )
+    history = await log.history(tenant_id="tnt_1", run_id="run_log")
+    assert [e.sequence for e in history] == [1, 2, 3]

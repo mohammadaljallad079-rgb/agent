@@ -102,6 +102,19 @@ class AuditSink(ABC):
         """Return events for a run if the sink supports reads."""
         return []
 
+    async def next_sequence(self, *, run_id: str) -> int:
+        """Return the next sequence number for a run, or 0 if unmanaged.
+
+        Sinks that share durable storage across processes (e.g. Postgres) must
+        override this and derive the sequence from that shared storage. An
+        in-process counter is *not* sufficient: the API and a worker both write
+        audit events for the same run, and an independent counter per process
+        would collide on the ``(run_id, sequence)`` unique key. A sink that
+        cannot know the sequence returns 0, leaving the caller's fallback in
+        place.
+        """
+        return 0
+
     async def aclose(self) -> None:
         return None
 
@@ -111,6 +124,11 @@ class AuditLog:
 
     Recording must never break the run, so sink failures are swallowed (and
     logged) rather than propagated.
+
+    Sequence numbers are assigned from shared storage when a sink can provide
+    them (:meth:`AuditSink.next_sequence`), so the API and a worker writing the
+    same run never collide on ``(run_id, sequence)``. The in-process counter is
+    only a fallback for sinks that cannot answer (local/offline runtime).
     """
 
     def __init__(self, sinks: list[AuditSink] | None = None) -> None:
@@ -124,6 +142,14 @@ class AuditLog:
         current = self._sequences.get(run_id, 0) + 1
         self._sequences[run_id] = current
         return current
+
+    async def _resolve_sequence(self, run_id: str) -> int:
+        """Prefer a durable sequence from a sink, else the local counter."""
+        for sink in self._sinks:
+            sequence = await sink.next_sequence(run_id=run_id)
+            if sequence:
+                return sequence
+        return self.next_sequence(run_id)
 
     async def emit(self, event: AuditEvent) -> None:
         import logging
@@ -151,7 +177,7 @@ class AuditLog:
             tenant_id=tenant_id,
             user_id=user_id,
             run_id=run_id,
-            sequence=self.next_sequence(run_id),
+            sequence=await self._resolve_sequence(run_id),
             message=message,
             data=data,
         )

@@ -158,6 +158,57 @@ async def test_not_found_error_triggers_replan_then_succeeds(make_platform, tmp_
     assert result.status is RunStatus.COMPLETED
 
 
+async def test_replan_is_bounded_by_max_replans(make_platform, tmp_path):
+    """A permanently failing step must not replan forever.
+
+    Before this was enforced, the recovery policy was always consulted with
+    ``replans_used=0``, so ``REPLAN`` was only ever stopped by the global step
+    cap. Now the replan count is threaded through, so the run aborts as soon as
+    ``max_replans`` is exhausted.
+    """
+    platform = make_platform(respond=_always_missing_file)
+    result = await platform.build_runner().run(
+        principal=_principal(), goal="اقرأ ملفا مفقودا", workspace_dir=str(tmp_path / "ws")
+    )
+    assert result.status is RunStatus.FAILED
+    # The run stopped exactly at the configured replan bound, not at the step cap.
+    assert result.replans == platform.settings.max_replans
+    assert result.steps_executed < platform.settings.max_steps_per_run
+
+
+def _always_missing_file(request: ModelRequest, _n: int) -> ModelResponse:
+    if is_verifier(request):
+        return text_response(verify_json(False, "لم تكتمل"))
+    if is_planner(request):
+        return text_response(plan_json(("read a file", "read_file")))
+    return tool_response("read_file", {"path": "missing.txt"})
+
+
+async def test_health_reports_service_and_version(make_platform, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from arabic_agent import __version__
+    from arabic_agent.api.app import create_app
+
+    platform = make_platform(scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[]))
+    with TestClient(create_app(platform, settings=platform.settings)) as client:
+        body = client.get("/health").json()
+    assert body["service"] == platform.settings.otel_service_name
+    assert body["version"] == __version__
+
+
+async def test_run_request_rejects_unknown_fields(make_platform):
+    """Removed placeholder fields (resume/locale) must be rejected, not ignored."""
+    from fastapi.testclient import TestClient
+
+    from arabic_agent.api.app import create_app
+
+    platform = make_platform(scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[]))
+    with TestClient(create_app(platform, settings=platform.settings)) as client:
+        response = client.post("/runs", json={"goal": "قل مرحبا", "resume": True})
+    assert response.status_code == 422
+
+
 async def test_audit_log_records_the_run(make_platform, tmp_path):
     responder = scripted_responder(
         plan=plan_json(("echo", "echo")),

@@ -140,13 +140,16 @@ async def test_recovery_gives_up_after_max_attempts(settings: Settings, tmp_path
 
 
 async def test_poison_job_fails_run_after_max_attempts(settings: Settings, tmp_path, monkeypatch):
-    platform, runs, queue = _build(settings, _responder())
+    # Zero backoff so the retries are immediate and deterministic; backoff
+    # itself is covered by test_failed_job_is_deferred_by_backoff.
+    fast = settings.model_copy(update={"job_backoff_seconds": 0.0})
+    platform, runs, queue = _build(fast, _responder())
     record = await runs.create(
         RunRecord(tenant_id="t1", user_id="u1", goal="سم", workspace_dir=str(tmp_path))
     )
     await runs.update(record.transition(RunStatus.RUNNING), expected_version=record.version)
 
-    worker = _worker(platform, runs, queue, settings)
+    worker = _worker(platform, runs, queue, fast)
 
     async def explode(_job: Job) -> None:
         raise RuntimeError("dispatch exploded")
@@ -155,12 +158,36 @@ async def test_poison_job_fails_run_after_max_attempts(settings: Settings, tmp_p
 
     await queue.enqueue(Job(type=JobType.START_RUN, run_id=record.id, tenant_id="t1", user_id="u1"))
     # Each claim increments attempts; after max attempts the run is failed.
-    for _ in range(settings.job_max_attempts):
+    for _ in range(fast.job_max_attempts):
         assert await worker.process_one() is True
 
     final = await runs.get(record.id, tenant_id="t1")
     assert final.status is RunStatus.FAILED
     assert "max attempts" in (final.error or "")
+
+
+async def test_failed_job_is_deferred_by_backoff(settings: Settings, tmp_path, monkeypatch):
+    """A failed job is not immediately re-claimable; backoff defers it."""
+    slow = settings.model_copy(update={"job_backoff_seconds": 30.0, "job_max_attempts": 3})
+    platform, runs, queue = _build(slow, _responder())
+    record = await runs.create(
+        RunRecord(tenant_id="t1", user_id="u1", goal="تأجيل", workspace_dir=str(tmp_path))
+    )
+    await runs.update(record.transition(RunStatus.RUNNING), expected_version=record.version)
+
+    worker = _worker(platform, runs, queue, slow)
+
+    async def explode(_job: Job) -> None:
+        raise RuntimeError("transient failure")
+
+    monkeypatch.setattr(worker, "_dispatch_job", explode)
+    await queue.enqueue(Job(type=JobType.START_RUN, run_id=record.id, tenant_id="t1", user_id="u1"))
+
+    assert await worker.process_one() is True  # claimed and nacked
+    # The job still exists (depth counts delayed jobs) but is not yet due.
+    assert await queue.depth() == 1
+    assert await worker.process_one() is False
+    assert await queue.claim() is None
 
 
 async def test_worker_records_run_and_job_metrics(settings: Settings, tmp_path):

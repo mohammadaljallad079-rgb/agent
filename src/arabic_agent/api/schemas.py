@@ -16,8 +16,6 @@ class RunRequest(BaseModel):
 
     goal: str = Field(min_length=1, max_length=8000)
     workspace_dir: str | None = None
-    resume: bool = False
-    locale: str | None = None
     #: Optional key making run creation idempotent across retries.
     idempotency_key: str | None = Field(default=None, max_length=200)
 
@@ -132,6 +130,8 @@ class HealthResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: str
+    service: str = "arabic-agent"
+    version: str = ""
     environment: str
     runtime: str
     default_model: str

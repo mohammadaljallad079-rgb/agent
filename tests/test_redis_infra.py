@@ -114,3 +114,23 @@ async def test_queue_reclaims_stale_inflight(redis_client):
     await asyncio.sleep(0.05)
     assert await queue.reclaim_stale(older_than_seconds=0) == 1
     assert await queue.claim() is not None
+
+
+async def test_queue_backoff_defers_claim(redis_client):
+    queue = RedisJobQueue(redis_client)
+    await queue.enqueue(_job())
+    claimed = await queue.claim()
+    assert claimed is not None
+    # Defer the job; it must be neither claimable now nor lost.
+    await queue.nack_with_backoff(claimed, delay_seconds=60)
+    assert await queue.claim() is None
+    assert await queue.depth() == 1  # still pending, just not yet due
+    # With no delay it becomes claimable immediately, carrying its attempt count.
+    await queue.enqueue(_job(run_id="run_2"))
+    claimed2 = await queue.claim()
+    assert claimed2 is not None
+    await queue.nack_with_backoff(claimed2, delay_seconds=0)
+    again = await queue.claim()
+    assert again is not None
+    assert again.job.run_id == "run_2"
+    assert again.job.attempts == 2

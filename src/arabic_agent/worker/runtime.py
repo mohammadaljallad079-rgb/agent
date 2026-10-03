@@ -342,7 +342,13 @@ class Worker:
                     data={"job_id": job.id, "attempt": job.attempts},
                 )
                 requeue = job.attempts < self._settings.job_max_attempts
-                await self._queue.nack(claimed, requeue=requeue)
+                if requeue:
+                    # Defer the retry instead of spinning: a downstream that just
+                    # failed is unlikely to be healthy milliseconds later.
+                    delay = self._settings.job_backoff_seconds * job.attempts
+                    await self._queue.nack_with_backoff(claimed, delay_seconds=delay)
+                else:
+                    await self._queue.nack(claimed, requeue=False)
                 self._metrics.job_nacked(job_type=job.type.value, requeue=requeue)
                 if not requeue:
                     self._metrics.job_failed(job_type=job.type.value)

@@ -178,6 +178,7 @@ class AgentRunner:
                 history=history,
                 workspace=workspace,
                 run_id=run_id,
+                stats=stats,
             )
 
             if isinstance(outcome, AgentRunResult):
@@ -234,6 +235,7 @@ class AgentRunner:
         history: list[ChatMessage],
         workspace: str,
         run_id: str,
+        stats: _RunStats,
     ) -> _StepOutcome | AgentRunResult:
         attempt = 0
         tool_calls = 0
@@ -258,7 +260,7 @@ class AgentRunner:
                 response = await self._gateway.complete(request)
             except PlatformError as exc:
                 recovery = self._recovery.decide(
-                    exc.error_class, step_attempts=attempt, replans_used=0
+                    exc.error_class, step_attempts=attempt, replans_used=stats.replans
                 )
                 if recovery is RecoveryAction.ABORT:
                     return await self._fail(
@@ -266,7 +268,13 @@ class AgentRunner:
                         run_id,
                         plan,
                         f"model error: {exc.message}",
-                        _RunStats(tool_calls=tool_calls, retries=attempt - 1, usage=usage),
+                        _RunStats(
+                            steps_executed=stats.steps_executed,
+                            tool_calls=stats.tool_calls + tool_calls,
+                            retries=stats.retries + attempt - 1,
+                            replans=stats.replans,
+                            usage=usage,
+                        ),
                         workspace=workspace,
                     )
                 continue
@@ -309,7 +317,7 @@ class AgentRunner:
                         message=exc.message,
                     )
                     recovery = self._recovery.decide(
-                        exc.error_class, step_attempts=attempt, replans_used=0
+                        exc.error_class, step_attempts=attempt, replans_used=stats.replans
                     )
                     if recovery is RecoveryAction.REPLAN:
                         return _StepOutcome(
@@ -334,7 +342,13 @@ class AgentRunner:
                             run_id,
                             failed,
                             exc.message,
-                            _RunStats(tool_calls=tool_calls, retries=attempt - 1, usage=usage),
+                            _RunStats(
+                                steps_executed=stats.steps_executed,
+                                tool_calls=stats.tool_calls + tool_calls,
+                                retries=stats.retries + attempt - 1,
+                                replans=stats.replans,
+                                usage=usage,
+                            ),
                             workspace=workspace,
                         )
                     history.append(
@@ -401,7 +415,7 @@ class AgentRunner:
                     plan, step.id, error_class=ErrorClass.EXTERNAL, message=result.summary
                 )
                 recovery = self._recovery.decide(
-                    ErrorClass.EXTERNAL, step_attempts=attempt, replans_used=0
+                    ErrorClass.EXTERNAL, step_attempts=attempt, replans_used=stats.replans
                 )
                 if recovery is RecoveryAction.REPLAN:
                     return _StepOutcome(
@@ -426,7 +440,13 @@ class AgentRunner:
                         run_id,
                         failed,
                         result.summary,
-                        _RunStats(tool_calls=tool_calls, retries=attempt - 1, usage=usage),
+                        _RunStats(
+                            steps_executed=stats.steps_executed,
+                            tool_calls=stats.tool_calls + tool_calls,
+                            retries=stats.retries + attempt - 1,
+                            replans=stats.replans,
+                            usage=usage,
+                        ),
                         workspace=workspace,
                     )
                 continue
@@ -436,7 +456,13 @@ class AgentRunner:
             run_id,
             plan,
             f"step {step.index + 1} exceeded retry limit ({max_attempts} attempts)",
-            _RunStats(tool_calls=tool_calls, retries=attempt, usage=usage),
+            _RunStats(
+                steps_executed=stats.steps_executed,
+                tool_calls=stats.tool_calls + tool_calls,
+                retries=stats.retries + attempt,
+                replans=stats.replans,
+                usage=usage,
+            ),
             workspace=workspace,
         )
 

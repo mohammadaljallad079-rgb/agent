@@ -112,6 +112,16 @@ class JobQueue(ABC):
     async def nack(self, claimed: ClaimedJob, *, requeue: bool) -> None:
         """Return a job: ``requeue`` for retry, else drop it."""
 
+    async def nack_with_backoff(self, claimed: ClaimedJob, *, delay_seconds: float) -> None:
+        """Requeue a job so it becomes claimable only after ``delay_seconds``.
+
+        A failed job retried immediately would spin in a tight loop, burning CPU
+        and hammering a downstream dependency that is probably still down. The
+        default is to requeue at once; queue implementations with a notion of
+        time override this to defer visibility.
+        """
+        await self.nack(claimed, requeue=True)
+
     @abstractmethod
     async def reclaim_stale(self, *, older_than_seconds: float) -> int:
         """Requeue jobs whose worker died before acking; return how many."""
@@ -136,12 +146,26 @@ class InMemoryJobQueue(JobQueue):
 
     _ready: list[Job] = field(default_factory=list)
     _inflight: dict[str, _Entry] = field(default_factory=dict)
+    #: Jobs deferred by backoff, paired with the monotonic time they become due.
+    _delayed: list[tuple[float, Job]] = field(default_factory=list)
+
+    def _release_due(self, now: float) -> None:
+        if not self._delayed:
+            return
+        remaining: list[tuple[float, Job]] = []
+        for due_at, job in self._delayed:
+            if due_at <= now:
+                self._ready.append(job)
+            else:
+                remaining.append((due_at, job))
+        self._delayed = remaining
 
     async def enqueue(self, job: Job) -> Job:
         self._ready.append(job)
         return job
 
     async def claim(self, *, timeout_seconds: float = 1.0) -> ClaimedJob | None:
+        self._release_due(time.monotonic())
         if not self._ready:
             return None
         job = self._ready.pop(0)
@@ -158,6 +182,12 @@ class InMemoryJobQueue(JobQueue):
         if entry is not None and requeue:
             self._ready.append(entry.job)
 
+    async def nack_with_backoff(self, claimed: ClaimedJob, *, delay_seconds: float) -> None:
+        entry = self._inflight.pop(claimed.handle, None)
+        if entry is None:
+            return
+        self._delayed.append((time.monotonic() + max(0.0, delay_seconds), entry.job))
+
     async def reclaim_stale(self, *, older_than_seconds: float) -> int:
         now = time.monotonic()
         stale = [
@@ -171,15 +201,22 @@ class InMemoryJobQueue(JobQueue):
         return len(stale)
 
     async def depth(self) -> int:
-        return len(self._ready)
+        return len(self._ready) + len(self._delayed)
 
 
-#: Atomically move one item from the ready list into the in-flight sorted set.
-#: Returns the encoded job, or false when the ready list is empty.
+#: Atomically promote any due delayed jobs, then move one item from the ready
+#: list into the in-flight sorted set. Returns the encoded job, or false when
+#: nothing is ready.
 _CLAIM_LUA = """
 local ready = KEYS[1]
 local inflight = KEYS[2]
+local delayed = KEYS[3]
 local now = tonumber(ARGV[1])
+local due = redis.call('ZRANGEBYSCORE', delayed, '-inf', now, 'LIMIT', 0, 100)
+for _, m in ipairs(due) do
+  redis.call('ZREM', delayed, m)
+  redis.call('LPUSH', ready, m)
+end
 local raw = redis.call('RPOP', ready)
 if not raw then
   return false
@@ -231,13 +268,23 @@ class RedisJobQueue(JobQueue):
     def _inflight_key(self) -> str:
         return f"{self._prefix}:inflight"
 
+    @property
+    def _delayed_key(self) -> str:
+        return f"{self._prefix}:delayed"
+
     async def enqueue(self, job: Job) -> Job:
         await cast("Awaitable[int]", self._redis.lpush(self._ready_key, job.encode()))
         return job
 
     async def claim(self, *, timeout_seconds: float = 1.0) -> ClaimedJob | None:
         raw = await eval_script(
-            self._redis, _CLAIM_LUA, 2, self._ready_key, self._inflight_key, time.time()
+            self._redis,
+            _CLAIM_LUA,
+            3,
+            self._ready_key,
+            self._inflight_key,
+            self._delayed_key,
+            time.time(),
         )
         if not raw:
             return None
@@ -259,6 +306,15 @@ class RedisJobQueue(JobQueue):
         if requeue:
             await cast("Awaitable[int]", self._redis.lpush(self._ready_key, claimed.job.encode()))
 
+    async def nack_with_backoff(self, claimed: ClaimedJob, *, delay_seconds: float) -> None:
+        """Defer a failed job's next claim by ``delay_seconds`` (score = due time)."""
+        await cast("Awaitable[int]", self._redis.zrem(self._inflight_key, claimed.handle))
+        due_at = time.time() + max(0.0, delay_seconds)
+        await cast(
+            "Awaitable[int]",
+            self._redis.zadd(self._delayed_key, {claimed.job.encode(): due_at}),
+        )
+
     async def reclaim_stale(self, *, older_than_seconds: float) -> int:
         cutoff = time.time() - older_than_seconds
         result = await eval_script(
@@ -267,7 +323,9 @@ class RedisJobQueue(JobQueue):
         return int(result)
 
     async def depth(self) -> int:
-        return int(await cast("Awaitable[int]", self._redis.llen(self._ready_key)))
+        ready = int(await cast("Awaitable[int]", self._redis.llen(self._ready_key)))
+        delayed = int(await cast("Awaitable[int]", self._redis.zcard(self._delayed_key)))
+        return ready + delayed
 
 
 def _attempts_of(encoded: str) -> int:

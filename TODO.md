@@ -85,6 +85,33 @@ interfaces, never on a vendor SDK.
       `tests/test_readiness_integration.py`, plus API/worker instrumentation
       assertions.
 
+## Phase 1c — Runtime correctness hardening (done)
+
+A review pass over the durable runtime found several places where a documented
+control did not actually do what it claimed. Each fix is covered by a test.
+
+- [x] Durable audit sequencing: `PostgresAuditStore` now derives the event
+      sequence from shared storage and retries a lost cross-process race, so the
+      API and a worker writing the same run no longer collide on
+      `UNIQUE (run_id, sequence)`. Previously each process counted independently
+      from an in-process counter and the second writer's insert failed.
+- [x] Bounded replanning: the runner now threads the real replan count into
+      `RecoveryPolicy.decide`, so `AAP_MAX_REPLANS` is enforced. Previously the
+      policy was always consulted with `replans_used=0`, so `REPLAN` was only
+      ever stopped by the global step cap.
+- [x] Accurate failure accounting: when a run aborts from inside a step, the
+      final result now carries the run's accumulated counters instead of a fresh
+      per-step snapshot.
+- [x] Job requeue backoff: `AAP_JOB_BACKOFF_SECONDS` is now honoured — a failed
+      job is deferred (Redis sorted set / in-memory delayed list) rather than
+      re-claimed in a tight loop.
+- [x] API honesty: removed the silently-ignored `resume`/`locale` fields from
+      `POST /runs` (they were accepted and never used); unknown fields are
+      rejected with 422.
+- [x] `/health` reports `service` and `version` for rollout/orchestration.
+- [x] CI now runs `alembic check` in the integration job, so a model change
+      without a migration fails the build instead of drifting silently.
+
 ## Phase 2 — Model breadth
 
 - [ ] Anthropic provider.

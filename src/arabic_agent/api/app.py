@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
+from .. import __version__
 from ..container import Platform
 from ..core.config import Settings
 from ..core.enums import RunStatus
@@ -179,6 +180,8 @@ def create_app(
     async def health() -> HealthResponse:
         return HealthResponse(
             status="ok",
+            service=settings.otel_service_name,
+            version=__version__,
             environment=settings.environment,
             runtime=platform.runtime.kind.value,
             default_model=platform.gateway.default_model,

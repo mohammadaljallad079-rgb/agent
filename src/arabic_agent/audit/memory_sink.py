@@ -15,6 +15,15 @@ class InMemoryAuditSink(AuditSink):
         self._max = max_events_per_run
         self._lock = asyncio.Lock()
 
+    async def next_sequence(self, *, run_id: str) -> int:
+        # This sink is process-local, so it can assign a per-run sequence from
+        # the events it already holds. That keeps sequences unique even when no
+        # durable sink (Postgres) is attached.
+        for (_, rid), bucket in self._events.items():
+            if rid == run_id and bucket:
+                return bucket[-1].sequence + 1
+        return 0
+
     async def emit(self, event: AuditEvent) -> None:
         key = (event.tenant_id, event.run_id)
         async with self._lock:
