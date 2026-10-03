@@ -34,7 +34,7 @@ Legend: `[x]` done · `[ ]` planned · `[~]` partially done / interface only.
 - [x] Local/Cloud runtime boundary (`RuntimeProfile`, `Transport`).
 - [x] HTTP API: auth, rate limiting, `/health`, `/tools`, `/runs`,
       `/runs/{id}`, `/approvals`, `/approvals/{id}/decide`.
-- [x] Test suite (68 tests) and static gates green.
+- [x] Test suite (69 tests) and static gates green.
 
 ---
 
