@@ -50,6 +50,16 @@ if it makes a demo look better.
   `tenant_id`; queries must filter by it.
 - **Everything meaningful is audited.** Add an `AuditEventType` and emit it when
   you introduce a new class of transition.
+- **Audit sequences are owned by shared storage, not by a process.** When the
+  API and a worker both write events for one run they must not each count from
+  memory. `AuditLog` asks a durable sink for the next `sequence`; the Postgres
+  sink derives it from the max stored sequence and retries a lost race. Never
+  reintroduce a per-process counter in a shared-storage path.
+- **Bounded loops.** Every retry/replan/requeue path must consume a configured
+  budget (`max_tool_retries`, `max_replans`, `job_max_attempts`) and the *real*
+  count must be passed to the policy — a control that is documented but always
+  called with zero is not a control. Failed jobs requeue with backoff, never in
+  a tight loop.
 
 ## 4. Coding standards
 
@@ -145,7 +155,10 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   Prometheus exposition, tracing with an optional OpenTelemetry bridge,
   readiness probes). `/metrics` and `/readyz` are live; `/health` is liveness.
   Green.
-- Tests are 123 (101 run by default; 22 Postgres/Redis integration tests are
+- Runtime correctness hardening: durable audit sequencing across processes,
+  enforced `max_replans`, job requeue backoff, honest `POST /runs` validation,
+  `service`/`version` on `/health`, and `alembic check` in CI. Green.
+- Tests are 130 (105 run by default; 25 Postgres/Redis integration tests are
   skipped unless `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` are set — see
   `ARCHITECTURE.md` §19).
 - Not yet implemented (see `TODO.md`): desktop runtime, workflow triggers,

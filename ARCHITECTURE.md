@@ -33,7 +33,7 @@ The repository was an **empty greenfield** at the start of this phase:
 
 Therefore this architecture is a clean design from zero, laid down as a real,
 runnable foundation rather than a specification. The foundation is implemented,
-linted (`ruff`), type-checked (`mypy --strict`) and tested (`pytest`, 69 tests).
+linted (`ruff`), type-checked (`mypy --strict`) and tested (`pytest`, 130 tests).
 
 ---
 
@@ -526,7 +526,7 @@ recoverable worker runtime are now implemented (see §3a).
 
 The foundation is verified, not assumed.
 
-- **Unit / integration tests** (`tests/`, 123 tests) exercise real code paths:
+- **Unit / integration tests** (`tests/`, 130 tests) exercise real code paths:
   - `test_permissions.py` — policy decisions (allow/deny/requires-approval),
     risk ceilings, tenant policy overrides.
   - `test_tools.py` — argument validation, sandbox escape refusal, execution.
