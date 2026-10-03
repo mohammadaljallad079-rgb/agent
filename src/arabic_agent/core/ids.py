@@ -18,6 +18,8 @@ PREFIX_APPROVAL = "apr"
 PREFIX_RUN = "run"
 PREFIX_MEMORY = "mem"
 PREFIX_MESSAGE = "msg"
+PREFIX_JOB = "job"
+PREFIX_IDEMPOTENCY = "idm"
 
 
 def new_id(prefix: str) -> str:

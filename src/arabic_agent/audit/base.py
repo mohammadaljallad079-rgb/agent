@@ -20,6 +20,8 @@ from ..core.redaction import redact
 
 class AuditEventType(StrEnum):
     RUN_STARTED = "run.started"
+    RUN_RECOVERED = "run.recovered"
+    RUN_RETRIED = "run.retried"
     PLAN_CREATED = "plan.created"
     PLAN_REVISED = "plan.revised"
     STEP_STARTED = "step.started"
@@ -35,6 +37,13 @@ class AuditEventType(StrEnum):
     MODEL_CALL = "model.call"
     MEMORY_WRITE = "memory.write"
     MEMORY_READ = "memory.read"
+    JOB_ENQUEUED = "job.enqueued"
+    JOB_CLAIMED = "job.claimed"
+    JOB_COMPLETED = "job.completed"
+    JOB_FAILED = "job.failed"
+    AUTH_SUCCESS = "auth.success"
+    AUTH_FAILURE = "auth.failure"
+    SECURITY_EVENT = "security.event"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_CANCELLED = "run.cancelled"

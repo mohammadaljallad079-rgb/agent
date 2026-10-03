@@ -88,6 +88,11 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   do not reach into internals.
 - Cover edge cases: denial, approval pause/resume, retry/replan limits, sandbox
   escape attempts, secret redaction.
+- Infrastructure-backed tests (Postgres, Redis) live in `tests/` and are marked
+  `postgres` / `redis`. They run only when `AAP_TEST_DATABASE_URL` and
+  `AAP_TEST_REDIS_URL` point at throwaway services (`docker compose up -d`), and
+  use a dedicated test database they create and drop themselves. Never point
+  them at a shared or production database.
 
 ## 7. Security rules
 
@@ -131,6 +136,13 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
 - Foundation phase: agent loop, tools, permissions, approvals, tasks, memory,
   context, model gateway, audit, tenancy, i18n, local/cloud boundary, HTTP API,
   and tests are implemented and green (`ruff`, `mypy --strict`, `pytest`).
-- Not yet implemented (see `TODO.md`): Postgres/Redis persistence, desktop
-  runtime, workflow triggers, document/media tools, social/ERP connectors,
-  browser/printing/email tools, CI pipeline.
+- Persistence & operations phase: Postgres stores (runs, tasks, approvals,
+  memory, audit), Alembic migrations, Redis-backed rate limiter / lock /
+  idempotency guard / reliable job queue, and a recoverable worker runtime
+  (`queued` execution mode, leases, heartbeats, bounded recovery). Green.
+- Tests are 93 (74 run by default; 19 Postgres/Redis integration tests are
+  skipped unless `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` are set — see
+  `ARCHITECTURE.md` §19).
+- Not yet implemented (see `TODO.md`): structured logging/metrics/tracing,
+  readiness checks, desktop runtime, workflow triggers, document/media tools,
+  social/ERP connectors, browser/printing/email tools.

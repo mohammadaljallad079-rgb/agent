@@ -38,20 +38,30 @@ Legend: `[x]` done · `[ ]` planned · `[~]` partially done / interface only.
 
 ---
 
-## Phase 1 — Production persistence & operations (next)
+## Phase 1 — Production persistence & operations (done)
 
-Highest priority: the foundation is correct but holds state in memory.
+The foundation was correct but held state in memory. This phase made runs
+durable and recoverable behind the existing ABCs, with no agent-core changes.
 
-- [ ] Implement `PostgresTaskStore`, `PostgresApprovalStore`,
-      `PostgresMemoryStore`, and a Postgres-backed run registry against the
-      existing ABCs. No interface changes.
-- [ ] Durable conversation/history store so runs survive a process restart.
-- [ ] Redis-backed rate limiter and distributed run queue.
+- [x] `PostgresTaskStore`, `PostgresApprovalStore`, `PostgresMemoryStore`,
+      `PostgresAuditStore`, and a `PostgresRunStore` against the existing ABCs.
+      No interface changes.
+- [x] Durable run registry so runs survive a process restart; runs are created
+      and read back from Postgres.
+- [x] Redis-backed distributed rate limiter, distributed lock and idempotency
+      guard, shared across API replicas.
+- [x] Redis-backed reliable job queue (ready list + in-flight set, Lua-atomic
+      claim/ack/nack/reclaim-stale) and `InMemoryJobQueue` for local/offline.
+- [x] Recoverable runtime: `queued` execution mode, `Worker`, `RunExecutor`
+      with lease + heartbeat, and a bounded recovery loop that re-enqueues runs
+      whose worker lease expired. Runs paused for approval are left untouched.
+- [x] Idempotent run creation via an idempotency key.
+- [x] Migrations (Alembic) and a documented schema; `docker-compose.yml` for
+      local Postgres/Redis; a worker CLI (`worker/main.py`).
 - [ ] Structured, correlated logging (tenant/user/run ids) and metrics
       (latency, tool error rate, retry rate, approval latency).
 - [ ] OpenTelemetry traces spanning API → agent loop → model → tool.
 - [ ] Health/readiness endpoints that check dependencies (DB, model, sinks).
-- [ ] Migrations (Alembic or equivalent) and a documented schema.
 
 ## Phase 2 — Model breadth
 

@@ -52,12 +52,18 @@ class ErrorClass(StrEnum):
 
 
 class RunStatus(StrEnum):
-    """Lifecycle of a single agent run (one user goal)."""
+    """Lifecycle of a single agent run (one user goal).
+
+    Valid transitions are enforced by :class:`RunRecord`; see
+    ``runs.base.RUN_TRANSITIONS``. ``RETRYING`` exists so a run recovered by a
+    worker after a crash is distinguishable from one that never started.
+    """
 
     PENDING = "pending"
     PLANNING = "planning"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    RETRYING = "retrying"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

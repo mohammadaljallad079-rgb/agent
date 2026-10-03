@@ -32,8 +32,13 @@ for later is listed in [`TODO.md`](TODO.md); nothing pretends to work.
 - ✅ Audit log with secret redaction
 - ✅ Multi-tenant identity model and API-key authentication
 - ✅ Local/Cloud runtime boundary and integration layer
-- ⏳ Postgres/Redis persistence, desktop runtime, workflow triggers, document
-  and media tools, social/ERP connectors (see `TODO.md`)
+- ✅ Durable Postgres persistence (runs, tasks, approvals, memory, audit) with
+  Alembic migrations
+- ✅ Redis-backed distributed rate limiting, locking and idempotency
+- ✅ Reliable Redis job queue and a recoverable worker runtime (leases,
+  heartbeats, bounded recovery after worker loss)
+- ⏳ Structured logging/metrics/tracing, desktop runtime, workflow triggers,
+  document and media tools, social/ERP connectors (see `TODO.md`)
 
 ## Architecture
 
@@ -61,13 +66,39 @@ Health check:
 curl localhost:8000/health
 ```
 
+### Production (durable + queued)
+
+With Postgres and Redis configured, the API persists runs and enqueues them
+instead of executing inline; a separate worker executes them and recovers runs
+whose worker was lost.
+
+```bash
+docker compose up -d                    # Postgres + Redis
+export AAP_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap
+export AAP_REDIS_URL=redis://localhost:6379/0
+export AAP_EXECUTION_MODE=queued
+
+uv run alembic upgrade head             # apply the schema
+uv run agent-platform                   # API
+uv run agent-worker                     # one or more workers
+```
+
 ## Development
 
 ```bash
-uv run pytest          # tests
+uv run pytest          # tests (unit; infra tests skip without services)
 uv run mypy            # type checking (strict)
 uv run ruff check .    # lint
 uv run ruff format .   # format
+```
+
+Run the full suite including Postgres/Redis integration tests:
+
+```bash
+docker compose up -d
+AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test \
+AAP_TEST_REDIS_URL=redis://localhost:6379/15 \
+uv run pytest
 ```
 
 ## Security

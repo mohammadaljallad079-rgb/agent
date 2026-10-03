@@ -84,6 +84,11 @@ class Tool(ABC):
     permissions: tuple[Permission, ...] = ()
     #: Per-permission risk overrides; unspecified permissions use the baseline.
     risks: ClassVar[dict[Permission, RiskLevel]] = {}
+    #: Whether re-executing with identical arguments can cause a duplicate
+    #: external effect (sending an email, creating an invoice, ...). Such tools
+    #: are wrapped by the idempotency guard when one is configured, so a retried
+    #: or redelivered execution does not perform the effect twice.
+    side_effecting: ClassVar[bool] = False
 
     def __init__(self) -> None:
         if not getattr(self, "name", None):

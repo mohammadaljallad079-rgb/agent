@@ -117,18 +117,23 @@ class AgentRunner:
         workspace_dir: str | None = None,
         run_id: str | None = None,
         resume: bool = False,
+        recovery_attempt: int | None = None,
     ) -> AgentRunResult:
         run_id = run_id or new_id(PREFIX_RUN)
         workspace = self._prepare_workspace(workspace_dir, run_id)
         started = time.monotonic()
 
         await self._audit.record(
-            AuditEventType.RUN_STARTED,
+            (
+                AuditEventType.RUN_RECOVERED
+                if recovery_attempt is not None
+                else AuditEventType.RUN_STARTED
+            ),
             tenant_id=principal.tenant_id,
             user_id=principal.user_id,
             run_id=run_id,
-            message="run started",
-            data={"goal": goal, "workspace": workspace},
+            message="run recovered" if recovery_attempt is not None else "run started",
+            data={"goal": goal, "workspace": workspace, "recovery_attempt": recovery_attempt},
         )
 
         plan = await self._resolve_plan(

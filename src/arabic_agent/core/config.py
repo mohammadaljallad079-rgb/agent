@@ -47,6 +47,33 @@ class Settings(BaseSettings):
     database_url: SecretStr = SecretStr("")
     # A local, offline-first store path used by the local runtime.
     local_store_dir: str = ".agent-data"
+    # Connection pool sizing for the async Postgres engine.
+    db_pool_size: int = Field(default=5, ge=1, le=100)
+    db_max_overflow: int = Field(default=10, ge=0, le=200)
+
+    # --- Ephemeral coordination (Redis) ------------------------------------
+    # Redis is used ONLY for rate limiting, the job queue, locks and the
+    # idempotency cache. Postgres remains the durable source of truth.
+    redis_url: SecretStr = SecretStr("")
+
+    # --- Execution mode ----------------------------------------------------
+    # "inline": the API process runs the agent (local/offline runtime, tests).
+    # "queued": the API enqueues a job and a separate worker executes it
+    #           (production/cloud runtime).
+    execution_mode: Literal["inline", "queued"] = "inline"
+
+    # --- Worker / queue ----------------------------------------------------
+    worker_id: str = ""
+    worker_poll_seconds: float = Field(default=1.0, gt=0)
+    #: How long a worker lease is valid before the run is considered stale.
+    worker_lease_seconds: int = Field(default=120, ge=5)
+    #: How often a running worker renews its lease.
+    worker_heartbeat_seconds: int = Field(default=20, ge=1)
+    #: Maximum job delivery attempts before a run is marked failed.
+    job_max_attempts: int = Field(default=3, ge=1, le=20)
+    job_backoff_seconds: float = Field(default=5.0, ge=0)
+    #: How often the recovery loop scans for stale runs.
+    recovery_interval_seconds: float = Field(default=15.0, gt=0)
 
     # --- Model gateway -----------------------------------------------------
     # API keys are secrets; they must be injected via environment, never code.

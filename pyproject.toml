@@ -18,6 +18,12 @@ dependencies = [
     "fastapi>=0.111,<1",
     "uvicorn[standard]>=0.30,<1",
     "httpx>=0.27,<1",
+    # Persistence (durable source of truth: runs, tasks, approvals, memory, audit)
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.29,<1",
+    "alembic>=1.13,<2",
+    # Ephemeral coordination (rate limiting, job queue, locks, idempotency)
+    "redis>=5.0,<6",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +36,7 @@ dev = [
 
 [project.scripts]
 agent-platform = "arabic_agent.api.app:main"
+agent-worker = "arabic_agent.worker.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arabic_agent"]
@@ -40,6 +47,10 @@ addopts = "-ra -q"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "postgres: integration tests requiring a reachable Postgres (AAP_TEST_DATABASE_URL)",
+    "redis: integration tests requiring a reachable Redis (AAP_TEST_REDIS_URL)",
+]
 
 [tool.ruff]
 line-length = 100

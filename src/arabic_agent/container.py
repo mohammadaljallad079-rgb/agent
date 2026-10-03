@@ -4,11 +4,22 @@ Wires the platform together from configuration. Nothing else in the codebase
 constructs its own dependencies; the container is the single place where
 concrete implementations are chosen, which keeps the agent core testable (tests
 build a container with a deterministic model provider and a temp workspace).
+
+Persistence selection is deliberate and boundary-aware:
+
+* With ``AAP_DATABASE_URL`` set, durable Postgres stores are used (cloud/prod).
+* Without it, process-local in-memory stores are used (offline/desktop/tests).
+* With ``AAP_REDIS_URL`` set, distributed rate limiting, the reliable job queue
+  and the idempotency cache are used; otherwise local in-memory equivalents are.
+
+The agent core depends only on the store/queue ABCs, never on these choices.
 """
 
 from __future__ import annotations
 
 import logging
+
+import redis.asyncio as aioredis
 
 from .agent.executor import ToolExecutor
 from .agent.runner import AgentRunner
@@ -19,18 +30,35 @@ from .context.manager import ContextManager
 from .core.config import Settings
 from .core.enums import Locale
 from .core.errors import ConfigurationError
+from .infrastructure.idempotency import (
+    IdempotencyGuard,
+    InMemoryIdempotencyGuard,
+    RedisIdempotencyGuard,
+)
+from .infrastructure.rate_limit import InMemoryRateLimiter, RateLimiterBackend, RedisRateLimiter
+from .infrastructure.redis import build_redis_client
 from .integrations.base import IntegrationRegistry
 from .integrations.webhook import WebhookIntegration
+from .memory.base import MemoryStore
 from .memory.memory_store import InMemoryMemoryStore
 from .memory.policy import MemoryPolicy
 from .models.gateway import ModelGateway
 from .models.providers.openai_compatible import OpenAICompatibleProvider
 from .models.registry import ProviderRegistry
-from .permissions.approvals import InMemoryApprovalStore
+from .permissions.approvals import ApprovalStore, InMemoryApprovalStore
 from .permissions.policy import PolicyEngine
+from .persistence.database import Database
+from .persistence.stores import (
+    PostgresApprovalStore,
+    PostgresAuditStore,
+    PostgresMemoryStore,
+    PostgresRunStore,
+    PostgresTaskStore,
+)
+from .runs.store import InMemoryRunStore, RunStore
 from .runtime.boundary import RuntimeProfile
 from .tasks.engine import TaskEngine
-from .tasks.store import InMemoryTaskStore
+from .tasks.store import InMemoryTaskStore, TaskStore
 from .tools.base import Tool
 from .tools.builtin import (
     EchoTool,
@@ -41,6 +69,7 @@ from .tools.builtin import (
 )
 from .tools.builtin.echo import FinishTool
 from .tools.registry import ToolRegistry
+from .worker.queue import InMemoryJobQueue, JobQueue, RedisJobQueue
 
 logger = logging.getLogger(__name__)
 
@@ -59,15 +88,21 @@ class Platform:
         gateway: ModelGateway,
         tools: ToolRegistry,
         policy: PolicyEngine,
-        approvals: InMemoryApprovalStore,
+        approvals: ApprovalStore,
         audit: AuditLog,
-        memory: InMemoryMemoryStore,
+        memory: MemoryStore,
         memory_policy: MemoryPolicy,
         tasks: TaskEngine,
         context: ContextManager,
         executor: ToolExecutor,
         integrations: IntegrationRegistry,
         runtime: RuntimeProfile,
+        runs: RunStore,
+        queue: JobQueue,
+        rate_limiter: RateLimiterBackend,
+        idempotency: IdempotencyGuard,
+        database: Database | None = None,
+        redis_client: aioredis.Redis | None = None,
     ) -> None:
         self.settings = settings
         self.gateway = gateway
@@ -82,6 +117,22 @@ class Platform:
         self.executor = executor
         self.integrations = integrations
         self.runtime = runtime
+        self.runs = runs
+        self.queue = queue
+        self.rate_limiter = rate_limiter
+        self.idempotency = idempotency
+        self.database = database
+        self.redis_client = redis_client
+
+    @property
+    def durable(self) -> bool:
+        """Whether this platform is backed by durable Postgres persistence."""
+        return self.database is not None
+
+    @property
+    def distributed(self) -> bool:
+        """Whether Redis-backed coordination (queue/rate limit/idempotency) is on."""
+        return self.redis_client is not None
 
     def build_runner(self, *, locale: Locale | None = None) -> AgentRunner:
         """Create an agent runner bound to this platform's components."""
@@ -103,6 +154,13 @@ class Platform:
         await self.gateway.aclose()
         await self.integrations.aclose()
         await self.audit.aclose()
+        await self.queue.aclose()
+        await self.idempotency.aclose()
+        await self.rate_limiter.aclose()
+        if self.redis_client is not None:
+            await self.redis_client.aclose()
+        if self.database is not None:
+            await self.database.dispose()
 
     @classmethod
     def build(
@@ -113,10 +171,14 @@ class Platform:
         provider_registry: ProviderRegistry | None = None,
         default_model: str | None = None,
         fallbacks: tuple[str, ...] = (),
-        memory_store: InMemoryMemoryStore | None = None,
-        task_store: InMemoryTaskStore | None = None,
-        approval_store: InMemoryApprovalStore | None = None,
+        memory_store: MemoryStore | None = None,
+        task_store: TaskStore | None = None,
+        approval_store: ApprovalStore | None = None,
+        run_store: RunStore | None = None,
         audit_log: AuditLog | None = None,
+        queue: JobQueue | None = None,
+        database: Database | None = None,
+        redis_client: aioredis.Redis | None = None,
     ) -> Platform:
         """Construct a platform from settings.
 
@@ -186,6 +248,28 @@ class Platform:
             )
         logger.info("model gateway ready: default=%s", gateway.default_model)
 
+        # --- Persistence selection -------------------------------------
+        if database is None and settings.database_url.get_secret_value():
+            database = Database(
+                settings.database_url.get_secret_value(),
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
+            )
+        logger.info(
+            "durable persistence: %s",
+            "postgres" if database is not None else "in-memory (local runtime)",
+        )
+
+        # --- Redis / coordination selection ----------------------------
+        if redis_client is None and settings.redis_url.get_secret_value():
+            redis_client = build_redis_client(settings.redis_url.get_secret_value())
+        logger.info(
+            "coordination: %s",
+            "redis (distributed queue/rate limit/idempotency)"
+            if redis_client is not None
+            else "in-process (local runtime)",
+        )
+
         # --- Tools ------------------------------------------------------
         tools = ToolRegistry(
             [
@@ -201,14 +285,43 @@ class Platform:
 
         # --- Governance -------------------------------------------------
         policy = PolicyEngine()
-        approvals = approval_store or InMemoryApprovalStore()
-        audit = audit_log or AuditLog([InMemoryAuditSink(), LoggingAuditSink()])
-        memory = memory_store or InMemoryMemoryStore()
+        if database is not None:
+            approvals: ApprovalStore = approval_store or PostgresApprovalStore(database)
+            memory: MemoryStore = memory_store or PostgresMemoryStore(database)
+            runs: RunStore = run_store or PostgresRunStore(database)
+            selected_task_store: TaskStore = task_store or PostgresTaskStore(database)
+        else:
+            approvals = approval_store or InMemoryApprovalStore()
+            memory = memory_store or InMemoryMemoryStore()
+            runs = run_store or InMemoryRunStore()
+            selected_task_store = task_store or InMemoryTaskStore()
+
+        if audit_log is not None:
+            audit = audit_log
+        elif database is not None:
+            # Durable audit plus a structured log line for streaming/SIEM.
+            audit = AuditLog([PostgresAuditStore(database), LoggingAuditSink()])
+        else:
+            audit = AuditLog([InMemoryAuditSink(), LoggingAuditSink()])
+
         memory_policy = MemoryPolicy.default(tenant_id="__platform__")
 
         # --- Tasks & context -------------------------------------------
-        tasks = TaskEngine(task_store or InMemoryTaskStore())
+        tasks = TaskEngine(selected_task_store)
         context = ContextManager(settings)
+
+        # --- Coordination primitives -----------------------------------
+        if redis_client is not None:
+            redis = redis_client
+            rate_limiter: RateLimiterBackend = RedisRateLimiter(
+                redis, rate_per_minute=settings.rate_limit_per_minute
+            )
+            idempotency: IdempotencyGuard = RedisIdempotencyGuard(redis)
+            job_queue: JobQueue = queue or RedisJobQueue(redis)
+        else:
+            rate_limiter = InMemoryRateLimiter(rate_per_minute=settings.rate_limit_per_minute)
+            idempotency = InMemoryIdempotencyGuard()
+            job_queue = queue or InMemoryJobQueue()
 
         executor = ToolExecutor(
             registry=tools,
@@ -216,6 +329,7 @@ class Platform:
             approvals=approvals,
             audit=audit,
             approval_ttl_seconds=settings.approval_ttl_seconds,
+            idempotency=idempotency,
         )
 
         # --- Integrations ----------------------------------------------
@@ -236,6 +350,12 @@ class Platform:
             executor=executor,
             integrations=integrations,
             runtime=runtime,
+            runs=runs,
+            queue=job_queue,
+            rate_limiter=rate_limiter,
+            idempotency=idempotency,
+            database=database,
+            redis_client=redis_client,
         )
 
     def memory_policy_for(self, tenant_id: str) -> MemoryPolicy:

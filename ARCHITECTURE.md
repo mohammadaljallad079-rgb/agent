@@ -44,28 +44,23 @@ layer imports a higher one.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ Interfaces        HTTP API (FastAPI)   ·  CLI  ·  (future) Desktop│
+│ Interfaces        HTTP API (FastAPI)   ·  CLI  ·  Worker  · (future) Desktop│
 ├──────────────────────────────────────────────────────────────────┤
 │ Runtime boundary  Transport: Local Runtime  |  Cloud Runtime       │
 ├──────────────────────────────────────────────────────────────────┤
 │ Orchestration     AgentRunner (the loop) · Planner · RecoveryPolicy│
-│                   TaskEngine · ContextManager                      │
+│                   TaskEngine · ContextManager · Worker/RunExecutor │
 ├──────────────────────────────────────────────────────────────────┤
 │ Capabilities      ToolRegistry/Tools · Permissions/Policy/Approvals│
 │                   ModelGateway/Providers · Memory · Integrations   │
 ├──────────────────────────────────────────────────────────────────┤
 │ Foundations       Audit · Config/Settings · Errors · Redaction ·   │
 │                   i18n · Tenancy · IDs                             │
+├──────────────────────────────────────────────────────────────────┤
+│ Infrastructure    Persistence (Postgres) · Redis (queue/lock/      │
+│                   rate-limit/idempotency) · Migrations (Alembic)   │
 └──────────────────────────────────────────────────────────────────┘
 ```
-
-**Composition root.** `arabic_agent/container.py::Platform` is the single place
-where concrete implementations are chosen and wired. Nothing else constructs its
-own dependencies. `Platform.build()` is the dependency-injection seam: tests and
-the desktop runtime inject a deterministic/local model provider and in-memory
-stores, while production builds providers from configuration. If no model
-provider is configured, `build()` raises `ConfigurationError` — the platform
-refuses to start in a half-working state.
 
 ### Module map
 
@@ -84,7 +79,64 @@ refuses to start in a half-working state.
 | `integrations` | External-service abstraction + registry (webhook reference impl) |
 | `runtime` | Local/Cloud profile and `Transport` boundary |
 | `agent` | The loop, planner, recovery policy, tool executor, prompts |
-| `api` | FastAPI app, auth, rate limiting, schemas, run registry |
+| `runs` | `RunRecord` lifecycle/state machine + `RunStore` ABC |
+| `persistence` | SQLAlchemy models, `Database`, Postgres store implementations |
+| `infrastructure` | Redis-backed rate limiter, distributed lock, idempotency guard |
+| `worker` | Reliable job queue, `RunExecutor`, `Worker`, recovery loop, worker CLI |
+| `api` | FastAPI app, auth, rate limiting, schemas, `RunService` |
+
+---
+
+## 3a. Persistence, queue and recoverable runtime (Phase 2)
+
+The foundation held all state in process memory. Phase 2 makes runs **durable**
+and **recoverable** without changing any agent-core boundary: every addition is
+an implementation behind an existing ABC (`RunStore`, `TaskStore`,
+`ApprovalStore`, `MemoryStore`, `AuditSink`, `JobQueue`).
+
+**Data layer.** `persistence/database.py::Database` owns an async SQLAlchemy
+engine and a `transaction()` context manager. `persistence/models.py` defines the
+tables (runs, run steps, task plans/steps, approvals, memory, audit). Schema is
+managed by **Alembic** (`migrations/`), not `create_all` in production.
+`persistence/stores/*` are the Postgres implementations; the composition root
+selects them when `AAP_DATABASE_URL` is set.
+
+**Optimistic concurrency.** `RunRecord` carries a `version`; every write goes
+through `RunStore.update(record, expected_version=...)`, a conditional `UPDATE`
+whose row count is checked. A stale writer gets `ConflictError` and re-reads —
+this is what makes the state machine safe across replicas.
+
+**Reliable queue.** `worker/queue.py::RedisJobQueue` keeps a ready list and an
+in-flight sorted set. Claiming atomically moves a job ready→inflight; `ack`
+removes it; `nack` requeues or drops; `reclaim_stale` returns jobs whose worker
+died before acking. Lua scripts make each step atomic. `InMemoryJobQueue` is the
+local/offline and test implementation.
+
+**Recoverable runtime.** In `queued` execution mode the API never runs an agent
+inline: `RunService.start()` persists a run, enqueues a `START_RUN` job and
+returns immediately. A `Worker` claims the job and `RunExecutor` executes it
+under a **lease** refreshed by a heartbeat. If the worker dies, the lease
+expires; the recovery loop re-enqueues a `RECOVER_RUN` job, and the executor
+re-reads durable state (completed task steps are terminal) and resumes. Recovery
+is bounded by `job_max_attempts`; a run waiting for approval is never touched.
+
+**Idempotency.** `RunService.start()` accepts an idempotency key backed by
+`infrastructure/idempotency.py`; a repeated request returns the original run
+instead of creating a duplicate.
+
+**Distributed coordination.** `infrastructure/rate_limit.py` (Redis token
+bucket), `lock.py` (SET NX PX lock) and `idempotency.py` are shared across API
+replicas; the in-memory variants remain for the local runtime.
+
+
+
+**Composition root.** `arabic_agent/container.py::Platform` is the single place
+where concrete implementations are chosen and wired. Nothing else constructs its
+own dependencies. `Platform.build()` is the dependency-injection seam: tests and
+the desktop runtime inject a deterministic/local model provider and in-memory
+stores, while production builds providers from configuration. If no model
+provider is configured, `build()` raises `ConfigurationError` — the platform
+refuses to start in a half-working state.
 
 ---
 
@@ -208,8 +260,9 @@ Approvals are first-class, persisted, audited entities — not a chat message.
 - `Approval`: `id`, `run_id`, `tenant_id`, `user_id`, `tool_name`, `permission`,
   `arguments`, `summary`, `status`, `created_at`, `expires_at`, `resolved_by`,
   `reason`.
-- `ApprovalStore` (ABC) with `InMemoryApprovalStore` today; a Postgres-backed
-  store is a drop-in for production.
+- `ApprovalStore` (ABC) with `InMemoryApprovalStore` for the local runtime and
+  `PostgresApprovalStore` for production; resolution is a one-shot conditional
+  update, so an approval can never be decided twice.
 - TTL from `settings.approval_ttl_seconds`; expired approvals can never be
   resolved as approved.
 - API: `GET /approvals` lists pending approvals for the tenant;
@@ -434,10 +487,10 @@ These have clear insertion points and are tracked in `TODO.md`:
   on the existing task engine + integrations.
 - **Desktop agent** — a local runtime implementing `Transport`, registering
   local tools and a local model.
-- **Persistence** — Postgres/Redis implementations of the existing store ABCs.
 
 None of these require rewriting the agent core; each is an implementation behind
-an existing abstraction.
+an existing abstraction. Durable Postgres persistence, the Redis queue and the
+recoverable worker runtime are now implemented (see §3a).
 
 ---
 
@@ -445,7 +498,7 @@ an existing abstraction.
 
 The foundation is verified, not assumed.
 
-- **Unit / integration tests** (`tests/`, 69 tests) exercise real code paths:
+- **Unit / integration tests** (`tests/`, 93 tests) exercise real code paths:
   - `test_permissions.py` — policy decisions (allow/deny/requires-approval),
     risk ceilings, tenant policy overrides.
   - `test_tools.py` — argument validation, sandbox escape refusal, execution.
@@ -456,9 +509,31 @@ The foundation is verified, not assumed.
   - `test_tasks_context.py` — plan transitions and context budgeting.
   - `test_core.py` — config, IDs, redaction.
   - `test_api.py` — auth, runs, approvals, rate limiting, error mapping.
+  - `test_worker_recovery.py` — worker execution, lease-based recovery,
+    approval-safe recovery, poison-job failure bounds (in-memory stores).
+  - `test_persistence_postgres.py` — **real Postgres**: round-tripping of every
+    new field, idempotency-key uniqueness, optimistic-concurrency conflicts,
+    tenant isolation, `list_stale`/heartbeat semantics, one-shot approvals,
+    memory upsert. Marked `postgres`.
+  - `test_redis_infra.py` — **real Redis**: token-bucket rate limiting,
+    distributed lock exclusivity, idempotency lifecycle, and the reliable
+    queue's claim/ack/nack/reclaim lifecycle. Marked `redis`.
+  - `test_runtime_e2e.py` — the Phase 2 acceptance path: a run created through
+    `RunService` in `queued` mode is persisted to Postgres, enqueued on Redis,
+    executed by a real `Worker`, and recovered after simulated worker loss.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.
+- **Infrastructure tests are opt-in.** The default `pytest` run needs no
+  services; Postgres/Redis modules are skipped unless `AAP_TEST_DATABASE_URL`
+  and `AAP_TEST_REDIS_URL` are set. When set they run against a **dedicated test
+  database** whose schema is created and dropped per test — never a mock:
+  ```bash
+  AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test \
+  AAP_TEST_REDIS_URL=redis://localhost:6379/15 \
+  uv run pytest
+  ```
+  `docker compose up -d` starts the Postgres and Redis used by these tests.
 - **Static gates**: `ruff check`, `ruff format --check`, `mypy --strict`.
 - **CI expectation** (to add): run all four gates on every change.
 

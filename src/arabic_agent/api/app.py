@@ -1,8 +1,17 @@
 """FastAPI application.
 
-Exposes the platform over HTTP: start/resume runs, list and resolve approvals,
-inspect the tool catalog, and a health endpoint. Every endpoint is scoped to the
-authenticated principal's tenant; there is no cross-tenant read path.
+Exposes the platform over HTTP: start runs, read runs, list and resolve
+approvals, inspect the tool catalog, the task plan and the audit trail, and a
+health endpoint. Every endpoint is scoped to the authenticated principal's
+tenant; there is no cross-tenant read path.
+
+Two execution modes share this surface:
+
+* ``inline`` — the request executes the run and returns its result (local
+  runtime, tests). Latency equals task duration.
+* ``queued`` — the request persists the run, enqueues a job and returns
+  immediately; a worker executes it. This is the production shape, and it is
+  what makes a killed request harmless: the run survives and is resumed.
 
 The default application is built lazily so importing this module (e.g. in tests
 or tooling) never requires model credentials.
@@ -12,57 +21,60 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from ..agent.base import AgentRunResult
 from ..container import Platform
 from ..core.config import Settings
-from ..core.enums import ApprovalStatus, RunStatus
+from ..core.enums import RunStatus
 from ..core.errors import (
     ApprovalRequiredError,
     ConfigurationError,
+    ConflictError,
     NotFoundError,
     PermissionDeniedError,
     PlatformError,
     ValidationError,
 )
 from ..permissions.base import Principal
+from ..runs.base import RunRecord
 from .auth import ApiKeyAuth, build_principal_dependency
-from .rate_limit import RateLimiter
-from .run_registry import RunRecord, RunRegistry
 from .schemas import (
     ApprovalDecision,
     ApprovalSummary,
+    AuditSummary,
     HealthResponse,
+    MemorySummary,
     RunRequest,
     RunResponse,
+    RunSummary,
+    TaskSummary,
     ToolSummary,
 )
+from .service import RunService
 
 logger = logging.getLogger(__name__)
 
 
-def _run_response(result: AgentRunResult) -> RunResponse:
+def _run_response(record: RunRecord) -> RunResponse:
     return RunResponse(
-        run_id=result.run_id,
-        status=result.status,
-        result=result.result,
-        verified=result.verified,
-        pending_approval_id=result.pending_approval_id,
-        error=result.error,
-        steps_executed=result.steps_executed,
-        tool_calls=result.tool_calls,
-        retries=result.retries,
-        replans=result.replans,
-        usage={
-            "prompt_tokens": result.usage.prompt_tokens,
-            "completion_tokens": result.usage.completion_tokens,
-            "total_tokens": result.usage.total_tokens,
-        },
+        run_id=record.id,
+        status=record.status,
+        result=record.result,
+        verified=record.verified,
+        pending_approval_id=record.pending_approval_id,
+        error=record.error,
+        steps_executed=record.steps_executed,
+        tool_calls=record.tool_calls,
+        retries=record.retries,
+        replans=record.replans,
+        usage=dict(record.usage),
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
+        finished_at=record.finished_at.isoformat() if record.finished_at else None,
     )
 
 
@@ -76,12 +88,12 @@ def create_app(
     settings = settings or platform.settings
     auth = auth or ApiKeyAuth.from_settings(settings)
     principal_dep = build_principal_dependency(auth, settings)
-    limiter = RateLimiter(rate_per_minute=settings.rate_limit_per_minute)
-    runs = RunRegistry()
+    limiter = platform.rate_limiter
+    service = RunService(platform, settings=settings)
 
     app = FastAPI(
         title="Arabic AI Agent Platform",
-        version="0.1.0",
+        version="0.2.0",
         description="Arabic-first Agent Operating Platform API.",
     )
 
@@ -101,17 +113,18 @@ def create_app(
         key = request.headers.get("X-API-Key") or (
             request.client.host if request.client else "anon"
         )
-        if not limiter.allow(key):
+        if not await limiter.allow(key):
+            retry_after = await limiter.retry_after_seconds(key)
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={"detail": "rate limit exceeded"},
-                headers={"Retry-After": str(limiter.retry_after_seconds(key))},
+                headers={"Retry-After": str(retry_after)},
             )
         return await call_next(request)
 
     @app.exception_handler(PlatformError)
     async def platform_error_handler(_: Request, exc: PlatformError) -> JSONResponse:
-        if isinstance(exc, (ValidationError,)):
+        if isinstance(exc, ValidationError):
             code = status.HTTP_422_UNPROCESSABLE_ENTITY
         elif isinstance(exc, PermissionDeniedError):
             code = status.HTTP_403_FORBIDDEN
@@ -119,6 +132,8 @@ def create_app(
             code = status.HTTP_409_CONFLICT
         elif isinstance(exc, NotFoundError):
             code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, ConflictError):
+            code = status.HTTP_409_CONFLICT
         else:
             code = status.HTTP_500_INTERNAL_SERVER_ERROR
         # Never leak internals in production responses.
@@ -139,6 +154,9 @@ def create_app(
             tools=platform.tools.names(),
             integrations=platform.integrations.names(),
             auth_enabled=auth.enabled,
+            execution_mode=settings.execution_mode,
+            durable=platform.durable,
+            distributed=platform.distributed,
         )
 
     # --- Tools ----------------------------------------------------------
@@ -153,6 +171,7 @@ def create_app(
                     description=tool.description,
                     permissions=[p.value for p in tool.permissions],
                     risks=risks,
+                    side_effecting=tool.side_effecting,
                 )
             )
         return summaries
@@ -162,39 +181,80 @@ def create_app(
     async def start_run(
         payload: RunRequest, principal: Principal = Depends(principal_dep)
     ) -> RunResponse:
-        runner = platform.build_runner()
-        result = await runner.run(
+        record = await service.start(
             principal=principal,
             goal=payload.goal,
             workspace_dir=payload.workspace_dir,
-            resume=payload.resume,
+            idempotency_key=payload.idempotency_key,
         )
-        workspace = result.workspace_dir or payload.workspace_dir or ""
-        await runs.put(
-            RunRecord(
-                run_id=result.run_id,
-                tenant_id=principal.tenant_id,
-                user_id=principal.user_id,
-                goal=payload.goal,
-                workspace_dir=workspace,
-                status=result.status,
-                pending_approval_id=result.pending_approval_id,
-                result=result.result,
+        return _run_response(record)
+
+    @app.get("/runs", response_model=list[RunSummary])
+    async def list_runs(
+        principal: Principal = Depends(principal_dep),
+        status_filter: RunStatus | None = Query(default=None, alias="status"),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> list[RunSummary]:
+        records = await service.list(
+            tenant_id=principal.tenant_id, status=status_filter, limit=limit, offset=offset
+        )
+        return [
+            RunSummary(
+                run_id=r.id,
+                status=r.status,
+                goal=r.goal,
+                created_at=r.created_at.isoformat(),
+                updated_at=r.updated_at.isoformat(),
             )
-        )
-        return _run_response(result)
+            for r in records
+        ]
 
     @app.get("/runs/{run_id}", response_model=RunResponse)
     async def get_run(run_id: str, principal: Principal = Depends(principal_dep)) -> RunResponse:
-        record = await runs.get(run_id, tenant_id=principal.tenant_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="run not found")
-        return RunResponse(
-            run_id=record.run_id,
-            status=record.status,
-            result=record.result,
-            pending_approval_id=record.pending_approval_id,
+        record = await service.get(run_id, tenant_id=principal.tenant_id)
+        return _run_response(record)
+
+    @app.get("/runs/{run_id}/plan", response_model=TaskSummary)
+    async def get_plan(run_id: str, principal: Principal = Depends(principal_dep)) -> TaskSummary:
+        plan = await platform.tasks.load_by_run(tenant_id=principal.tenant_id, run_id=run_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="no plan for run")
+        return TaskSummary(
+            id=plan.id,
+            run_id=plan.run_id,
+            goal=plan.goal,
+            revision=plan.revision,
+            steps=[
+                {
+                    "id": s.id,
+                    "index": s.index,
+                    "description": s.description,
+                    "status": s.status,
+                    "attempts": s.attempts,
+                    "result_summary": s.result_summary,
+                }
+                for s in plan.steps
+            ],
         )
+
+    @app.get("/runs/{run_id}/audit", response_model=list[AuditSummary])
+    async def get_audit(
+        run_id: str, principal: Principal = Depends(principal_dep)
+    ) -> list[AuditSummary]:
+        events = await platform.audit.history(tenant_id=principal.tenant_id, run_id=run_id)
+        return [
+            AuditSummary(
+                id=e.id,
+                type=e.type.value,
+                run_id=e.run_id,
+                sequence=e.sequence,
+                message=e.message,
+                timestamp=e.timestamp.isoformat(),
+                data=dict(e.data),
+            )
+            for e in events
+        ]
 
     # --- Approvals ------------------------------------------------------
     @app.get("/approvals", response_model=list[ApprovalSummary])
@@ -212,7 +272,7 @@ def create_app(
                 status=a.status,
                 created_at=a.created_at.isoformat(),
                 expires_at=a.expires_at.isoformat(),
-                arguments=a.arguments,
+                arguments=dict(a.arguments),
             )
             for a in pending
         ]
@@ -223,45 +283,36 @@ def create_app(
         payload: ApprovalDecision,
         principal: Principal = Depends(principal_dep),
     ) -> RunResponse:
-        approval = await platform.approvals.get(approval_id, tenant_id=principal.tenant_id)
-        record = await runs.get(approval.run_id, tenant_id=principal.tenant_id)
-        new_status = ApprovalStatus.APPROVED if payload.approve else ApprovalStatus.DENIED
-        resolved = await platform.approvals.resolve(
-            approval_id,
-            tenant_id=principal.tenant_id,
-            status=new_status,
-            resolved_by=principal.user_id,
+        record = await service.decide_approval(
+            principal=principal,
+            approval_id=approval_id,
+            approve=payload.approve,
             reason=payload.reason,
         )
-        if not payload.approve:
-            # Denied: report the terminal state without re-running.
-            return RunResponse(
-                run_id=resolved.run_id,
-                status=RunStatus.CANCELLED,
-                result="approval denied",
-            )
-        if record is None:
-            raise HTTPException(status_code=404, detail="run not found for approval")
-        runner = platform.build_runner()
-        result = await runner.resume_after_approval(
-            principal=principal,
-            approval=resolved,
-            run_id=resolved.run_id,
-            workspace_dir=record.workspace_dir,
+        return _run_response(record)
+
+    # --- Memory ---------------------------------------------------------
+    @app.get("/memory", response_model=list[MemorySummary])
+    async def list_memory(
+        principal: Principal = Depends(principal_dep),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> list[MemorySummary]:
+        from ..memory.base import MemoryQuery
+
+        entries = await platform.memory.query(
+            MemoryQuery(tenant_id=principal.tenant_id, user_id=principal.user_id, limit=limit)
         )
-        await runs.update(
-            RunRecord(
-                run_id=result.run_id,
-                tenant_id=principal.tenant_id,
-                user_id=principal.user_id,
-                goal=record.goal,
-                workspace_dir=record.workspace_dir,
-                status=result.status,
-                pending_approval_id=result.pending_approval_id,
-                result=result.result,
+        return [
+            MemorySummary(
+                id=m.id,
+                kind=m.kind.value,
+                key=m.key,
+                content=m.content,
+                importance=m.importance,
+                updated_at=m.updated_at.isoformat(),
             )
-        )
-        return _run_response(result)
+            for m in entries
+        ]
 
     return app
 

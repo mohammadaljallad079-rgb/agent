@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..core.enums import ApprovalStatus, RunStatus
+from ..core.enums import ApprovalStatus, RunStatus, StepStatus
 
 
 class RunRequest(BaseModel):
@@ -18,6 +18,8 @@ class RunRequest(BaseModel):
     workspace_dir: str | None = None
     resume: bool = False
     locale: str | None = None
+    #: Optional key making run creation idempotent across retries.
+    idempotency_key: str | None = Field(default=None, max_length=200)
 
 
 class RunResponse(BaseModel):
@@ -34,6 +36,21 @@ class RunResponse(BaseModel):
     retries: int = 0
     replans: int = 0
     usage: dict[str, int] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+    finished_at: str | None = None
+
+
+class RunSummary(BaseModel):
+    """Compact run representation for list endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    status: RunStatus
+    goal: str
+    created_at: str
+    updated_at: str
 
 
 class ApprovalSummary(BaseModel):
@@ -64,6 +81,51 @@ class ToolSummary(BaseModel):
     description: str
     permissions: list[str]
     risks: dict[str, str]
+    side_effecting: bool = False
+
+
+class StepSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    index: int
+    description: str
+    status: StepStatus
+    attempts: int
+    result_summary: str | None = None
+
+
+class TaskSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    run_id: str
+    goal: str
+    revision: int
+    steps: list[StepSummary]
+
+
+class MemorySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: str
+    key: str
+    content: str
+    importance: float
+    updated_at: str
+
+
+class AuditSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    type: str
+    run_id: str
+    sequence: int
+    message: str
+    timestamp: str
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -76,3 +138,6 @@ class HealthResponse(BaseModel):
     tools: list[str]
     integrations: list[str]
     auth_enabled: bool
+    execution_mode: str = "inline"
+    durable: bool = False
+    distributed: bool = False

@@ -1,0 +1,46 @@
+# Local development infrastructure for the Arabic AI Agent Platform.
+#
+# Postgres is the durable source of truth (runs, tasks, approvals, memory,
+# audit). Redis is ephemeral coordination only (rate limiting, job queue,
+# locks, idempotency cache) and never the only home for important state.
+#
+#   docker compose up -d
+#   docker compose ps
+#   docker compose down            # stop, keep data
+#   docker compose down -v         # stop and wipe data (safe reset)
+#
+# These credentials are for LOCAL DEVELOPMENT ONLY and must never be used in
+# production. Production injects AAP_DATABASE_URL / AAP_REDIS_URL via secrets.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aap-postgres
+    environment:
+      POSTGRES_USER: aap
+      POSTGRES_PASSWORD: aap_dev_password
+      POSTGRES_DB: aap
+    ports:
+      - "5432:5432"
+    volumes:
+      - aap_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aap -d aap"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: aap-redis
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  aap_pgdata:

@@ -12,6 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..audit.base import AuditEventType, AuditLog
 from ..core.enums import ApprovalStatus, PermissionEffect, StrEnum
 from ..core.errors import PermissionDeniedError
+from ..infrastructure.idempotency import (
+    IdempotencyGuard,
+    IdempotencyOutcome,
+    digest,
+    make_key,
+)
 from ..permissions.approvals import Approval, ApprovalStore
 from ..permissions.base import Permission, PolicyDecision, Principal
 from ..permissions.policy import PolicyEngine
@@ -49,12 +55,16 @@ class ToolExecutor:
         approvals: ApprovalStore,
         audit: AuditLog,
         approval_ttl_seconds: int = 3600,
+        idempotency: IdempotencyGuard | None = None,
+        idempotency_ttl_seconds: int = 86_400,
     ) -> None:
         self._registry = registry
         self._policy = policy
         self._approvals = approvals
         self._audit = audit
         self._ttl = approval_ttl_seconds
+        self._idempotency = idempotency
+        self._idempotency_ttl = idempotency_ttl_seconds
 
     async def execute(
         self,
@@ -126,37 +136,7 @@ class ToolExecutor:
             )
 
         # Allowed: run it.
-        await self._audit.record(
-            AuditEventType.TOOL_CALLED,
-            tenant_id=context.tenant_id,
-            user_id=context.user_id,
-            run_id=context.run_id,
-            message=f"calling tool {tool_name}",
-            data={"tool": tool_name, "arguments": arguments},
-        )
-        try:
-            result = await tool.execute(arguments, context)
-        except PermissionDeniedError:
-            raise
-        except Exception as exc:
-            await self._audit.record(
-                AuditEventType.TOOL_ERROR,
-                tenant_id=context.tenant_id,
-                user_id=context.user_id,
-                run_id=context.run_id,
-                message=f"tool {tool_name} raised",
-                data={"tool": tool_name, "error": str(exc)},
-            )
-            raise
-
-        await self._audit.record(
-            AuditEventType.TOOL_RESULT,
-            tenant_id=context.tenant_id,
-            user_id=context.user_id,
-            run_id=context.run_id,
-            message=result.summary,
-            data={"tool": tool_name, "ok": result.ok, "data": result.data},
-        )
+        result = await self._invoke(tool, arguments, context, principal)
         return ExecutionOutcome(
             kind=ExecutionOutcomeKind.COMPLETED,
             tool=tool_name,
@@ -206,15 +186,7 @@ class ToolExecutor:
                 "approval_id": approval.id,
             },
         )
-        result = await tool.execute(dict(approval.arguments), context)
-        await self._audit.record(
-            AuditEventType.TOOL_RESULT,
-            tenant_id=context.tenant_id,
-            user_id=context.user_id,
-            run_id=context.run_id,
-            message=result.summary,
-            data={"tool": approval.tool_name, "ok": result.ok, "data": result.data},
-        )
+        result = await self._invoke(tool, dict(approval.arguments), context, principal)
         return ExecutionOutcome(
             kind=ExecutionOutcomeKind.COMPLETED,
             tool=approval.tool_name,
@@ -222,6 +194,103 @@ class ToolExecutor:
             decisions=decisions,
             reason="approved",
         )
+
+    async def _invoke(
+        self,
+        tool: Tool,
+        arguments: dict[str, object],
+        context: ToolContext,
+        principal: Principal,
+    ) -> ToolResult:
+        """Run a cleared tool, applying the idempotency guard when relevant.
+
+        For a side-effecting tool with a guard configured, an identical
+        (tool, arguments, run) request is executed at most once: a redelivered
+        job or a retried step replays the recorded result instead of repeating
+        the external effect.
+        """
+        guard = self._idempotency if tool.side_effecting else None
+        guard_key: str | None = None
+        if guard is not None:
+            guard_key = make_key(
+                tenant_id=context.tenant_id,
+                scope="tool",
+                key=f"{tool.name}:{context.run_id}:{digest(arguments)}",
+            )
+            status = await guard.begin(
+                key=guard_key,
+                fingerprint=digest(arguments),
+                ttl_seconds=self._idempotency_ttl,
+            )
+            if status.outcome is IdempotencyOutcome.COMPLETED:
+                await self._audit.record(
+                    AuditEventType.TOOL_RESULT,
+                    tenant_id=context.tenant_id,
+                    user_id=context.user_id,
+                    run_id=context.run_id,
+                    message=f"replayed idempotent result for {tool.name}",
+                    data={"tool": tool.name, "idempotent_replay": True},
+                )
+                data = dict(status.result or {})
+                summary = str(data.pop("_summary", f"{tool.name} already completed"))
+                return ToolResult.success(summary, data=data)
+            if status.outcome is IdempotencyOutcome.IN_FLIGHT:
+                await self._audit.record(
+                    AuditEventType.TOOL_ERROR,
+                    tenant_id=context.tenant_id,
+                    user_id=context.user_id,
+                    run_id=context.run_id,
+                    message=f"idempotent operation already in flight for {tool.name}",
+                    data={"tool": tool.name, "idempotent_in_flight": True},
+                )
+                return ToolResult.failure(
+                    f"{tool.name} is already running for this request; not repeating it.",
+                    data={"tool": tool.name, "idempotent_in_flight": True},
+                )
+
+        await self._audit.record(
+            AuditEventType.TOOL_CALLED,
+            tenant_id=context.tenant_id,
+            user_id=context.user_id,
+            run_id=context.run_id,
+            message=f"calling tool {tool.name}",
+            data={"tool": tool.name, "arguments": arguments},
+        )
+        try:
+            result = await tool.execute(arguments, context)
+        except PermissionDeniedError:
+            if guard is not None and guard_key is not None:
+                await guard.abort(key=guard_key)
+            raise
+        except Exception as exc:
+            if guard is not None and guard_key is not None:
+                await guard.abort(key=guard_key)
+            await self._audit.record(
+                AuditEventType.TOOL_ERROR,
+                tenant_id=context.tenant_id,
+                user_id=context.user_id,
+                run_id=context.run_id,
+                message=f"tool {tool.name} raised",
+                data={"tool": tool.name, "error": str(exc)},
+            )
+            raise
+
+        if guard is not None and guard_key is not None and result.ok:
+            await guard.complete(
+                key=guard_key,
+                result={**result.data, "_summary": result.summary},
+                ttl_seconds=self._idempotency_ttl,
+            )
+
+        await self._audit.record(
+            AuditEventType.TOOL_RESULT,
+            tenant_id=context.tenant_id,
+            user_id=context.user_id,
+            run_id=context.run_id,
+            message=result.summary,
+            data={"tool": tool.name, "ok": result.ok, "data": result.data},
+        )
+        return result
 
     def _evaluate(self, principal: Principal, tool: Tool) -> tuple[PolicyDecision, ...]:
         return tuple(
