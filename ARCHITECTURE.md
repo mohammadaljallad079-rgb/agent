@@ -526,7 +526,7 @@ recoverable worker runtime are now implemented (see §3a).
 
 The foundation is verified, not assumed.
 
-- **Unit / integration tests** (`tests/`, 93 tests) exercise real code paths:
+- **Unit / integration tests** (`tests/`, 123 tests) exercise real code paths:
   - `test_permissions.py` — policy decisions (allow/deny/requires-approval),
     risk ceilings, tenant policy overrides.
   - `test_tools.py` — argument validation, sandbox escape refusal, execution.
@@ -539,6 +539,13 @@ The foundation is verified, not assumed.
   - `test_api.py` — auth, runs, approvals, rate limiting, error mapping.
   - `test_worker_recovery.py` — worker execution, lease-based recovery,
     approval-safe recovery, poison-job failure bounds (in-memory stores).
+  - `test_observability.py` — correlation context propagation and isolation,
+    metrics aggregation and Prometheus rendering, span recording and error
+    status, log redaction, readiness aggregation with critical vs non-critical
+    probes and timeouts.
+  - `test_readiness_integration.py` — **real Postgres/Redis**: the readiness
+    probes reach the live dependency and report it, and an unreachable database
+    flips readiness to not-ready without leaking the connection string.
   - `test_persistence_postgres.py` — **real Postgres**: round-tripping of every
     new field, idempotency-key uniqueness, optimistic-concurrency conflicts,
     tenant isolation, `list_stale`/heartbeat semantics, one-shot approvals,
