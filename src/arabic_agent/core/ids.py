@@ -21,6 +21,19 @@ PREFIX_MESSAGE = "msg"
 PREFIX_JOB = "job"
 PREFIX_IDEMPOTENCY = "idm"
 PREFIX_REQUEST = "req"
+# Workflow engine
+PREFIX_WORKFLOW = "wfl"
+PREFIX_WORKFLOW_VERSION = "wfv"
+PREFIX_WORKFLOW_RUN = "wfr"
+PREFIX_STEP_RUN = "spr"
+# Triggers
+PREFIX_TRIGGER = "trg"
+PREFIX_TRIGGER_RUN = "tgr"
+PREFIX_WEBHOOK = "whk"
+# Local runtime
+PREFIX_DEVICE = "dev"
+PREFIX_SYNC = "syc"
+PREFIX_LOCAL_CAPABILITY = "lcp"
 
 
 def new_id(prefix: str) -> str:

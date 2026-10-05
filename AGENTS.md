@@ -103,6 +103,17 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   `AAP_TEST_REDIS_URL` point at throwaway services (`docker compose up -d`), and
   use a dedicated test database they create and drop themselves. Never point
   them at a shared or production database.
+- Real-model tests are marked `local_model` and run only when
+  `AAP_TEST_MODEL_PATH` names a readable GGUF file. They must exercise a real
+  model (English and Arabic inference, real token accounting, real tool-call
+  emission) and skip — never pass vacuously — when no model is provided. Never
+  download a model inside a test.
+- Local durability must be proven against a **real SQLite file and a real second
+  process**, not an in-memory stand-in. `tests/test_local_durable.py` restarts a
+  platform on the same store, reclaims a stranded run, and resumes an approval
+  from a genuinely separate process; `tests/test_local_offline.py` runs a full
+  local task inside a network namespace with no network. Keep both honest — they
+  skip (never pass vacuously) when the sandbox cannot provide the isolation.
 
 ## 7. Security rules
 
@@ -112,6 +123,14 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
 - Destructive or outbound operations (delete, send, print, run command) must be
   `REQUIRES_APPROVAL` or `DENIED` unless there is a specific, justified reason.
 - Filesystem and shell tools must stay sandboxed to the run workspace.
+- On the local runtime, every path must go through `local.sandbox.FilesystemSandbox`;
+  never join or open a path directly. Relative paths are anchored to the run
+  workspace, so a tool path never depends on the process CWD.
+- Local commands run through `local.command.ControlledCommandRunner`: allow-list
+  only, `shell=False`, a minimal environment that inherits no secrets, a hard
+  timeout, and a CWD inside an approved root. Do not add a `shell=True` path.
+- Data that may leave the machine is decided by `local.boundary.DataBoundaryPolicy`
+  and queued only through `local.sync`; secrets and confidential data stay local.
 - Validate input at the API edge and tool arguments against the JSON schema.
 - Never return internal error details in production responses.
 - New secrets go in `Settings` as `SecretStr` and in `.env.example` as an empty
@@ -158,11 +177,84 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
 - Runtime correctness hardening: durable audit sequencing across processes,
   enforced `max_replans`, job requeue backoff, honest `POST /runs` validation,
   `service`/`version` on `/health`, and `alembic check` in CI. Green.
-- Tests are 130 (105 run by default; 25 Postgres/Redis integration tests are
-  skipped unless `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` are set — see
-  `ARCHITECTURE.md` §19).
-- Not yet implemented (see `TODO.md`): desktop runtime, workflow triggers,
-  document/media tools, social/ERP connectors, browser/printing/email tools.
+- Workflow engine phase: durable DAG engine (immutable versioned definitions,
+  run/step records, dependency-driven scheduling, conditions, templating,
+  per-step retries, approvals), its HTTP API, and workflow-run worker recovery
+  (reset stranded `RUNNING` steps, clear the lease, re-enqueue). Green.
+- Triggers & scheduler phase: cron/event/webhook/manual triggers, a
+  dependency-free cron parser with timezones and misfire policies, an atomic
+  durable scheduler claim, HMAC-signed webhook ingestion, a durable firing
+  history, and the trigger/scheduler HTTP API. Fired runs go through the same
+  workflow engine and worker — one execution path. Green.
+- Local/desktop runtime phase: `local/` (lifecycle, declared modes, device
+  registry, filesystem sandbox, controlled command runner, data-boundary policy,
+  sync queue, capability catalogue, token-authenticated control API), the
+  sandboxed local tool set, and the `runtime_kind == "local"` platform wiring
+  that registers those tools only for a local build. Green. The desktop
+  *application* (a `Transport` implementation, packaging, UI) is not built.
+- Local durable persistence phase: `local/persistence/` gives the local build a
+  real on-disk SQLite store (SQLAlchemy async, WAL, `NullPool`) behind the same
+  store ABCs as the cloud build — workflows, versions, runs/steps, approvals,
+  audit, sync queue, idempotency — with its own Alembic branch
+  (`migrations_local/`, `local_alembic_version`). Restart, stale-lease recovery,
+  cross-process approval resume, tenant isolation and optimistic concurrency are
+  all verified against the real file, and a full local task is verified to run
+  with no network at all. Green.
+- Local model runtime phase: a local model is a first-class `ModelProvider`, not
+  a special case in the core. `local/hardware.py` (real detection + conservative
+  runnable gate), `local/model_security.py` (path confinement, hash verification,
+  config scanning), `local/model_registry.py` (declared capabilities),
+  `local/inference.py` (llama.cpp / Ollama / OpenAI-compatible behind one
+  protocol, plus `<tool_call>` extraction from content), and `models/routing.py`
+  (fail-closed: private data never silently goes to the cloud) are implemented
+  and tested. `tests/test_local_model_runtime.py` covers the unit layer always
+  and real English/Arabic inference, token accounting and tool-call emission when
+  `AAP_TEST_MODEL_PATH` names a GGUF file. Green.
+- Native-engine containment: the prebuilt `llama-cpp-python` wheel aborts
+  (SIGSEGV/SIGABRT/SIGFPE) on some hardware, and a native crash cannot be caught
+  in Python. File-backed engines therefore run in a dedicated child process
+  (`local/subprocess_backend.py` + `local/subprocess_worker.py`); a crash is
+  converted into a recoverable `ExternalServiceError` and the agent survives.
+  Isolation is on by default (`AAP_LOCAL_MODEL_ISOLATE`) and is deliberately
+  *not* used in unit tests, where an in-process stub backend is enough — the
+  unit layer never exercises a real native engine, so it cannot be flaky. The
+  `@local_model` integration tests do run the real model through the isolated
+  backend and complete reliably — including a full Arabic agent loop
+  (`test_real_model_arabic_agent_loop`) that plans, calls the real `echo` tool
+  with an Arabic argument, verifies and finishes. See
+  `tests/test_local_agent_loop.py` and `tests/test_subprocess_isolation.py`.
+- Tests are 352 when real Postgres/Redis are reachable and a real local model is
+  provided (unit tests + 36 Postgres/Redis integration tests + local model and
+  agent-loop tests + subprocess-isolation tests). Without
+  `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` the 36 integration tests skip,
+  and without `AAP_TEST_MODEL_PATH` the `@local_model` inference tests skip by
+  design. Run the full set with:
+  `AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test
+  AAP_TEST_REDIS_URL=redis://localhost:6379/15
+  AAP_TEST_MODEL_PATH=/path/to/model.gguf pytest` (after `docker compose up -d`
+  and `CREATE DATABASE aap_test`). The Postgres tests own the schema via
+  `create_all`/`drop_all`, so run `alembic check` on a freshly migrated DB, not
+  right after the suite.
+- Local-model deadlines: CPU-only inference of a planning + tool-schema prompt
+  can take minutes on a contended or low-core host. `AAP_LOCAL_MODEL_TIMEOUT_SECONDS`
+  (default 300s) bounds a *single* call and must stay comfortably below the
+  per-*run* deadline (`AAP_MAX_RUN_SECONDS`, default 600s); if the call deadline
+  is the tighter of the two, ordinary slow inference is misreported as a run
+  failure. The 10x repeatability check of
+  `test_real_model_completes_agent_loop_offline` failed 4/10 (all
+  `run deadline exceeded`, zero native crashes) until the call deadline was
+  raised from 120s to 300s and the test's run bound from 180s to 900s; it then
+  passed 5/5. `tests/test_subprocess_isolation.py` covers the crash/timeout/
+  malformed-frame paths against a real child process and asserts they surface as
+  recoverable `ExternalServiceError`s with no cloud fallback under `OFFLINE`.
+- Not yet implemented (see `TODO.md`): desktop application/packaging,
+  document/media tools, social/ERP connectors, browser/printing/email tools,
+  and the web UI.
+- Migrations: `migrations/versions/` is the source of truth for the durable
+  schema. After changing `persistence/schema.py`, run
+  `AAP_DATABASE_URL=<test url> uv run alembic revision --autogenerate -m "..."`,
+  review the generated file, then verify `uv run alembic check` reports no
+  drift. Never hand-edit an applied migration.
 - Observability rules: instrument real code paths only; never put secrets,
   tokens, or raw error text in metric labels or log fields; keep the package
   free of vendor SDK imports at module load (OpenTelemetry is optional).

@@ -245,6 +245,222 @@ class AuditEventRow(Base):
     )
 
 
+class WorkflowRow(Base):
+    """Workflow definition envelope (points at its latest published version)."""
+
+    __tablename__ = "workflows"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    latest_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    latest_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_workflows_tenant_name"),
+        Index("ix_workflows_tenant_status_created", "tenant_id", "status", "created_at"),
+    )
+
+
+class WorkflowVersionRow(Base):
+    """An immutable snapshot of a workflow definition."""
+
+    __tablename__ = "workflow_versions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The full validated definition (steps, retry policies, conditions).
+    definition: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    default_timeout_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=600.0)
+    run_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "version", name="uq_workflow_versions_workflow_version"),
+        Index("ix_workflow_versions_tenant_workflow", "tenant_id", "workflow_id"),
+    )
+
+
+class WorkflowRunRow(Base):
+    """Durable state of one workflow execution (pins its definition version)."""
+
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workflow_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    input: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    workspace_dir: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_approval_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    run_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    granted_permissions: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    recovery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    worker_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_workflow_runs_tenant_idempotency"
+        ),
+        Index(
+            "ix_workflow_runs_tenant_workflow_status",
+            "tenant_id",
+            "workflow_id",
+            "status",
+            "created_at",
+        ),
+        Index("ix_workflow_runs_status_lease", "status", "lease_expires_at"),
+    )
+
+
+class WorkflowStepRunRow(Base):
+    """Durable state of one workflow step execution."""
+
+    __tablename__ = "workflow_step_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    workflow_run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    step_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_class: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "step_id", name="uq_workflow_step_runs_run_step"),
+        Index("ix_workflow_step_runs_tenant_run", "tenant_id", "workflow_run_id"),
+    )
+
+
+class TriggerRow(Base):
+    """Durable trigger definition plus its scheduler lease state."""
+
+    __tablename__ = "triggers"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: Cron schedule and its resolved next instant (indexed for the due scan).
+    cron: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+    misfire_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="skip")
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Webhook identity: a public id and the HMAC secret (never exposed via API).
+    webhook_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    webhook_secret: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    event_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    granted_permissions: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    last_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fire_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("webhook_id", name="uq_triggers_webhook_id"),
+        # The scheduler's due scan filters on enabled kind and next_fire_at.
+        Index("ix_triggers_enabled_kind_next", "enabled", "kind", "next_fire_at"),
+        Index("ix_triggers_tenant_event", "tenant_id", "event_type"),
+        Index("ix_triggers_tenant_workflow", "tenant_id", "workflow_id"),
+    )
+
+
+class TriggerRunRow(Base):
+    """Durable history of one trigger firing (idempotent per tenant)."""
+
+    __tablename__ = "trigger_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    trigger_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    workflow_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # One firing per (tenant, idempotency key): the duplicate guard.
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_trigger_runs_tenant_idempotency"),
+        Index("ix_trigger_runs_tenant_trigger_time", "tenant_id", "trigger_id", "created_at"),
+    )
+
+
 __all__ = [
     "ApprovalRow",
     "AuditEventRow",
@@ -253,4 +469,10 @@ __all__ = [
     "RunRow",
     "TaskPlanRow",
     "TaskStepRow",
+    "TriggerRow",
+    "TriggerRunRow",
+    "WorkflowRow",
+    "WorkflowRunRow",
+    "WorkflowStepRunRow",
+    "WorkflowVersionRow",
 ]

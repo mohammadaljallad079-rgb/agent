@@ -33,7 +33,12 @@ def test_lists_are_redacted():
     assert result[1]["fine"] == "b"
 
 
-def test_settings_have_no_default_secrets():
+def test_settings_have_no_default_secrets(monkeypatch):
+    # The invariant is about *defaults*, so clear any ambient AAP_* values a
+    # developer may have exported (e.g. AAP_DATABASE_URL when running the
+    # Postgres integration suite) before constructing settings.
+    for key in ("AAP_OPENAI_API_KEY", "AAP_API_KEYS", "AAP_DATABASE_URL", "AAP_REDIS_URL"):
+        monkeypatch.delenv(key, raising=False)
     settings = Settings(environment="test")
     assert settings.openai_api_key.get_secret_value() == ""
     assert settings.api_keys.get_secret_value() == ""

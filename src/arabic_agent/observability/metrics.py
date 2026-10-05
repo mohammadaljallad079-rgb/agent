@@ -252,6 +252,41 @@ class Metrics:
     def run_failed(self, *, reason: str) -> None:
         self.registry.inc("aap_runs_failed_total", labels={"reason": reason})
 
+    # --- workflows ---------------------------------------------------------
+    def workflow_run_started(self) -> None:
+        self.registry.inc("aap_workflow_runs_started_total")
+
+    def workflow_run_finished(self, *, status: str, duration_seconds: float) -> None:
+        self.registry.inc("aap_workflow_runs_finished_total", labels={"status": status})
+        self.registry.observe(
+            "aap_workflow_run_duration_seconds", duration_seconds, labels={"status": status}
+        )
+
+    def workflow_step(self, *, kind: str, outcome: str, duration_seconds: float) -> None:
+        self.registry.inc("aap_workflow_steps_total", labels={"kind": kind, "outcome": outcome})
+        self.registry.observe(
+            "aap_workflow_step_duration_seconds", duration_seconds, labels={"kind": kind}
+        )
+
+    def workflow_step_retry(self, *, kind: str) -> None:
+        self.registry.inc("aap_workflow_step_retries_total", labels={"kind": kind})
+
+    def workflow_run_recovered(self) -> None:
+        self.registry.inc("aap_workflow_runs_recovered_total")
+
+    # --- triggers ----------------------------------------------------------
+    def trigger_fired(self, *, kind: str, outcome: str) -> None:
+        self.registry.inc("aap_trigger_fires_total", labels={"kind": kind, "outcome": outcome})
+
+    def trigger_skipped(self, *, kind: str, reason: str) -> None:
+        self.registry.inc("aap_trigger_skips_total", labels={"kind": kind, "reason": reason})
+
+    def webhook_rejected(self, *, reason: str) -> None:
+        self.registry.inc("aap_webhook_rejected_total", labels={"reason": reason})
+
+    def recovery_attempt(self, *, outcome: str) -> None:
+        self.registry.inc("aap_recovery_attempts_total", labels={"outcome": outcome})
+
     # --- queue -------------------------------------------------------------
     def job_enqueued(self, *, job_type: str) -> None:
         self.registry.inc("aap_jobs_enqueued_total", labels={"type": job_type})
@@ -321,6 +356,17 @@ _HELP: dict[str, str] = {
     "aap_run_duration_seconds": "Run wall-clock duration in seconds, by final status.",
     "aap_runs_recovered_total": "Runs recovered after worker loss.",
     "aap_runs_failed_total": "Runs failed by the worker, by reason.",
+    "aap_workflow_runs_started_total": "Workflow runs accepted.",
+    "aap_workflow_runs_finished_total": "Workflow runs reaching a terminal state, by status.",
+    "aap_workflow_run_duration_seconds": "Workflow run wall-clock duration, by final status.",
+    "aap_workflow_steps_total": "Workflow step executions, by kind and outcome.",
+    "aap_workflow_step_duration_seconds": "Workflow step duration in seconds, by kind.",
+    "aap_workflow_step_retries_total": "Workflow step retries, by kind.",
+    "aap_workflow_runs_recovered_total": "Workflow runs recovered after worker loss.",
+    "aap_trigger_fires_total": "Trigger firings, by kind and outcome.",
+    "aap_trigger_skips_total": "Trigger firings skipped, by kind and reason.",
+    "aap_webhook_rejected_total": "Webhook deliveries rejected, by reason.",
+    "aap_recovery_attempts_total": "Recovery sweep outcomes, by result.",
     "aap_jobs_enqueued_total": "Jobs enqueued, by job type.",
     "aap_jobs_claimed_total": "Jobs claimed by a worker, by job type.",
     "aap_jobs_acked_total": "Jobs acknowledged successfully, by job type.",

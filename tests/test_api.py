@@ -194,3 +194,265 @@ def test_metrics_endpoint_can_be_disabled(settings):
         assert client.get("/metrics").status_code == 404
         # Liveness must stay up even with metrics off.
         assert client.get("/health").status_code == 200
+
+
+def _workflow_body(publish: bool = True) -> dict:
+    return {
+        "name": "invoices",
+        "description": "أرسل الفواتير",
+        "publish": publish,
+        "steps": [
+            {
+                "id": "prep",
+                "kind": "deterministic",
+                "action": "set",
+                "arguments": {"values": [1, 2]},
+            },
+            {
+                "id": "count",
+                "kind": "deterministic",
+                "action": "sum",
+                "depends_on": ["prep"],
+                "arguments": {"values": "{{ steps.prep.output.values }}"},
+            },
+            {
+                "id": "confirm",
+                "kind": "approval",
+                "depends_on": ["count"],
+                "prompt": "هل تريد الإرسال؟",
+            },
+        ],
+    }
+
+
+def test_workflow_crud_and_run_over_http(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        created = client.post("/workflows", json=_workflow_body(publish=True))
+        assert created.status_code == 201
+        workflow = created.json()
+        assert workflow["status"] == "published"
+        assert workflow["latest_version"] == 1
+
+        listed = client.get("/workflows")
+        assert listed.status_code == 200
+        assert any(w["id"] == workflow["id"] for w in listed.json())
+
+        versions = client.get(f"/workflows/{workflow['id']}/versions")
+        assert versions.status_code == 200
+        assert versions.json()[0]["version"] == 1
+
+        started = client.post(f"/workflows/{workflow['id']}/runs", json={})
+        assert started.status_code == 201
+        run = started.json()
+        assert run["status"] == "waiting_approval"
+        assert run["pending_approval_id"]
+
+        steps = client.get(f"/workflow-runs/{run['id']}/steps")
+        assert steps.status_code == 200
+        by_id = {s["step_id"]: s for s in steps.json()}
+        assert by_id["count"]["output"]["total"] == 3
+        assert by_id["confirm"]["status"] == "waiting_approval"
+
+        decided = client.post(
+            f"/approvals/{run['pending_approval_id']}/decide", json={"approve": True}
+        )
+        assert decided.status_code == 200
+        assert decided.json()["status"] == "completed"
+
+        final = client.get(f"/workflow-runs/{run['id']}").json()
+        assert final["status"] == "completed"
+
+
+def test_workflow_rejects_invalid_graph_over_http(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    body = {
+        "name": "bad",
+        "publish": True,
+        "steps": [
+            {"id": "a", "kind": "deterministic", "action": "set", "depends_on": ["b"]},
+            {"id": "b", "kind": "deterministic", "action": "set", "depends_on": ["a"]},
+        ],
+    }
+    with _client(settings, responder) as client:
+        response = client.post("/workflows", json=body)
+    assert response.status_code == 422
+
+
+def test_workflow_run_404_for_other_tenant(settings):
+    from pydantic import SecretStr
+
+    from arabic_agent.container import Platform
+
+    secure = settings.model_copy(
+        update={
+            "require_auth": True,
+            "api_keys": SecretStr(
+                '{"k1": {"tenant_id": "tnt_1", "user_id": "usr_1"},'
+                ' "k2": {"tenant_id": "tnt_2", "user_id": "usr_2"}}'
+            ),
+        }
+    )
+    registry = ProviderRegistry()
+    registry.register(
+        FakeProvider(scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[]))
+    )
+    platform = Platform.build(secure, provider_registry=registry, default_model="fake/model")
+    app = create_app(platform, settings=secure, auth=ApiKeyAuth.from_settings(secure))
+    with TestClient(app) as client:
+        h1 = {"X-API-Key": "k1"}
+        h2 = {"X-API-Key": "k2"}
+        workflow = client.post("/workflows", json=_workflow_body(publish=True), headers=h1).json()
+        run = client.post(f"/workflows/{workflow['id']}/runs", json={}, headers=h1).json()
+        assert client.get(f"/workflow-runs/{run['id']}", headers=h1).status_code == 200
+        assert client.get(f"/workflow-runs/{run['id']}", headers=h2).status_code == 404
+        assert client.get(f"/workflows/{workflow['id']}", headers=h2).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Trigger API
+# ---------------------------------------------------------------------------
+def test_trigger_crud_and_manual_fire_over_http(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        workflow = client.post("/workflows", json=_workflow_body(publish=True)).json()
+
+        created = client.post(
+            "/triggers",
+            json={
+                "name": "nightly",
+                "workflow_id": workflow["id"],
+                "kind": "cron",
+                "cron": "0 3 * * *",
+                "timezone": "Asia/Riyadh",
+            },
+        )
+        assert created.status_code == 201
+        trigger = created.json()["trigger"]
+        assert trigger["kind"] == "cron"
+        assert trigger["next_fire_at"] is not None
+        # A cron trigger has no secret.
+        assert created.json()["webhook_secret"] is None
+
+        listed = client.get("/triggers").json()
+        assert [t["id"] for t in listed] == [trigger["id"]]
+
+        updated = client.patch(
+            f"/triggers/{trigger['id']}", json={"misfire_policy": "run_one"}
+        ).json()
+        assert updated["misfire_policy"] == "run_one"
+
+        fired = client.post(f"/triggers/{trigger['id']}/fire", json={"inputs": {"x": 1}})
+        assert fired.status_code == 200
+        run = fired.json()
+        assert run["workflow_id"] == workflow["id"]
+
+        firings = client.get(f"/triggers/{trigger['id']}/firings").json()
+        assert len(firings) == 1
+        assert firings[0]["workflow_run_id"] == run["id"]
+
+        assert client.post(f"/triggers/{trigger['id']}/disable").json()["enabled"] is False
+        assert client.post(f"/triggers/{trigger['id']}/enable").json()["enabled"] is True
+
+        deleted = client.delete(f"/triggers/{trigger['id']}")
+        assert deleted.status_code == 204
+        assert client.get(f"/triggers/{trigger['id']}").status_code == 404
+
+
+def test_trigger_webhook_secret_is_returned_once(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        workflow = client.post("/workflows", json=_workflow_body(publish=True)).json()
+        created = client.post(
+            "/triggers",
+            json={"name": "hook", "workflow_id": workflow["id"], "kind": "webhook"},
+        ).json()
+        assert created["webhook_secret"]
+        assert created["trigger"]["webhook_id"]
+        # A read never exposes the secret.
+        fetched = client.get(f"/triggers/{created['trigger']['id']}").json()
+        assert "webhook_secret" not in fetched
+
+
+def test_webhook_endpoint_requires_signature(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        workflow = client.post("/workflows", json=_workflow_body(publish=True)).json()
+        created = client.post(
+            "/triggers",
+            json={"name": "hook", "workflow_id": workflow["id"], "kind": "webhook"},
+        ).json()
+        webhook_id = created["trigger"]["webhook_id"]
+        # No signature headers → rejected.
+        assert client.post(f"/webhooks/{webhook_id}", content=b"{}").status_code == 403
+
+        import hashlib
+        import hmac
+        import time
+
+        ts = str(int(time.time()))
+        body = b'{"event":"x"}'
+        secret = created["webhook_secret"]
+        sig = (
+            "sha256="
+            + hmac.new(secret.encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+        )
+        ok = client.post(
+            f"/webhooks/{webhook_id}",
+            content=body,
+            headers={"X-Signature": sig, "X-Timestamp": ts, "X-Delivery-ID": "d1"},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["workflow_id"] == workflow["id"]
+        # Unknown webhook id → 404.
+        assert (
+            client.post(
+                "/webhooks/whk_missing",
+                content=body,
+                headers={"X-Signature": sig, "X-Timestamp": ts},
+            ).status_code
+            == 404
+        )
+
+
+def test_event_endpoint_fires_matching_trigger(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        workflow = client.post("/workflows", json=_workflow_body(publish=True)).json()
+        client.post(
+            "/triggers",
+            json={
+                "name": "on-invoice",
+                "workflow_id": workflow["id"],
+                "kind": "event",
+                "event_type": "invoice.created",
+            },
+        )
+        fired = client.post(
+            "/events",
+            json={"event_type": "invoice.created", "payload": {"invoice_id": "inv_1"}},
+        )
+        assert fired.status_code == 200
+        runs = fired.json()
+        assert len(runs) == 1
+        assert runs[0]["workflow_id"] == workflow["id"]
+        # A different event type fires nothing.
+        assert client.post("/events", json={"event_type": "nope"}).json() == []
+
+
+def test_trigger_kind_validation_over_http(settings):
+    responder = scripted_responder(plan=plan_json(("echo", "echo")), tool_calls=[])
+    with _client(settings, responder) as client:
+        workflow = client.post("/workflows", json=_workflow_body(publish=True)).json()
+        # A cron trigger without a schedule is a 422.
+        bad = client.post(
+            "/triggers",
+            json={"name": "bad", "workflow_id": workflow["id"], "kind": "cron"},
+        )
+        assert bad.status_code == 422
+        # An unknown kind is rejected by the schema.
+        unknown = client.post(
+            "/triggers",
+            json={"name": "bad", "workflow_id": workflow["id"], "kind": "telepathy"},
+        )
+        assert unknown.status_code == 422

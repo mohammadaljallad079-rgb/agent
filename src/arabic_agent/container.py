@@ -18,6 +18,8 @@ The agent core depends only on the store/queue ABCs, never on these choices.
 from __future__ import annotations
 
 import logging
+import secrets
+from pathlib import Path
 
 import redis.asyncio as aioredis
 
@@ -28,7 +30,7 @@ from .audit.logging_sink import LoggingAuditSink
 from .audit.memory_sink import InMemoryAuditSink
 from .context.manager import ContextManager
 from .core.config import Settings
-from .core.enums import Locale
+from .core.enums import Locale, ModelCapability, OperatingMode
 from .core.errors import ConfigurationError
 from .infrastructure.idempotency import (
     IdempotencyGuard,
@@ -39,12 +41,39 @@ from .infrastructure.rate_limit import InMemoryRateLimiter, RateLimiterBackend, 
 from .infrastructure.redis import build_redis_client
 from .integrations.base import IntegrationRegistry
 from .integrations.webhook import WebhookIntegration
+from .local.adapters import detect_platform
+from .local.boundary import DataBoundaryPolicy
+from .local.device import DeviceRegistry, InMemoryDeviceRegistry, enroll_device
+from .local.model import (
+    LocalBackendProvider,
+    OpenAICompatibleLocalProvider,
+    build_backend,
+)
+from .local.model_registry import (
+    LocalModelDescriptor,
+    model_logical_id,
+)
+from .local.model_security import ensure_within_storage, resolve_storage_dir
+from .local.persistence import LocalDatabase
+from .local.persistence.database import default_store_path
+from .local.persistence.stores import (
+    LocalApprovalStore,
+    LocalAuditSink,
+    LocalIdempotencyGuard,
+    LocalSyncQueue,
+    LocalWorkflowRunStore,
+    LocalWorkflowStore,
+    LocalWorkflowVersionStore,
+)
+from .local.runtime import LocalRuntime, build_local_runtime
+from .local.sync import InMemorySyncQueue, SyncCoordinator, SyncQueue
 from .memory.base import MemoryStore
 from .memory.memory_store import InMemoryMemoryStore
 from .memory.policy import MemoryPolicy
 from .models.gateway import ModelGateway
 from .models.providers.openai_compatible import OpenAICompatibleProvider
 from .models.registry import ProviderRegistry
+from .models.routing import ModelRouter, RoutingPolicy
 from .observability.logging import configure_logging
 from .observability.metrics import Metrics
 from .observability.otel import otel_exporter
@@ -66,6 +95,11 @@ from .persistence.stores import (
     PostgresMemoryStore,
     PostgresRunStore,
     PostgresTaskStore,
+    PostgresTriggerRunStore,
+    PostgresTriggerStore,
+    PostgresWorkflowRunStore,
+    PostgresWorkflowStore,
+    PostgresWorkflowVersionStore,
 )
 from .runs.store import InMemoryRunStore, RunStore
 from .runtime.boundary import RuntimeProfile
@@ -80,8 +114,27 @@ from .tools.builtin import (
     WriteFileTool,
 )
 from .tools.builtin.echo import FinishTool
+from .tools.builtin.local import LOCAL_TOOLS
 from .tools.registry import ToolRegistry
+from .triggers.events import EventBus
+from .triggers.service import TriggerService
+from .triggers.store import (
+    InMemoryTriggerRunStore,
+    InMemoryTriggerStore,
+    TriggerRunStore,
+    TriggerStore,
+)
 from .worker.queue import InMemoryJobQueue, JobQueue, RedisJobQueue
+from .workflows.actions import ActionRegistry, default_actions
+from .workflows.engine import WorkflowEngine
+from .workflows.store import (
+    InMemoryWorkflowRunStore,
+    InMemoryWorkflowStore,
+    InMemoryWorkflowVersionStore,
+    WorkflowRunStore,
+    WorkflowStore,
+    WorkflowVersionStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +166,20 @@ class Platform:
         queue: JobQueue,
         rate_limiter: RateLimiterBackend,
         idempotency: IdempotencyGuard,
+        workflows: WorkflowStore,
+        workflow_versions: WorkflowVersionStore,
+        workflow_runs: WorkflowRunStore,
+        workflow_engine: WorkflowEngine,
+        workflow_actions: ActionRegistry,
+        triggers: TriggerStore,
+        trigger_runs: TriggerRunStore,
+        trigger_service: TriggerService,
+        events: EventBus,
+        sync_queue: SyncQueue,
+        local_runtime: LocalRuntime | None = None,
+        local_model_provider: LocalBackendProvider | None = None,
         database: Database | None = None,
+        local_database: LocalDatabase | None = None,
         redis_client: aioredis.Redis | None = None,
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
@@ -136,7 +202,20 @@ class Platform:
         self.queue = queue
         self.rate_limiter = rate_limiter
         self.idempotency = idempotency
+        self.workflows = workflows
+        self.workflow_versions = workflow_versions
+        self.workflow_runs = workflow_runs
+        self.workflow_engine = workflow_engine
+        self.workflow_actions = workflow_actions
+        self.triggers = triggers
+        self.trigger_runs = trigger_runs
+        self.trigger_service = trigger_service
+        self.events = events
+        self.sync_queue = sync_queue
+        self.local_runtime = local_runtime
+        self.local_model_provider = local_model_provider
         self.database = database
+        self.local_database = local_database
         self.redis_client = redis_client
         self.metrics = metrics or Metrics()
         self.tracer = tracer or configure_tracing(
@@ -148,8 +227,12 @@ class Platform:
 
     @property
     def durable(self) -> bool:
-        """Whether this platform is backed by durable Postgres persistence."""
-        return self.database is not None
+        """Whether this platform is backed by durable persistence.
+
+        True for the cloud Postgres runtime and for the local runtime when it
+        owns a durable SQLite store; false only for a purely in-memory build.
+        """
+        return self.database is not None or self.local_database is not None
 
     @property
     def distributed(self) -> bool:
@@ -183,6 +266,36 @@ class Platform:
             await self.redis_client.aclose()
         if self.database is not None:
             await self.database.dispose()
+        if self.local_database is not None:
+            await self.local_database.dispose()
+
+    async def initialize(self) -> None:
+        """Load the local model and publish its status to the runtime.
+
+        Model construction is synchronous and cheap; *loading* the weights is
+        not, so it happens here, once, at process start. When no local model is
+        configured this is a no-op and the platform behaves exactly as before.
+
+        The load is non-fatal: if the model cannot be loaded, the provider is
+        marked unavailable and routing fails closed for any request that
+        requires a local model, rather than silently using the cloud.
+        """
+        provider = self.local_model_provider
+        if provider is None:
+            return
+        try:
+            await provider.load()
+            healthy = await provider.probe()
+        except Exception as exc:  # startup must not crash on a bad model
+            healthy = False
+            detail = f"local model load failed: {exc}"
+            logger.warning(detail)
+        else:
+            detail = "local model loaded and healthy" if healthy else "local model not healthy"
+        if self.local_runtime is not None:
+            self.local_runtime.set_local_model_status(available=healthy, detail=detail)
+        if not healthy:
+            logger.warning("local model unavailable: %s", detail)
 
     @classmethod
     def build(
@@ -199,7 +312,18 @@ class Platform:
         run_store: RunStore | None = None,
         audit_log: AuditLog | None = None,
         queue: JobQueue | None = None,
+        workflow_store: WorkflowStore | None = None,
+        workflow_version_store: WorkflowVersionStore | None = None,
+        workflow_run_store: WorkflowRunStore | None = None,
+        workflow_actions: ActionRegistry | None = None,
+        trigger_store: TriggerStore | None = None,
+        trigger_run_store: TriggerRunStore | None = None,
+        event_bus: EventBus | None = None,
+        sync_queue: SyncQueue | None = None,
+        device_registry: DeviceRegistry | None = None,
+        local_runtime: LocalRuntime | None = None,
         database: Database | None = None,
+        local_database: LocalDatabase | None = None,
         redis_client: aioredis.Redis | None = None,
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
@@ -213,11 +337,8 @@ class Platform:
         by tests and by the desktop runtime, which supplies a local model).
         """
         settings = settings or Settings()
-        runtime = (
-            RuntimeProfile.local()
-            if settings.runtime_kind.value == "local"
-            else RuntimeProfile.cloud()
-        )
+        is_local = settings.runtime_kind.value == "local"
+        runtime = RuntimeProfile.local() if is_local else RuntimeProfile.cloud()
 
         # --- Observability -------------------------------------------------
         if settings.log_json:
@@ -236,6 +357,7 @@ class Platform:
             )
 
         # --- Model providers -------------------------------------------
+        local_model_provider: LocalBackendProvider | None = None
         if provider_registry is not None:
             if default_model is None:
                 raise ConfigurationError(
@@ -251,7 +373,8 @@ class Platform:
             )
         else:
             registry = ProviderRegistry()
-            candidates: list[str] = []
+            remote_candidates: list[str] = []
+            local_candidates: list[str] = []
             if settings.openai_api_key.get_secret_value():
                 registry.register(
                     OpenAICompatibleProvider(
@@ -265,23 +388,71 @@ class Platform:
                     if settings.default_model.startswith("openai/")
                     else "openai/gpt-4o-mini"
                 )
-                candidates.append(model)
+                remote_candidates.append(model)
+            # A configured local endpoint (Ollama / llama.cpp server) runs on
+            # this machine even though it speaks the OpenAI wire protocol.
             if settings.local_model_base_url:
                 registry.register(
-                    OpenAICompatibleProvider(
+                    OpenAICompatibleLocalProvider(
                         name="local",
                         base_url=settings.local_model_base_url,
-                        api_key=None,
+                        model=settings.local_model_name,
                         timeout=settings.request_timeout_seconds,
                     )
                 )
-                candidates.append(f"local/{settings.local_model_name}")
+                local_candidates.append(f"local/{settings.local_model_name}")
+            # A file-backed local model (llama.cpp) is registered as a
+            # first-class local provider. It is loaded asynchronously by
+            # Platform.initialize() so constructing the platform never blocks
+            # on a multi-hundred-megabyte file.
+            if settings.local_model_path and settings.local_model_storage_dir:
+                storage = resolve_storage_dir(settings.local_model_storage_dir)
+                model_path = ensure_within_storage(
+                    Path(settings.local_model_path), storage_dir=storage
+                )
+                descriptor = LocalModelDescriptor(
+                    name="local",
+                    backend=settings.local_model_backend,
+                    model_path=str(model_path),
+                    model_id=model_path.name,
+                    context_window=settings.local_model_context_window,
+                    capabilities=frozenset(
+                        {ModelCapability.CHAT, ModelCapability.TOOL_CALLING, ModelCapability.CODE}
+                    ),
+                    sha256=settings.local_model_sha256 or None,
+                )
+                backend = build_backend(
+                    descriptor,
+                    n_threads=settings.local_model_n_threads or None,
+                    n_gpu_layers=settings.local_model_n_gpu_layers,
+                    timeout_seconds=settings.local_model_timeout_seconds,
+                    isolate=settings.local_model_isolate,
+                )
+                local_model_provider = LocalBackendProvider(
+                    descriptor=descriptor,
+                    backend=backend,
+                    timeout=settings.local_model_timeout_seconds,
+                )
+                registry.register(local_model_provider)
+                local_candidates.append(model_logical_id(descriptor))
+            candidates = [*local_candidates, *remote_candidates]
 
             if not candidates:
                 raise ConfigurationError(
-                    "no model provider configured: set AAP_OPENAI_API_KEY or "
-                    "AAP_LOCAL_MODEL_BASE_URL (offline/local model)"
+                    "no model provider configured: set AAP_OPENAI_API_KEY, "
+                    "AAP_LOCAL_MODEL_BASE_URL (local endpoint) or "
+                    "AAP_LOCAL_MODEL_PATH + AAP_LOCAL_MODEL_STORAGE_DIR (local model)"
                 )
+            router = ModelRouter(
+                local_models=tuple(local_candidates),
+                remote_models=tuple(remote_candidates),
+            )
+            routing_policy = RoutingPolicy(
+                mode=settings.local_mode if is_local else OperatingMode.ONLINE,
+                allow_remote=not is_local,
+                prefer_local=settings.model_prefer_local,
+                allow_remote_fallback=settings.model_allow_remote_fallback,
+            )
             gateway = ModelGateway(
                 registry,
                 settings=settings,
@@ -289,6 +460,8 @@ class Platform:
                 fallbacks=tuple(candidates[1:]),
                 metrics=metrics,
                 tracer=tracer,
+                router=router,
+                routing_policy=routing_policy,
             )
         logger.info("model gateway ready: default=%s", gateway.default_model)
 
@@ -299,9 +472,18 @@ class Platform:
                 pool_size=settings.db_pool_size,
                 max_overflow=settings.db_max_overflow,
             )
+        # A local runtime with no Postgres configured gets a durable embedded
+        # SQLite store, so local state survives a restart. When a Postgres
+        # database *is* configured it takes precedence (hybrid mode).
+        if is_local and database is None:
+            if local_database is None:
+                local_database = LocalDatabase(default_store_path(settings.local_store_dir))
+            local_database.upgrade()
         logger.info(
             "durable persistence: %s",
-            "postgres" if database is not None else "in-memory (local runtime)",
+            "postgres"
+            if database is not None
+            else ("sqlite (local)" if local_database is not None else "in-memory"),
         )
 
         # --- Redis / coordination selection ----------------------------
@@ -315,6 +497,11 @@ class Platform:
         )
 
         # --- Tools ------------------------------------------------------
+        # The local filesystem/command tools are registered only for a local
+        # runtime. On a cloud runtime they would expose the *server's* disk, so
+        # they must not exist there at all (defence in depth: policy would deny
+        # them anyway, but absent tools cannot be invoked).
+        local_tools = [tool_cls() for tool_cls in LOCAL_TOOLS] if is_local else []
         tools = ToolRegistry(
             [
                 EchoTool(),
@@ -323,6 +510,7 @@ class Platform:
                 WriteFileTool(),
                 ListDirectoryTool(),
                 ShellCommandTool(),
+                *local_tools,
                 *(extra_tools or []),
             ]
         )
@@ -334,17 +522,47 @@ class Platform:
             memory: MemoryStore = memory_store or PostgresMemoryStore(database)
             runs: RunStore = run_store or PostgresRunStore(database)
             selected_task_store: TaskStore = task_store or PostgresTaskStore(database)
+            workflows: WorkflowStore = workflow_store or PostgresWorkflowStore(database)
+            workflow_versions: WorkflowVersionStore = (
+                workflow_version_store or PostgresWorkflowVersionStore(database)
+            )
+            workflow_runs: WorkflowRunStore = workflow_run_store or PostgresWorkflowRunStore(
+                database
+            )
+            triggers: TriggerStore = trigger_store or PostgresTriggerStore(database)
+            trigger_runs: TriggerRunStore = trigger_run_store or PostgresTriggerRunStore(database)
+        elif local_database is not None:
+            # Local durable store: the workflow, approval and audit state the
+            # offline runtime needs is persisted in SQLite. Task plans, memory
+            # and triggers stay in-process locally — the cloud keeps those, and
+            # the local runtime deliberately persists only its working subset.
+            approvals = approval_store or LocalApprovalStore(local_database)
+            memory = memory_store or InMemoryMemoryStore()
+            runs = run_store or InMemoryRunStore()
+            selected_task_store = task_store or InMemoryTaskStore()
+            workflows = workflow_store or LocalWorkflowStore(local_database)
+            workflow_versions = workflow_version_store or LocalWorkflowVersionStore(local_database)
+            workflow_runs = workflow_run_store or LocalWorkflowRunStore(local_database)
+            triggers = trigger_store or InMemoryTriggerStore()
+            trigger_runs = trigger_run_store or InMemoryTriggerRunStore()
         else:
             approvals = approval_store or InMemoryApprovalStore()
             memory = memory_store or InMemoryMemoryStore()
             runs = run_store or InMemoryRunStore()
             selected_task_store = task_store or InMemoryTaskStore()
+            workflows = workflow_store or InMemoryWorkflowStore()
+            workflow_versions = workflow_version_store or InMemoryWorkflowVersionStore()
+            workflow_runs = workflow_run_store or InMemoryWorkflowRunStore()
+            triggers = trigger_store or InMemoryTriggerStore()
+            trigger_runs = trigger_run_store or InMemoryTriggerRunStore()
 
         if audit_log is not None:
             audit = audit_log
         elif database is not None:
             # Durable audit plus a structured log line for streaming/SIEM.
             audit = AuditLog([PostgresAuditStore(database), LoggingAuditSink()])
+        elif local_database is not None:
+            audit = AuditLog([LocalAuditSink(local_database), LoggingAuditSink()])
         else:
             audit = AuditLog([InMemoryAuditSink(), LoggingAuditSink()])
 
@@ -364,8 +582,65 @@ class Platform:
             job_queue: JobQueue = queue or RedisJobQueue(redis)
         else:
             rate_limiter = InMemoryRateLimiter(rate_per_minute=settings.rate_limit_per_minute)
-            idempotency = InMemoryIdempotencyGuard()
+            idempotency = (
+                LocalIdempotencyGuard(local_database)
+                if local_database is not None
+                else InMemoryIdempotencyGuard()
+            )
             job_queue = queue or InMemoryJobQueue()
+
+        # --- Local runtime ---------------------------------------------
+        # Assembled only for a local runtime. It carries the filesystem sandbox
+        # policy and the command policy, which are injected into every tool
+        # context by the executor so local tools resolve paths through the
+        # sandbox without the agent runner or workflow engine knowing about it.
+        sync_queue_store: SyncQueue = sync_queue or (
+            LocalSyncQueue(local_database) if local_database is not None else InMemorySyncQueue()
+        )
+        tool_metadata: dict[str, object] = {}
+        if is_local:
+            local_workspace = str((Path(settings.local_store_dir) / "workspace").resolve())
+            Path(local_workspace).mkdir(parents=True, exist_ok=True)
+            boundary = DataBoundaryPolicy(
+                settings.local_mode,
+                allow_confidential_remote=settings.local_allow_confidential_remote,
+            )
+            devices = device_registry or InMemoryDeviceRegistry()
+            sync_coordinator = SyncCoordinator(sync_queue_store, boundary=boundary)
+            if local_runtime is None:
+                device = None
+                if settings.local_control_enabled or settings.runtime_kind.value == "local":
+                    device = enroll_device(
+                        tenant_id="local",
+                        user_id="local",
+                        label=settings.local_device_label,
+                        platform=detect_platform(),
+                        instance_fingerprint=secrets.token_hex(16),
+                    )
+                local_runtime = build_local_runtime(
+                    settings=settings,
+                    audit=audit,
+                    devices=devices,
+                    sync=sync_coordinator,
+                    workspace_dir=local_workspace,
+                    allowed_roots=settings.local_workspace_roots or (local_workspace,),
+                    denied_roots=settings.local_denied_roots,
+                    device=device,
+                    mode=settings.local_mode,
+                    network_policy=settings.local_network_policy,
+                )
+            from .local.command import CommandPolicy
+            from .local.sandbox import FilesystemPolicy
+
+            tool_metadata["filesystem_policy"] = FilesystemPolicy(
+                allowed_roots=local_runtime.sandbox.policy.allowed_roots,
+                denied_roots=local_runtime.sandbox.policy.denied_roots,
+                workspace_dir=local_workspace,
+            )
+            tool_metadata["command_policy"] = CommandPolicy(
+                allowlist=frozenset(settings.local_command_allowlist),
+                allowed_cwd_roots=local_runtime.sandbox.policy.allowed_roots,
+            )
 
         executor = ToolExecutor(
             registry=tools,
@@ -376,6 +651,7 @@ class Platform:
             idempotency=idempotency,
             metrics=metrics,
             tracer=tracer,
+            tool_metadata=tool_metadata,
         )
 
         # --- Readiness probes ------------------------------------------
@@ -390,7 +666,20 @@ class Platform:
         integrations = IntegrationRegistry()
         integrations.register(WebhookIntegration(name="generic_webhook"))
 
-        return cls(
+        # --- Workflow engine -------------------------------------------
+        actions = workflow_actions or default_actions()
+        workflow_engine = WorkflowEngine(
+            platform=None,  # patched below; the engine needs the built platform
+            runs=workflow_runs,
+            versions=workflow_versions,
+            actions=actions,
+        )
+
+        # --- Triggers ---------------------------------------------------
+        events = event_bus or EventBus()
+        trigger_service = TriggerService(None, settings=settings)
+
+        platform = cls(
             settings=settings,
             gateway=gateway,
             tools=tools,
@@ -408,12 +697,31 @@ class Platform:
             queue=job_queue,
             rate_limiter=rate_limiter,
             idempotency=idempotency,
+            workflows=workflows,
+            workflow_versions=workflow_versions,
+            workflow_runs=workflow_runs,
+            workflow_engine=workflow_engine,
+            workflow_actions=actions,
+            triggers=triggers,
+            trigger_runs=trigger_runs,
+            trigger_service=trigger_service,
+            events=events,
+            sync_queue=sync_queue_store,
+            local_runtime=local_runtime,
+            local_model_provider=local_model_provider,
             database=database,
+            local_database=local_database,
             redis_client=redis_client,
             metrics=metrics,
             tracer=tracer,
             readiness=readiness,
         )
+        # The engine holds a reference to its platform (it reuses the runner,
+        # executor, policy engine and audit log). Break the construction cycle
+        # by binding it once the platform exists.
+        workflow_engine.bind(platform)
+        trigger_service.bind(platform)
+        return platform
 
     def memory_policy_for(self, tenant_id: str) -> MemoryPolicy:
         """Per-tenant memory policy (defaults, extensible per tenant)."""

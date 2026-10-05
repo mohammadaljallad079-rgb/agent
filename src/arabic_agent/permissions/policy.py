@@ -42,14 +42,58 @@ def platform_default_policy() -> PolicySet:
             ),
             Rule(
                 effect=PermissionEffect.ALLOW,
+                permission=Permission.FILES_READ,
+                reason="local file reads are read-only",
+            ),
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.FILES_SEARCH,
+                reason="local file search is read-only",
+            ),
+            Rule(
+                effect=PermissionEffect.ALLOW,
                 permission=Permission.READ_ERP,
                 reason="read-only ERP access",
+            ),
+            # Workflows orchestrate existing tools; they never bypass policy.
+            # Defining/publishing a workflow and starting a workflow run are
+            # allowed for an authenticated principal, while every *step* that
+            # touches a tool is still gated by that tool's own permissions.
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.MANAGE_WORKFLOW,
+                reason="workflow authoring is governed by the caller's RBAC",
+            ),
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.RUN_WORKFLOW,
+                reason="workflow execution is governed by per-step tool policy",
             ),
             # Mutating or outward-facing actions need a human in the loop.
             Rule(
                 effect=PermissionEffect.REQUIRES_APPROVAL,
                 permission=Permission.WRITE_FILE,
                 reason="writing files can overwrite user data",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.FILES_WRITE,
+                reason="writing local files can overwrite user data",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.FILES_MOVE,
+                reason="moving local files changes user data layout",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.CLIPBOARD_READ,
+                reason="reading the clipboard can expose sensitive data",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.CLIPBOARD_WRITE,
+                reason="writing the clipboard is externally visible to other apps",
             ),
             Rule(
                 effect=PermissionEffect.REQUIRES_APPROVAL,
@@ -96,11 +140,41 @@ def platform_default_policy() -> PolicySet:
                 permission=Permission.PRINT_DOCUMENT,
                 reason="printing is a physical side effect",
             ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.PRINT,
+                reason="printing is a physical side effect",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.SCREEN_READ,
+                reason="screen capture can expose anything on the display",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.APPLICATION_LAUNCH,
+                reason="launching applications changes the user's machine",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.APPLICATION_CLOSE,
+                reason="closing applications can lose unsaved work",
+            ),
             # Destructive, irreversible operations are denied by default.
             Rule(
                 effect=PermissionEffect.DENY,
                 permission=Permission.DELETE_FILE,
                 reason="deleting files is irreversible",
+            ),
+            Rule(
+                effect=PermissionEffect.DENY,
+                permission=Permission.FILES_DELETE,
+                reason="deleting local files is irreversible",
+            ),
+            Rule(
+                effect=PermissionEffect.DENY,
+                permission=Permission.INPUT_CONTROL,
+                reason="synthetic keyboard/mouse control is critical risk",
             ),
             Rule(
                 effect=PermissionEffect.DENY,

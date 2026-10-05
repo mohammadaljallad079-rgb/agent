@@ -29,6 +29,11 @@ class CorrelationContext:
     run_id: str | None = None
     job_id: str | None = None
     worker_id: str | None = None
+    workflow_id: str | None = None
+    workflow_run_id: str | None = None
+    step_run_id: str | None = None
+    trigger_id: str | None = None
+    scheduler_id: str | None = None
 
     def as_dict(self) -> dict[str, str]:
         """Return only the identifiers that are set, for log/trace fields."""
@@ -41,6 +46,11 @@ class CorrelationContext:
                 "run_id": self.run_id,
                 "job_id": self.job_id,
                 "worker_id": self.worker_id,
+                "workflow_id": self.workflow_id,
+                "workflow_run_id": self.workflow_run_id,
+                "step_run_id": self.step_run_id,
+                "trigger_id": self.trigger_id,
+                "scheduler_id": self.scheduler_id,
             }.items()
             if value is not None
         }

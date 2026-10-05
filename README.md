@@ -40,8 +40,14 @@ for later is listed in [`TODO.md`](TODO.md); nothing pretends to work.
 - ✅ Observability: correlated structured logs, Prometheus metrics at `/metrics`,
   in-process tracing with an optional OpenTelemetry bridge, and a dependency-aware
   readiness probe at `/readyz`
-- ⏳ Desktop runtime, workflow triggers, document and media tools,
-  social/ERP connectors (see `TODO.md`)
+- ✅ Durable DAG workflow engine: versioned definitions, runs/steps, conditions
+  and templating, per-step retries, and human-in-the-loop approvals (HTTP API),
+  plus cron/event/webhook/manual triggers and a durable scheduler
+- ✅ Local/desktop runtime: filesystem sandbox, controlled command runner,
+  local tool set, data-boundary policy, sync queue and a loopback control API
+  (`agent-desktop`) — the desktop *application* is not built yet
+- ⏳ Document and media tools, social/ERP connectors, desktop packaging,
+  web UI (see `TODO.md`)
 
 ## Architecture
 
@@ -87,6 +93,28 @@ uv run alembic upgrade head             # apply the schema
 uv run agent-platform                   # API
 uv run agent-worker                     # one or more workers
 ```
+
+### Local / desktop runtime
+
+The local runtime runs the same agent core on the machine, against the local
+filesystem and a controlled command runner, behind a loopback-only control API
+for a desktop client. Nothing about the cloud runtime changes; a `local` build
+simply registers the local tools and no other.
+
+```bash
+export AAP_RUNTIME_KIND=local
+export AAP_LOCAL_CONTROL_TOKEN=...        # required; the surface fails closed without it
+export AAP_LOCAL_WORKSPACE_ROOTS=$HOME/work   # extra roots local tools may touch
+export AAP_LOCAL_COMMAND_ALLOWLIST=ls,cat     # commands the runner may execute
+
+uv run agent-desktop                      # serves 127.0.0.1:8765
+curl -H "X-Local-Token: $AAP_LOCAL_CONTROL_TOKEN" localhost:8765/local/status
+```
+
+Every local path goes through the filesystem sandbox and every write, move or
+delete is approval-gated. Clipboard, printing, screen capture and application
+control are declared but **not implemented** — the capability catalogue reports
+`implemented: false` rather than pretending.
 
 ## Development
 

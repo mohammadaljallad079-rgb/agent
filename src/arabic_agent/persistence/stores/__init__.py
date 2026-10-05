@@ -7,6 +7,12 @@ from .audit import PostgresAuditStore
 from .memory import PostgresMemoryStore
 from .run import PostgresRunStore
 from .task import PostgresTaskStore
+from .trigger import PostgresTriggerRunStore, PostgresTriggerStore
+from .workflow import (
+    PostgresWorkflowRunStore,
+    PostgresWorkflowStore,
+    PostgresWorkflowVersionStore,
+)
 
 __all__ = [
     "PostgresApprovalStore",
@@ -14,4 +20,9 @@ __all__ = [
     "PostgresMemoryStore",
     "PostgresRunStore",
     "PostgresTaskStore",
+    "PostgresTriggerRunStore",
+    "PostgresTriggerStore",
+    "PostgresWorkflowRunStore",
+    "PostgresWorkflowStore",
+    "PostgresWorkflowVersionStore",
 ]

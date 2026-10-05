@@ -116,8 +116,16 @@ control did not actually do what it claimed. Each fix is covered by a test.
 
 - [ ] Anthropic provider.
 - [ ] Google Gemini provider.
-- [ ] Local model hardening: model discovery, streaming, and capability probing
-      for Ollama / vLLM / llama.cpp.
+- [x] Local model hardening: in-process llama.cpp (`LlamaCppBackend`), Ollama,
+      and any OpenAI-compatible local endpoint (`OpenAICompatibleLocalProvider`),
+      behind one `LocalInferenceBackend` protocol. Includes real hardware
+      detection and a conservative runnable gate (`local/hardware.py`), model
+      path confinement + hash verification + config scanning
+      (`local/model_security.py`), a descriptor registry with declared (never
+      guessed) capabilities (`local/model_registry.py`), streaming, and
+      `<tool_call>` extraction from content for models that emit tool calls as
+      text. Fail-closed routing pins private data to a local model and refuses
+      rather than falling back to the cloud (`models/routing.py`).
 - [ ] Vision and speech providers behind `ModelCapability.VISION` / `SPEECH`.
 - [ ] Per-task model routing (cheap model for planning, strong model for
       reasoning, local model for private data).
@@ -148,20 +156,101 @@ control did not actually do what it claimed. Each fix is covered by a test.
 
 ## Phase 5 — Workflow engine
 
-- [ ] Scheduler and triggers (cron, event, webhook) over the task engine.
-- [ ] Workflow definition model: trigger → agent task → tools → approval →
-      result, with persisted workflow state.
+- [x] Durable DAG workflow engine: immutable versioned definitions, run/step
+      records, dependency-driven scheduling, conditions and templating,
+      per-step retries with backoff, and human-in-the-loop approvals. Runs pin
+      the definition version they started from, so editing a workflow can never
+      change an in-flight run. Durable in Postgres; in-memory default for
+      local/offline use.
+- [x] HTTP API: create/get/update workflows, list versions, start runs, read
+      runs and step runs, and resolve workflow approvals through the shared
+      approval inbox.
+- [x] Scheduler and triggers (cron, event, webhook) that start workflow runs:
+      dependency-free cron parser with timezones and misfire policies; a
+      scheduler loop that claims each occurrence atomically and durably;
+      HMAC-signed webhook ingestion; internal event triggers; manual "fire now";
+      a durable firing history; and `MANAGE_WORKFLOW`/`RUN_WORKFLOW` gating.
+      Fired runs go through the existing workflow engine, so there is one
+      execution path.
 - [ ] Example workflow: "every day at 09:00 review email and, on price
-      requests, prepare a report and send it."
-- [ ] Retries, backoff, and dead-letter handling for workflow runs.
+      requests, prepare a report and send it." (Depends on the email tool in
+      Phase 3.)
+- [x] Workflow-run worker recovery: the recovery sweep resets steps stranded in
+      `RUNNING`, clears the expired lease and re-enqueues the run, so an
+      interrupted workflow run is re-driven from where it stopped.
 
 ## Phase 6 — Desktop & offline runtime
 
-- [ ] Desktop runtime implementing `Transport`, running the agent core locally.
-- [ ] Local tool set: files, local apps, printing, browser.
-- [ ] Local model runtime and offline mode end to end.
-- [ ] Secure sync between desktop (local runtime) and cloud runtime, including
-      conflict handling and least-privilege tokens.
+Foundation is implemented and tested; the desktop *application* (packaging, UI,
+tray) is not. The runtime, sandbox, tool set, control API and sync boundary are
+real, not interface-only.
+
+- [x] Local runtime orchestration: `local/runtime.py` (`LocalRuntime`,
+      `build_local_runtime`, `LocalRuntimeStatus`) — lifecycle state machine,
+      mode manager, device registry, boundary policy and audit wiring.
+- [x] Local operating modes (`local/modes.py`): online / offline / hybrid, with
+      a declared (never guessed) mode and local routing forced when offline.
+- [x] Filesystem sandbox (`local/sandbox.py`): allow-list roots, deny-list,
+      traversal and symlink-escape refusal, sensitive-location protection, and
+      relative paths anchored to the run workspace.
+- [x] Controlled command execution (`local/command.py`): allow-list only,
+      `shell=False`, no inherited secrets, hard timeout, cwd confined to
+      approved roots.
+- [x] Local tool set (`tools/builtin/local.py`): read, list, search, write,
+      copy, move, mkdir, delete, and run-command — every path through the
+      sandbox, every write/delete permission-gated and approval-gated.
+- [x] Capability catalogue (`local/capabilities.py`): implemented filesystem +
+      command capabilities; clipboard/screen/input/application declared with
+      `implemented=False` (no fake functionality).
+- [x] Data-boundary policy (`local/boundary.py`): secrets and confidential data
+      never leave the machine; offline forces local routing.
+- [x] Sync boundary (`local/sync.py`): a durable queue of a small, closed set of
+      sync kinds, secret-key redaction, and rejection of anything that may not
+      cross the boundary.
+- [x] Local control API + HTTP surface (`local/control.py`, `local/http.py`):
+      token-authenticated status, capabilities, and lifecycle control.
+- [x] Desktop entry point (`local/main.py`, console script `agent-desktop`):
+      builds the local platform, refuses to start without a control token when
+      auth is on, and serves the control app on loopback.
+- [x] Platform wiring: a `runtime_kind == "local"` build assembles the local
+      runtime, registers the local tools, and threads the sandbox/command
+      policy into the executor.
+- [x] Durable local persistence (`local/persistence/`): the local runtime stores
+      workflows, runs/steps, approvals, audit events, the sync queue and
+      idempotency keys in an embedded SQLite file (SQLAlchemy async engine,
+      WAL, `NullPool`), migrated by its own Alembic branch with a separate
+      `local_alembic_version` table. `Platform.durable` reports whether the
+      store is on disk; a local build uses no Postgres and no Redis.
+- [x] Restart and recovery: state written by one local platform is read by the
+      next; a run left mid-flight by a lost worker is reclaimed
+      (`Worker.recover_stale`) and driven to completion on real durable state,
+      with the recovery recorded in the durable audit trail. A pending approval
+      survives a real process restart and resumes afterwards.
+- [~] Desktop runtime implementing `Transport` — the local runtime and its
+      process entry point exist; the `Transport` implementation and a desktop
+      shell (tray, installer) are not built yet.
+- [x] Offline isolation verified: an end-to-end local run completes inside a
+      Linux network namespace with no network, where any outbound connection
+      fails at the OS level (`tests/test_local_offline.py`).
+- [x] Local model runtime end to end: a GGUF model is discovered, its path is
+      confined to the approved store and hash-verified, loaded (`llama-cpp-python`,
+      in a dedicated child process by default), and registered as a first-class
+      `local/<model>` provider that the existing gateway routes to. Loading is
+      non-fatal and fail-closed: if the model cannot load, local-required requests
+      are refused rather than sent to the cloud. Verified with real English and
+      Arabic inference, real token accounting, and real tool-call emission
+      (`tests/test_local_model_runtime.py`). Offline isolation is verified
+      separately by running a full local run inside a network namespace with no
+      network (`tests/test_local_offline.py`).
+- [x] Native-engine crash containment: the prebuilt `llama-cpp-python` wheel can
+      abort at the native layer, which Python cannot catch. File-backed engines
+      now run in a child process (`local/subprocess_backend.py`,
+      `local/subprocess_worker.py`); a crash becomes a recoverable
+      `ExternalServiceError`, the worker is respawned, and the agent loop
+      completes. Verified by running the real agent loop repeatedly on a real
+      GGUF model (`tests/test_local_agent_loop.py`, `@local_model`).
+- [~] Secure sync between desktop (local runtime) and cloud runtime — the queue
+      and boundary exist; conflict handling and a cloud endpoint are not built.
 - [ ] Desktop packaging and update mechanism.
 
 ## Phase 7 — Product surface
@@ -186,15 +275,37 @@ control did not actually do what it claimed. Each fix is covered by a test.
 ## Known gaps / honest notes
 
 - Persistence is in-memory *by default*; with `AAP_DATABASE_URL` set, runs,
-  approvals, tasks, memory and audit history are durable in Postgres. The
-  in-memory default remains for local/offline use and for the unit test suite.
-- Only one provider family (OpenAI-compatible) is implemented.
+  approvals, tasks, memory and audit history are durable in Postgres. A local
+  build (`AAP_RUNTIME_KIND=local`) instead uses an embedded SQLite store
+  (`AAP_LOCAL_STORE_DIR`) that is durable across restarts with no external
+  service; `Platform.durable` reports which is in force. The in-memory default
+  remains for the unit test suite.
+- Only one cloud provider family (OpenAI-compatible) is implemented. A local
+  model is a first-class provider: llama.cpp (in-process), Ollama, and any
+  OpenAI-compatible local endpoint all run behind the same `ModelProvider`
+  contract and route through the same gateway.
 - Only the tool set listed in Phase 0 exists; the rest are planned.
-- The desktop runtime and workflow engine are designed (interfaces exist) but
-  not implemented.
+- The desktop runtime foundation (local runtime, filesystem sandbox, controlled
+  command execution, local tool set, capability catalogue, data-boundary policy,
+  sync queue, and control API) is implemented and tested. The desktop
+  *application* — a `Transport` implementation, packaging, UI — is not built.
+- The workflow engine core (definitions, versions, runs, steps, conditions,
+  templating, approvals, retries), its HTTP API, the trigger/scheduler layer
+  (cron, event, webhook, manual) and workflow-run worker recovery are
+  implemented and tested.
 - The web UI does not exist yet; the HTTP API is the only interface.
 - There is one known third-party deprecation warning from `starlette.testclient`
   with `httpx`; it does not affect runtime behavior.
+- Phase 5C closeout: the full suite is green (352 passed, 0 skipped) against
+  real Postgres + Redis and a real GGUF model, and the repository tree contains
+  no model weights, databases or secrets. A 10x repeatability run of the real
+  end-to-end loop exposed a *latency* failure mode — 4/10 runs failed with
+  `run deadline exceeded`, never a native crash — caused by the per-call local
+  model deadline (120s) being exceeded under CPU contention and being tighter
+  than the run deadline. Raising `AAP_LOCAL_MODEL_TIMEOUT_SECONDS` to 300s and
+  the test's run bound to 900s made it pass 5/5. Crash/timeout/malformed-frame
+  handling is now covered by `tests/test_subprocess_isolation.py`, which drives
+  the real parent against a controlled child process.
 
 ## Verification commands
 
@@ -204,3 +315,22 @@ uv run ruff format --check .
 uv run mypy
 uv run pytest
 ```
+
+Full integration verification (real Postgres + Redis, no mocks):
+
+```bash
+docker compose up -d
+docker exec aap-postgres psql -U aap -d aap -c "CREATE DATABASE aap_test"
+export AAP_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test
+uv run alembic upgrade head && uv run alembic check   # on a freshly migrated DB
+export AAP_TEST_DATABASE_URL=$AAP_DATABASE_URL
+export AAP_TEST_REDIS_URL=redis://localhost:6379/15
+# Optional: exercise the real local model (Phase 5) end to end. Without it the
+# @local_model tests skip; everything else still runs.
+export AAP_TEST_MODEL_PATH=/path/to/model.gguf
+uv run pytest                                          # 352 passed, 0 skipped
+```
+
+The 36 Postgres/Redis tests own the schema via `create_all`/`drop_all`, so run
+`alembic check` before the suite (or on a fresh DB) — after the suite the shared
+test DB is intentionally left empty.

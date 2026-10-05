@@ -6,7 +6,218 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..core.enums import ApprovalStatus, RunStatus, StepStatus
+from ..core.enums import (
+    ApprovalStatus,
+    ErrorClass,
+    MisfirePolicy,
+    RunStatus,
+    StepKind,
+    StepRunStatus,
+    StepStatus,
+    TriggerKind,
+    WorkflowRunStatus,
+    WorkflowStatus,
+)
+
+
+class WorkflowStepRequest(BaseModel):
+    """One step in a workflow definition submitted over HTTP."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=200)
+    kind: StepKind
+    depends_on: list[str] = Field(default_factory=list)
+    condition: str | None = None
+    action: str | None = None
+    tool: str | None = None
+    goal: str | None = None
+    prompt: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
+    retry: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float | None = Field(default=None, gt=0.0, le=86_400.0)
+    error_policy: str = "fail_run"
+
+
+class WorkflowRequest(BaseModel):
+    """Create or update a workflow, optionally publishing a new version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    steps: list[WorkflowStepRequest] = Field(default_factory=list)
+    default_timeout_seconds: float = Field(default=600.0, gt=0.0)
+    run_timeout_seconds: float | None = Field(default=None, gt=0.0)
+    publish: bool = False
+
+
+class WorkflowSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    description: str
+    status: WorkflowStatus
+    latest_version_id: str | None = None
+    latest_version: int = 0
+    created_at: str
+    updated_at: str
+
+
+class WorkflowVersionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    workflow_id: str
+    version: int
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    default_timeout_seconds: float
+    run_timeout_seconds: float | None = None
+    created_at: str
+
+
+class WorkflowRunRequest(BaseModel):
+    """Start a workflow run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    workspace_dir: str | None = None
+    idempotency_key: str | None = Field(default=None, max_length=200)
+
+
+class WorkflowStepRunSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    step_id: str
+    index: int
+    name: str
+    kind: StepKind
+    status: StepRunStatus
+    attempts: int
+    output: dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+    error: str | None = None
+    error_class: ErrorClass | None = None
+    agent_run_id: str | None = None
+    approval_id: str | None = None
+
+
+class WorkflowRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    workflow_id: str
+    workflow_version_id: str
+    workflow_version: int
+    status: WorkflowRunStatus
+    input: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    pending_approval_id: str | None = None
+    created_at: str
+    updated_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class TriggerRequest(BaseModel):
+    """Create a trigger for a workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    workflow_id: str = Field(min_length=1, max_length=64)
+    kind: TriggerKind
+    cron: str | None = Field(default=None, max_length=200)
+    timezone: str = Field(default="UTC", max_length=64)
+    misfire_policy: MisfirePolicy = MisfirePolicy.SKIP
+    event_type: str | None = Field(default=None, max_length=120)
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class TriggerUpdateRequest(BaseModel):
+    """Update the mutable fields of a trigger."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    cron: str | None = Field(default=None, max_length=200)
+    timezone: str | None = Field(default=None, max_length=64)
+    misfire_policy: MisfirePolicy | None = None
+    event_type: str | None = Field(default=None, max_length=120)
+    inputs: dict[str, Any] | None = None
+
+
+class TriggerSummary(BaseModel):
+    """A trigger as returned over HTTP (never includes the webhook secret)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    kind: TriggerKind
+    workflow_id: str
+    enabled: bool
+    cron: str | None = None
+    timezone: str
+    misfire_policy: MisfirePolicy
+    next_fire_at: str | None = None
+    webhook_id: str | None = None
+    event_type: str | None = None
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    last_fire_at: str | None = None
+    last_run_id: str | None = None
+    fire_count: int = 0
+    last_error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class TriggerCreatedResponse(BaseModel):
+    """A newly created trigger plus its one-time webhook signing secret."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trigger: TriggerSummary
+    #: Returned exactly once, only for webhook triggers; never on reads.
+    webhook_secret: str | None = None
+
+
+class TriggerFireRequest(BaseModel):
+    """Fire a trigger manually."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, max_length=200)
+
+
+class TriggerFiringSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    trigger_id: str
+    workflow_id: str
+    kind: TriggerKind
+    workflow_run_id: str | None = None
+    scheduled_for: str | None = None
+    detail: str = ""
+    created_at: str
+
+
+class DomainEventRequest(BaseModel):
+    """Publish an internal domain event to fire matching event triggers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: str = Field(min_length=1, max_length=120)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    event_id: str | None = Field(default=None, max_length=200)
 
 
 class RunRequest(BaseModel):

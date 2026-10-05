@@ -148,6 +148,10 @@ class ModelProvider(ABC):
     name: str
     #: Capabilities this provider/model family can serve.
     capabilities: frozenset[ModelCapability] = frozenset({ModelCapability.CHAT})
+    #: Whether this provider runs on the user's machine. Cloud providers leave
+    #: this ``False``; the local runtime sets it ``True``. Used for cost
+    #: accounting and routing without importing a concrete provider.
+    is_local: bool = False
 
     @abstractmethod
     async def complete(self, request: ModelRequest) -> ModelResponse:

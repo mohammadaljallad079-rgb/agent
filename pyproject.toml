@@ -22,6 +22,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0,<3",
     "asyncpg>=0.29,<1",
     "alembic>=1.13,<2",
+    # Local durable store: embedded SQLite over the same SQLAlchemy/Alembic
+    # toolchain, so the offline runtime survives a restart with no Postgres.
+    "aiosqlite>=0.20,<1",
     # Ephemeral coordination (rate limiting, job queue, locks, idempotency)
     "redis>=5.0,<6",
 ]
@@ -37,6 +40,7 @@ dev = [
 [project.scripts]
 agent-platform = "arabic_agent.api.app:main"
 agent-worker = "arabic_agent.worker.main:main"
+agent-desktop = "arabic_agent.local.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arabic_agent"]
@@ -50,6 +54,7 @@ filterwarnings = ["error::DeprecationWarning"]
 markers = [
     "postgres: integration tests requiring a reachable Postgres (AAP_TEST_DATABASE_URL)",
     "redis: integration tests requiring a reachable Redis (AAP_TEST_REDIS_URL)",
+    "local_model: integration tests requiring a real GGUF model file (AAP_TEST_MODEL_PATH)",
 ]
 
 [tool.ruff]
@@ -57,7 +62,7 @@ line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
 # Alembic-generated migration files use long op.* lines; they are not hand-edited.
-extend-exclude = ["migrations"]
+extend-exclude = ["migrations", "migrations_local/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "ASYNC", "S", "RUF"]
@@ -80,3 +85,10 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["uvicorn.*"]
 ignore_missing_imports = true
+
+# llama-cpp-python (and the numpy it pulls in) are optional, lazily-imported
+# dependencies of the local model runtime. Their third-party stubs are not part
+# of this project's type surface, so mypy does not follow them.
+[[tool.mypy.overrides]]
+module = ["llama_cpp.*", "numpy.*"]
+follow_imports = "skip"

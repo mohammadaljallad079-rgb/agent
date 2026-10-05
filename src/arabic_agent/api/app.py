@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
@@ -30,7 +30,7 @@ from starlette.responses import Response
 from .. import __version__
 from ..container import Platform
 from ..core.config import Settings
-from ..core.enums import RunStatus
+from ..core.enums import RunStatus, TriggerKind
 from ..core.errors import (
     ApprovalRequiredError,
     ConfigurationError,
@@ -40,17 +40,21 @@ from ..core.errors import (
     PlatformError,
     ValidationError,
 )
-from ..core.ids import PREFIX_REQUEST, new_id
+from ..core.ids import PREFIX_REQUEST, PREFIX_WORKFLOW_RUN, new_id
 from ..observability import configure_observability
 from ..observability.context import correlation_scope
 from ..observability.metrics import render_prometheus
 from ..permissions.base import Principal
 from ..runs.base import RunRecord
+from ..triggers.events import DomainEvent
+from ..triggers.models import Trigger, TriggerRun
+from ..workflows.models import WorkflowStep
 from .auth import ApiKeyAuth, build_principal_dependency
 from .schemas import (
     ApprovalDecision,
     ApprovalSummary,
     AuditSummary,
+    DomainEventRequest,
     HealthResponse,
     MemorySummary,
     ReadinessProbeResponse,
@@ -60,8 +64,22 @@ from .schemas import (
     RunSummary,
     TaskSummary,
     ToolSummary,
+    TriggerCreatedResponse,
+    TriggerFireRequest,
+    TriggerFiringSummary,
+    TriggerRequest,
+    TriggerSummary,
+    TriggerUpdateRequest,
+    WorkflowRequest,
+    WorkflowRunRequest,
+    WorkflowRunResponse,
+    WorkflowStepRequest,
+    WorkflowStepRunSummary,
+    WorkflowSummary,
+    WorkflowVersionSummary,
 )
 from .service import RunService
+from .workflow_service import WorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +108,144 @@ def _run_response(record: RunRecord) -> RunResponse:
     )
 
 
+def _workflow_summary(record: object) -> WorkflowSummary:
+    from ..workflows.models import Workflow
+
+    assert isinstance(record, Workflow)
+    return WorkflowSummary(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        status=record.status,
+        latest_version_id=record.latest_version_id,
+        latest_version=record.latest_version,
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
+    )
+
+
+def _workflow_version_summary(record: object) -> WorkflowVersionSummary:
+    from ..workflows.models import WorkflowVersion
+
+    assert isinstance(record, WorkflowVersion)
+    return WorkflowVersionSummary(
+        id=record.id,
+        workflow_id=record.workflow_id,
+        version=record.version,
+        steps=[s.model_dump(mode="json") for s in record.steps],
+        default_timeout_seconds=record.default_timeout_seconds,
+        run_timeout_seconds=record.run_timeout_seconds,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+def _workflow_run_response(record: object) -> WorkflowRunResponse:
+    from ..workflows.run import WorkflowRun
+
+    assert isinstance(record, WorkflowRun)
+    return WorkflowRunResponse(
+        id=record.id,
+        workflow_id=record.workflow_id,
+        workflow_version_id=record.workflow_version_id,
+        workflow_version=record.workflow_version,
+        status=record.status,
+        input=dict(record.input),
+        output=dict(record.output),
+        error=record.error,
+        pending_approval_id=record.pending_approval_id,
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
+        started_at=record.started_at.isoformat() if record.started_at else None,
+        finished_at=record.finished_at.isoformat() if record.finished_at else None,
+    )
+
+
+def _workflow_step_run_summary(record: object) -> WorkflowStepRunSummary:
+    from ..workflows.run import StepRun
+
+    assert isinstance(record, StepRun)
+    return WorkflowStepRunSummary(
+        id=record.id,
+        step_id=record.step_id,
+        index=record.index,
+        name=record.name,
+        kind=record.kind,
+        status=record.status,
+        attempts=record.attempts,
+        output=dict(record.output),
+        summary=record.summary,
+        error=record.error,
+        error_class=record.error_class,
+        agent_run_id=record.agent_run_id,
+        approval_id=record.approval_id,
+    )
+
+
+def _trigger_summary(record: object) -> TriggerSummary:
+    assert isinstance(record, Trigger)
+    return TriggerSummary(
+        id=record.id,
+        name=record.name,
+        kind=record.kind,
+        workflow_id=record.workflow_id,
+        enabled=record.enabled,
+        cron=record.cron,
+        timezone=record.timezone,
+        misfire_policy=record.misfire_policy,
+        next_fire_at=record.next_fire_at.isoformat() if record.next_fire_at else None,
+        webhook_id=record.webhook_id,
+        event_type=record.event_type,
+        inputs=dict(record.inputs),
+        last_fire_at=record.last_fire_at.isoformat() if record.last_fire_at else None,
+        last_run_id=record.last_run_id,
+        fire_count=record.fire_count,
+        last_error=record.last_error,
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
+    )
+
+
+def _trigger_firing_summary(record: TriggerRun) -> TriggerFiringSummary:
+    return TriggerFiringSummary(
+        id=record.id,
+        trigger_id=record.trigger_id,
+        workflow_id=record.workflow_id,
+        kind=record.kind,
+        workflow_run_id=record.workflow_run_id,
+        scheduled_for=record.scheduled_for.isoformat() if record.scheduled_for else None,
+        detail=record.detail,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+def _to_workflow_steps(steps: list[WorkflowStepRequest]) -> list[WorkflowStep]:
+    from ..core.enums import StepErrorPolicy
+    from ..workflows.models import RetryPolicy, WorkflowStep
+
+    converted: list[WorkflowStep] = []
+    for step in steps:
+        retry = RetryPolicy(**step.retry) if step.retry else RetryPolicy()
+        converted.append(
+            WorkflowStep(
+                id=step.id,
+                name=step.name,
+                kind=step.kind,
+                depends_on=tuple(step.depends_on),
+                condition=step.condition,
+                action=step.action,
+                tool=step.tool,
+                goal=step.goal,
+                prompt=step.prompt,
+                arguments=dict(step.arguments),
+                output=dict(step.output),
+                retry=retry,
+                timeout_seconds=step.timeout_seconds,
+                error_policy=StepErrorPolicy(step.error_policy),
+            )
+        )
+    return converted
+
+
 def create_app(
     platform: Platform,
     *,
@@ -102,6 +258,8 @@ def create_app(
     principal_dep = build_principal_dependency(auth, settings)
     limiter = platform.rate_limiter
     service = RunService(platform, settings=settings)
+    workflow_service = WorkflowService(platform, settings=settings)
+    trigger_service = platform.trigger_service
 
     app = FastAPI(
         title="Arabic AI Agent Platform",
@@ -352,6 +510,27 @@ def create_app(
         payload: ApprovalDecision,
         principal: Principal = Depends(principal_dep),
     ) -> RunResponse:
+        approval = await platform.approvals.get(approval_id, tenant_id=principal.tenant_id)
+        # An approval may belong to an agent run or a workflow run; the id
+        # prefix routes it to the right service. Both resolve the same store.
+        if approval.run_id.startswith(f"{PREFIX_WORKFLOW_RUN}_"):
+            workflow_run = await workflow_service.decide_approval(
+                principal=principal,
+                approval_id=approval_id,
+                approve=payload.approve,
+                reason=payload.reason,
+            )
+            return RunResponse(
+                run_id=workflow_run.id,
+                status=RunStatus(workflow_run.status.value),
+                pending_approval_id=workflow_run.pending_approval_id,
+                error=workflow_run.error,
+                created_at=workflow_run.created_at.isoformat(),
+                updated_at=workflow_run.updated_at.isoformat(),
+                finished_at=(
+                    workflow_run.finished_at.isoformat() if workflow_run.finished_at else None
+                ),
+            )
         record = await service.decide_approval(
             principal=principal,
             approval_id=approval_id,
@@ -382,6 +561,273 @@ def create_app(
             )
             for m in entries
         ]
+
+    # --- Workflows ------------------------------------------------------
+    @app.post("/workflows", response_model=WorkflowSummary, status_code=status.HTTP_201_CREATED)
+    async def create_workflow(
+        payload: WorkflowRequest, principal: Principal = Depends(principal_dep)
+    ) -> WorkflowSummary:
+        workflow, _ = await workflow_service.create(
+            principal=principal,
+            name=payload.name,
+            description=payload.description,
+            steps=_to_workflow_steps(payload.steps),
+            default_timeout_seconds=payload.default_timeout_seconds,
+            run_timeout_seconds=payload.run_timeout_seconds,
+            publish=payload.publish,
+        )
+        return _workflow_summary(workflow)
+
+    @app.get("/workflows", response_model=list[WorkflowSummary])
+    async def list_workflows(
+        principal: Principal = Depends(principal_dep),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> list[WorkflowSummary]:
+        records = await workflow_service.list_workflows(
+            tenant_id=principal.tenant_id, limit=limit, offset=offset
+        )
+        return [_workflow_summary(r) for r in records]
+
+    @app.get("/workflows/{workflow_id}", response_model=WorkflowSummary)
+    async def get_workflow(
+        workflow_id: str, principal: Principal = Depends(principal_dep)
+    ) -> WorkflowSummary:
+        record = await workflow_service.get(workflow_id, tenant_id=principal.tenant_id)
+        return _workflow_summary(record)
+
+    @app.put("/workflows/{workflow_id}", response_model=WorkflowSummary)
+    async def update_workflow(
+        workflow_id: str,
+        payload: WorkflowRequest,
+        principal: Principal = Depends(principal_dep),
+    ) -> WorkflowSummary:
+        workflow, _ = await workflow_service.update(
+            principal=principal,
+            workflow_id=workflow_id,
+            name=payload.name,
+            description=payload.description,
+            steps=_to_workflow_steps(payload.steps) if payload.steps else None,
+            default_timeout_seconds=payload.default_timeout_seconds,
+            run_timeout_seconds=payload.run_timeout_seconds,
+            publish=payload.publish,
+        )
+        return _workflow_summary(workflow)
+
+    @app.get("/workflows/{workflow_id}/versions", response_model=list[WorkflowVersionSummary])
+    async def list_workflow_versions(
+        workflow_id: str, principal: Principal = Depends(principal_dep)
+    ) -> list[WorkflowVersionSummary]:
+        versions = await workflow_service.list_versions(
+            tenant_id=principal.tenant_id, workflow_id=workflow_id
+        )
+        return [_workflow_version_summary(v) for v in versions]
+
+    @app.post(
+        "/workflows/{workflow_id}/runs",
+        response_model=WorkflowRunResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def start_workflow_run(
+        workflow_id: str,
+        payload: WorkflowRunRequest,
+        principal: Principal = Depends(principal_dep),
+    ) -> WorkflowRunResponse:
+        run = await workflow_service.start_run(
+            principal=principal,
+            workflow_id=workflow_id,
+            inputs=payload.inputs,
+            workspace_dir=payload.workspace_dir,
+            idempotency_key=payload.idempotency_key,
+        )
+        return _workflow_run_response(run)
+
+    @app.get("/workflows/{workflow_id}/runs", response_model=list[WorkflowRunResponse])
+    async def list_workflow_runs(
+        workflow_id: str,
+        principal: Principal = Depends(principal_dep),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> list[WorkflowRunResponse]:
+        runs = await workflow_service.list_runs(
+            tenant_id=principal.tenant_id, workflow_id=workflow_id, limit=limit, offset=offset
+        )
+        return [_workflow_run_response(r) for r in runs]
+
+    @app.get("/workflow-runs/{run_id}", response_model=WorkflowRunResponse)
+    async def get_workflow_run(
+        run_id: str, principal: Principal = Depends(principal_dep)
+    ) -> WorkflowRunResponse:
+        run = await workflow_service.get_run(run_id, tenant_id=principal.tenant_id)
+        return _workflow_run_response(run)
+
+    @app.get("/workflow-runs/{run_id}/steps", response_model=list[WorkflowStepRunSummary])
+    async def list_workflow_run_steps(
+        run_id: str, principal: Principal = Depends(principal_dep)
+    ) -> list[WorkflowStepRunSummary]:
+        steps = await workflow_service.list_step_runs(
+            tenant_id=principal.tenant_id, workflow_run_id=run_id
+        )
+        return [_workflow_step_run_summary(s) for s in steps]
+
+    # --- Triggers -------------------------------------------------------
+    @app.post("/triggers", response_model=TriggerCreatedResponse, status_code=201)
+    async def create_trigger(
+        body: TriggerRequest, principal: Principal = Depends(principal_dep)
+    ) -> TriggerCreatedResponse:
+        trigger, secret = await trigger_service.create(
+            principal=principal,
+            name=body.name,
+            workflow_id=body.workflow_id,
+            kind=body.kind,
+            cron=body.cron,
+            timezone=body.timezone,
+            misfire_policy=body.misfire_policy,
+            event_type=body.event_type,
+            inputs=body.inputs,
+        )
+        return TriggerCreatedResponse(trigger=_trigger_summary(trigger), webhook_secret=secret)
+
+    @app.get("/triggers", response_model=list[TriggerSummary])
+    async def list_triggers(
+        workflow_id: str | None = None,
+        kind: TriggerKind | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        principal: Principal = Depends(principal_dep),
+    ) -> list[TriggerSummary]:
+        records = await trigger_service.list_triggers(
+            tenant_id=principal.tenant_id,
+            kind=kind,
+            workflow_id=workflow_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [_trigger_summary(t) for t in records]
+
+    @app.get("/triggers/{trigger_id}", response_model=TriggerSummary)
+    async def get_trigger(
+        trigger_id: str, principal: Principal = Depends(principal_dep)
+    ) -> TriggerSummary:
+        return _trigger_summary(
+            await trigger_service.get(trigger_id, tenant_id=principal.tenant_id)
+        )
+
+    @app.patch("/triggers/{trigger_id}", response_model=TriggerSummary)
+    async def update_trigger(
+        trigger_id: str,
+        body: TriggerUpdateRequest,
+        principal: Principal = Depends(principal_dep),
+    ) -> TriggerSummary:
+        updated = await trigger_service.update(
+            principal=principal,
+            trigger_id=trigger_id,
+            name=body.name,
+            cron=body.cron,
+            timezone=body.timezone,
+            misfire_policy=body.misfire_policy,
+            event_type=body.event_type,
+            inputs=body.inputs,
+        )
+        return _trigger_summary(updated)
+
+    @app.post("/triggers/{trigger_id}/enable", response_model=TriggerSummary)
+    async def enable_trigger(
+        trigger_id: str, principal: Principal = Depends(principal_dep)
+    ) -> TriggerSummary:
+        updated = await trigger_service.set_enabled(
+            principal=principal, trigger_id=trigger_id, enabled=True
+        )
+        return _trigger_summary(updated)
+
+    @app.post("/triggers/{trigger_id}/disable", response_model=TriggerSummary)
+    async def disable_trigger(
+        trigger_id: str, principal: Principal = Depends(principal_dep)
+    ) -> TriggerSummary:
+        updated = await trigger_service.set_enabled(
+            principal=principal, trigger_id=trigger_id, enabled=False
+        )
+        return _trigger_summary(updated)
+
+    @app.delete("/triggers/{trigger_id}", status_code=204)
+    async def delete_trigger(
+        trigger_id: str, principal: Principal = Depends(principal_dep)
+    ) -> Response:
+        await trigger_service.delete(principal=principal, trigger_id=trigger_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post("/triggers/{trigger_id}/fire", response_model=WorkflowRunResponse)
+    async def fire_trigger(
+        trigger_id: str,
+        body: TriggerFireRequest,
+        principal: Principal = Depends(principal_dep),
+    ) -> WorkflowRunResponse:
+        run = await trigger_service.fire_manual(
+            principal=principal,
+            trigger_id=trigger_id,
+            inputs=body.inputs,
+            idempotency_key=body.idempotency_key,
+        )
+        return _workflow_run_response(run)
+
+    @app.get("/triggers/{trigger_id}/firings", response_model=list[TriggerFiringSummary])
+    async def list_trigger_firings(
+        trigger_id: str,
+        limit: int = Query(default=50, ge=1, le=200),
+        principal: Principal = Depends(principal_dep),
+    ) -> list[TriggerFiringSummary]:
+        firings = await trigger_service.list_firings(
+            tenant_id=principal.tenant_id, trigger_id=trigger_id, limit=limit
+        )
+        return [_trigger_firing_summary(f) for f in firings]
+
+    @app.post("/webhooks/{webhook_id}", response_model=WorkflowRunResponse)
+    async def receive_webhook(
+        webhook_id: str,
+        request: Request,
+        x_signature: str | None = Header(default=None, alias="X-Signature"),
+        x_timestamp: str | None = Header(default=None, alias="X-Timestamp"),
+        x_delivery_id: str | None = Header(default=None, alias="X-Delivery-ID"),
+    ) -> WorkflowRunResponse:
+        # Authenticated by HMAC signature over the raw body, not an API key.
+        body = await request.body()
+        if not x_signature or not x_timestamp:
+            raise PermissionDeniedError("missing webhook signature")
+        run = await trigger_service.fire_webhook(
+            webhook_id=webhook_id,
+            body=body,
+            timestamp=x_timestamp,
+            signature=x_signature,
+            delivery_id=x_delivery_id,
+        )
+        return _workflow_run_response(run)
+
+    @app.post("/events", response_model=list[WorkflowRunResponse])
+    async def publish_event(
+        body: DomainEventRequest, principal: Principal = Depends(principal_dep)
+    ) -> list[WorkflowRunResponse]:
+        # Internal event ingestion. Only the publishing tenant's triggers match.
+        allowed = settings.allowed_event_types
+        if allowed and body.event_type not in allowed:
+            raise ValidationError(
+                "event type not accepted",
+                details={"event_type": body.event_type},
+            )
+        runs = await trigger_service.fire_event(
+            event_type=body.event_type,
+            tenant_id=principal.tenant_id,
+            payload=body.payload,
+            event_id=body.event_id,
+        )
+        # Also fan the event out to in-process subscribers (best-effort).
+        await platform.events.publish(
+            DomainEvent(
+                type=body.event_type,
+                tenant_id=principal.tenant_id,
+                payload=body.payload,
+            )
+        )
+        return [_workflow_run_response(r) for r in runs]
 
     return app
 

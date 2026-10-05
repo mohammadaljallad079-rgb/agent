@@ -21,11 +21,31 @@ class Permission(StrEnum):
     DELETE_FILE = "DELETE_FILE"
     LIST_DIRECTORY = "LIST_DIRECTORY"
 
+    # Local filesystem capabilities (the desktop runtime's sandboxed surface).
+    # These are distinct from the server-side file permissions above so a
+    # tenant can grant local file access without granting server file access,
+    # and vice versa.
+    FILES_READ = "FILES_READ"
+    FILES_WRITE = "FILES_WRITE"
+    FILES_DELETE = "FILES_DELETE"
+    FILES_MOVE = "FILES_MOVE"
+    FILES_SEARCH = "FILES_SEARCH"
+
+    # Local computer control (reserved; declared so policy and audit exist
+    # before any such tool is implemented).
+    CLIPBOARD_READ = "CLIPBOARD_READ"
+    CLIPBOARD_WRITE = "CLIPBOARD_WRITE"
+    SCREEN_READ = "SCREEN_READ"
+    INPUT_CONTROL = "INPUT_CONTROL"
+    APPLICATION_LAUNCH = "APPLICATION_LAUNCH"
+    APPLICATION_CLOSE = "APPLICATION_CLOSE"
+
     # Execution
     RUN_COMMAND = "RUN_COMMAND"
 
     # Physical / output
     PRINT_DOCUMENT = "PRINT_DOCUMENT"
+    PRINT = "PRINT"
 
     # Communications
     SEND_EMAIL = "SEND_EMAIL"
@@ -41,6 +61,10 @@ class Permission(StrEnum):
     # Network / models
     NETWORK_ACCESS = "NETWORK_ACCESS"
 
+    # Workflow administration (defining/publishing/running workflows)
+    MANAGE_WORKFLOW = "MANAGE_WORKFLOW"
+    RUN_WORKFLOW = "RUN_WORKFLOW"
+
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.value
 
@@ -50,18 +74,32 @@ _PERMISSION_RISK: dict[Permission, RiskLevel] = {
     Permission.READ_FILE: RiskLevel.LOW,
     Permission.LIST_DIRECTORY: RiskLevel.LOW,
     Permission.READ_ERP: RiskLevel.LOW,
+    Permission.FILES_READ: RiskLevel.LOW,
+    Permission.FILES_SEARCH: RiskLevel.LOW,
     Permission.WRITE_FILE: RiskLevel.MEDIUM,
     Permission.MOVE_FILE: RiskLevel.MEDIUM,
     Permission.NETWORK_ACCESS: RiskLevel.MEDIUM,
+    Permission.FILES_WRITE: RiskLevel.MEDIUM,
+    Permission.FILES_MOVE: RiskLevel.MEDIUM,
+    Permission.PRINT_DOCUMENT: RiskLevel.MEDIUM,
+    Permission.PRINT: RiskLevel.MEDIUM,
+    Permission.CLIPBOARD_READ: RiskLevel.MEDIUM,
+    Permission.CLIPBOARD_WRITE: RiskLevel.MEDIUM,
     Permission.RUN_COMMAND: RiskLevel.HIGH,
     Permission.DELETE_FILE: RiskLevel.HIGH,
-    Permission.PRINT_DOCUMENT: RiskLevel.MEDIUM,
+    Permission.FILES_DELETE: RiskLevel.HIGH,
+    Permission.SCREEN_READ: RiskLevel.HIGH,
+    Permission.APPLICATION_LAUNCH: RiskLevel.HIGH,
+    Permission.APPLICATION_CLOSE: RiskLevel.HIGH,
     Permission.SEND_EMAIL: RiskLevel.HIGH,
     Permission.SEND_WHATSAPP: RiskLevel.HIGH,
     Permission.SEND_SOCIAL_MESSAGE: RiskLevel.HIGH,
     Permission.CREATE_INVOICE: RiskLevel.HIGH,
     Permission.DELETE_INVOICE: RiskLevel.CRITICAL,
     Permission.WRITE_ERP: RiskLevel.HIGH,
+    Permission.INPUT_CONTROL: RiskLevel.CRITICAL,
+    Permission.MANAGE_WORKFLOW: RiskLevel.MEDIUM,
+    Permission.RUN_WORKFLOW: RiskLevel.MEDIUM,
 }
 
 

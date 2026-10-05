@@ -35,6 +35,27 @@ class ExecutionOutcomeKind(StrEnum):
     APPROVAL_REQUIRED = "approval_required"
 
 
+#: Permissions that classify a tool as touching local files, so the executor can
+#: emit a semantic local audit event (file accessed / modified / command) in
+#: addition to the generic tool.call/result pair. This keeps local-runtime audit
+#: honest without teaching every local tool about the audit log.
+_LOCAL_READ_PERMISSIONS = frozenset({Permission.FILES_READ, Permission.FILES_SEARCH})
+_LOCAL_WRITE_PERMISSIONS = frozenset(
+    {Permission.FILES_WRITE, Permission.FILES_MOVE, Permission.FILES_DELETE}
+)
+
+
+def _local_audit_event(tool: Tool) -> AuditEventType | None:
+    permissions = set(tool.permissions)
+    if Permission.RUN_COMMAND in permissions:
+        return AuditEventType.LOCAL_COMMAND_ATTEMPTED
+    if permissions & _LOCAL_WRITE_PERMISSIONS:
+        return AuditEventType.LOCAL_FILE_MODIFIED
+    if permissions & _LOCAL_READ_PERMISSIONS:
+        return AuditEventType.LOCAL_FILE_ACCESSED
+    return None
+
+
 class ExecutionOutcome(BaseModel):
     """Result of an executor attempt."""
 
@@ -63,6 +84,7 @@ class ToolExecutor:
         idempotency_ttl_seconds: int = 86_400,
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
+        tool_metadata: dict[str, object] | None = None,
     ) -> None:
         self._registry = registry
         self._policy = policy
@@ -73,6 +95,16 @@ class ToolExecutor:
         self._idempotency_ttl = idempotency_ttl_seconds
         self._metrics = metrics
         self._tracer = tracer
+        #: Ambient, non-secret metadata merged into every tool context. The
+        #: local runtime uses this to pass the filesystem sandbox policy and the
+        #: command policy to local tools without the agent runner or workflow
+        #: engine needing to know about them.
+        self._tool_metadata = dict(tool_metadata or {})
+
+    def _merge_context(self, context: ToolContext) -> ToolContext:
+        if not self._tool_metadata:
+            return context
+        return context.model_copy(update={"metadata": {**self._tool_metadata, **context.metadata}})
 
     async def execute(
         self,
@@ -154,7 +186,7 @@ class ToolExecutor:
             attributes={"tool": tool_name, "permission_count": len(decisions)},
             tracer=self._tracer,
         ):
-            result = await self._invoke(tool, arguments, context, principal)
+            result = await self._invoke(tool, arguments, self._merge_context(context), principal)
         self._record_tool_metric(tool_name, "completed" if result.ok else "error", started)
         return ExecutionOutcome(
             kind=ExecutionOutcomeKind.COMPLETED,
@@ -221,7 +253,9 @@ class ToolExecutor:
             attributes={"tool": approval.tool_name, "approval_id": approval.id},
             tracer=self._tracer,
         ):
-            result = await self._invoke(tool, dict(approval.arguments), context, principal)
+            result = await self._invoke(
+                tool, dict(approval.arguments), self._merge_context(context), principal
+            )
         self._record_tool_metric(approval.tool_name, "completed" if result.ok else "error", started)
         return ExecutionOutcome(
             kind=ExecutionOutcomeKind.COMPLETED,
@@ -326,6 +360,22 @@ class ToolExecutor:
             message=result.summary,
             data={"tool": tool.name, "ok": result.ok, "data": result.data},
         )
+        local_event = _local_audit_event(tool)
+        if local_event is not None:
+            await self._audit.record(
+                local_event,
+                tenant_id=context.tenant_id,
+                user_id=context.user_id,
+                run_id=context.run_id,
+                message=f"local tool {tool.name} {'succeeded' if result.ok else 'failed'}",
+                data={
+                    "tool": tool.name,
+                    "ok": result.ok,
+                    "path": result.data.get("path")
+                    or result.data.get("source")
+                    or result.data.get("root"),
+                },
+            )
         return result
 
     def _evaluate(self, principal: Principal, tool: Tool) -> tuple[PolicyDecision, ...]:

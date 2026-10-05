@@ -47,6 +47,10 @@ class JobType(StrEnum):
     START_RUN = "start_run"
     RESUME_RUN = "resume_run"
     RECOVER_RUN = "recover_run"
+    # Workflow engine jobs. ``Job.run_id`` carries the workflow run id.
+    START_WORKFLOW = "start_workflow"
+    RESUME_WORKFLOW = "resume_workflow"
+    RECOVER_WORKFLOW = "recover_workflow"
 
 
 class Job(BaseModel):

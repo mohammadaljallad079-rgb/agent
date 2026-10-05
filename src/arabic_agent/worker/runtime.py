@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 from ..agent.base import AgentRunResult
 from ..audit.base import AuditEventType, AuditLog
 from ..core.config import Settings
-from ..core.enums import RunStatus
+from ..core.enums import RunStatus, WorkflowRunStatus
 from ..core.errors import ConflictError, PlatformError
 from ..core.ids import new_id
 from ..observability.context import correlation_scope
@@ -39,6 +39,8 @@ from .queue import Job, JobQueue, JobType
 
 if TYPE_CHECKING:
     from ..container import Platform
+    from ..triggers.scheduler import TriggerScheduler
+    from ..workflows.run import WorkflowRun
 
 logger = logging.getLogger(__name__)
 
@@ -302,10 +304,25 @@ class Worker:
         self._audit: AuditLog = platform.audit
         self._metrics = platform.metrics
         self._stop = asyncio.Event()
+        # The scheduler runs alongside the queue consumer in a worker process.
+        # It only starts durable runs; the queue consumer executes them.
+        from ..triggers.scheduler import TriggerScheduler
+
+        self._scheduler = TriggerScheduler(
+            platform=platform,
+            triggers=platform.triggers,
+            service=platform.trigger_service,
+            settings=settings,
+            owner=worker_id,
+        )
 
     @property
     def worker_id(self) -> str:
         return self._executor.worker_id
+
+    @property
+    def scheduler(self) -> TriggerScheduler:
+        return self._scheduler
 
     async def process_one(self) -> bool:
         """Claim and process a single job. Returns whether a job was processed."""
@@ -371,8 +388,73 @@ class Worker:
             await self._executor.execute_run(job.run_id, tenant_id=job.tenant_id)
         elif job.type is JobType.RECOVER_RUN:
             await self._executor.execute_run(job.run_id, tenant_id=job.tenant_id, recovered=True)
+        elif job.type is JobType.START_WORKFLOW:
+            await self._execute_workflow(job, recovered=False)
+        elif job.type is JobType.RESUME_WORKFLOW:
+            await self._resume_workflow(job)
+        elif job.type is JobType.RECOVER_WORKFLOW:
+            await self._execute_workflow(job, recovered=True)
+
+    async def _execute_workflow(self, job: Job, *, recovered: bool) -> None:
+        """Lease and drive a workflow run, mirroring run execution semantics."""
+        engine = self._platform.workflow_engine
+        store = self._platform.workflow_runs
+        run = await store.get_run(job.run_id, tenant_id=job.tenant_id)
+        if run.is_terminal or run.status is WorkflowRunStatus.WAITING_APPROVAL:
+            return
+        # Claim with a lease (best-effort; conflicts are handled by the engine).
+        try:
+            claimed = run.model_copy(
+                update={
+                    "worker_id": self.worker_id,
+                    "lease_expires_at": datetime.now(UTC)
+                    + timedelta(seconds=self._settings.worker_lease_seconds),
+                }
+            )
+            run = await store.update_run(claimed, expected_version=run.version)
+        except ConflictError:
+            logger.info("workflow run %s claimed concurrently; skipping", run.id)
+            return
+        heartbeat = asyncio.create_task(self._workflow_heartbeat(run.id, run.tenant_id))
+        try:
+            await engine.execute_run(run.id, tenant_id=run.tenant_id, recovered=recovered)
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+
+    async def _resume_workflow(self, job: Job) -> None:
+        approval_id = str(job.payload.get("approval_id", ""))
+        if not approval_id:
+            return
+        await self._platform.workflow_engine.resume_run(
+            job.run_id, tenant_id=job.tenant_id, approval_id=approval_id
+        )
+
+    async def _workflow_heartbeat(self, run_id: str, tenant_id: str) -> None:
+        interval = self._settings.worker_heartbeat_seconds
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._platform.workflow_runs.heartbeat(
+                    run_id,
+                    tenant_id=tenant_id,
+                    worker_id=self.worker_id,
+                    lease_expires_at=datetime.now(UTC)
+                    + timedelta(seconds=self._settings.worker_lease_seconds),
+                )
+            except Exception:
+                logger.warning("workflow heartbeat failed for %s", run_id, exc_info=True)
 
     async def _mark_failed(self, job: Job, message: str) -> None:
+        # Workflow jobs are marked failed by the workflow engine itself; the run
+        # store does not hold them.
+        if job.type in (
+            JobType.START_WORKFLOW,
+            JobType.RESUME_WORKFLOW,
+            JobType.RECOVER_WORKFLOW,
+        ):
+            return
         try:
             record = await self._runs.get(job.run_id, tenant_id=job.tenant_id)
             if record.status in _FINISHED:
@@ -420,13 +502,104 @@ class Worker:
             )
             self._metrics.run_recovered()
             count += 1
+        count += await self._recover_stale_workflows(now)
         if count:
             logger.info("recovered %d stale run(s)", count)
         return count
 
+    async def _recover_stale_workflows(self, now: datetime) -> int:
+        """Re-enqueue workflow runs whose worker lease has expired."""
+        store = self._platform.workflow_runs
+        stale = await store.list_stale_runs(now=now, limit=100)
+        count = 0
+        for run in stale:
+            if run.recovery_attempts >= self._settings.job_max_attempts:
+                # Too many recovery attempts: fail it rather than loop forever.
+                with contextlib.suppress(ConflictError, PlatformError):
+                    failed = run.transition(
+                        WorkflowRunStatus.FAILED,
+                        error="exceeded recovery attempts",
+                        lease_expires_at=None,
+                    )
+                    await store.update_run(failed, expected_version=run.version)
+                self._metrics.recovery_attempt(outcome="abandoned")
+                await self._audit_recovery(run, recovered=False, reason="exceeded attempts")
+                continue
+            bumped = run.model_copy(
+                update={
+                    "recovery_attempts": run.recovery_attempts + 1,
+                    "lease_expires_at": now
+                    + timedelta(seconds=self._settings.worker_lease_seconds),
+                    "worker_id": self.worker_id,
+                }
+            )
+            try:
+                await store.update_run(bumped, expected_version=run.version)
+            except ConflictError:
+                # Another worker claimed the lease first; it owns the recovery.
+                self._metrics.recovery_attempt(outcome="lease_conflict")
+                await self._audit_recovery(run, recovered=False, reason="lease conflict")
+                continue
+            # Reset any step left mid-flight so the recovered run can re-drive it
+            # rather than stalling on a non-terminal RUNNING step. Terminal steps
+            # are never touched, and tool idempotency still prevents duplicate
+            # external effects.
+            reset = await store.reset_running_steps(tenant_id=run.tenant_id, workflow_run_id=run.id)
+            if reset:
+                self._metrics.recovery_attempt(outcome="reset_steps")
+            await self._queue.enqueue(
+                Job(
+                    type=JobType.RECOVER_WORKFLOW,
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    user_id=run.user_id,
+                )
+            )
+            self._metrics.workflow_run_recovered()
+            self._metrics.recovery_attempt(outcome="recovered")
+            await self._audit_recovery(
+                run, recovered=True, reason="stale lease", reset_steps=len(reset)
+            )
+            count += 1
+        return count
+
+    async def _audit_recovery(
+        self,
+        run: WorkflowRun,
+        *,
+        recovered: bool,
+        reason: str,
+        reset_steps: int = 0,
+    ) -> None:
+        """Record a recovery decision so the sweep is observable, not silent."""
+        with contextlib.suppress(Exception):
+            await self._audit.record(
+                (
+                    AuditEventType.RECOVERY_SUCCEEDED
+                    if recovered
+                    else AuditEventType.RECOVERY_REJECTED
+                ),
+                tenant_id=run.tenant_id,
+                user_id=run.user_id,
+                run_id=run.id,
+                message=f"workflow run recovery {reason}",
+                data={
+                    "workflow_run_id": run.id,
+                    "recovered": recovered,
+                    "reason": reason,
+                    "reset_steps": reset_steps,
+                    "recovery_attempts": run.recovery_attempts,
+                },
+            )
+
     async def run_forever(self) -> None:
         """Poll the queue and periodically reclaim stale runs until stopped."""
         recovery = asyncio.create_task(self._recovery_loop())
+        scheduler = (
+            asyncio.create_task(self._scheduler.run_forever())
+            if self._settings.scheduler_enabled
+            else None
+        )
         logger.info("worker %s started", self.worker_id)
         try:
             while not self._stop.is_set():
@@ -434,9 +607,14 @@ class Worker:
                 if not processed:
                     await asyncio.sleep(self._settings.worker_poll_seconds)
         finally:
+            self._scheduler.stop()
             recovery.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await recovery
+            if scheduler is not None:
+                scheduler.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await scheduler
             logger.info("worker %s stopped", self.worker_id)
 
     async def _recovery_loop(self) -> None:

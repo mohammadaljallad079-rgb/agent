@@ -47,6 +47,65 @@ class AuditEventType(StrEnum):
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_CANCELLED = "run.cancelled"
+    # Workflow engine
+    WORKFLOW_CREATED = "workflow.created"
+    WORKFLOW_UPDATED = "workflow.updated"
+    WORKFLOW_PUBLISHED = "workflow.published"
+    WORKFLOW_RUN_STARTED = "workflow.run.started"
+    WORKFLOW_STEP_STARTED = "workflow.step.started"
+    WORKFLOW_STEP_COMPLETED = "workflow.step.completed"
+    WORKFLOW_STEP_FAILED = "workflow.step.failed"
+    WORKFLOW_STEP_RETRY = "workflow.step.retry"
+    WORKFLOW_STEP_SKIPPED = "workflow.step.skipped"
+    WORKFLOW_APPROVAL_REQUESTED = "workflow.approval.requested"
+    WORKFLOW_APPROVAL_RESOLVED = "workflow.approval.resolved"
+    WORKFLOW_RUN_COMPLETED = "workflow.run.completed"
+    WORKFLOW_RUN_FAILED = "workflow.run.failed"
+    WORKFLOW_RUN_CANCELLED = "workflow.run.cancelled"
+    # Triggers & scheduler
+    TRIGGER_CREATED = "trigger.created"
+    TRIGGER_UPDATED = "trigger.updated"
+    TRIGGER_ENABLED = "trigger.enabled"
+    TRIGGER_DISABLED = "trigger.disabled"
+    TRIGGER_DELETED = "trigger.deleted"
+    TRIGGER_FIRED = "trigger.fired"
+    TRIGGER_FIRE_SKIPPED = "trigger.fire.skipped"
+    TRIGGER_FIRE_FAILED = "trigger.fire.failed"
+    SCHEDULED_RUN_CREATED = "trigger.scheduled.run_created"
+    WEBHOOK_RECEIVED = "trigger.webhook.received"
+    WEBHOOK_REJECTED = "trigger.webhook.rejected"
+    EVENT_RECEIVED = "trigger.event.received"
+    RECOVERY_STARTED = "recovery.started"
+    RECOVERY_SUCCEEDED = "recovery.succeeded"
+    RECOVERY_REJECTED = "recovery.rejected"
+    RECOVERY_LEASE_ACQUIRED = "recovery.lease.acquired"
+    RECOVERY_LEASE_CONFLICT = "recovery.lease.conflict"
+    WORKFLOW_RESUMED = "workflow.run.resumed"
+    # Local / desktop runtime
+    LOCAL_RUNTIME_STARTED = "local.runtime.started"
+    LOCAL_RUNTIME_READY = "local.runtime.ready"
+    LOCAL_RUNTIME_PAUSED = "local.runtime.paused"
+    LOCAL_RUNTIME_RESUMED = "local.runtime.resumed"
+    LOCAL_RUNTIME_STOPPED = "local.runtime.stopped"
+    LOCAL_RUNTIME_ERROR = "local.runtime.error"
+    LOCAL_TOOL_REQUESTED = "local.tool.requested"
+    LOCAL_FILE_ACCESSED = "local.file.accessed"
+    LOCAL_FILE_MODIFIED = "local.file.modified"
+    LOCAL_COMMAND_ATTEMPTED = "local.command.attempted"
+    LOCAL_NETWORK_ATTEMPTED = "local.network.attempted"
+    LOCAL_APPROVAL_REQUESTED = "local.approval.requested"
+    LOCAL_APPROVAL_RESOLVED = "local.approval.resolved"
+    LOCAL_DATA_BOUNDARY_DECISION = "local.data_boundary.decision"
+    LOCAL_PERMISSION_GRANTED = "local.permission.granted"
+    LOCAL_PERMISSION_DENIED = "local.permission.denied"
+    DEVICE_ENROLLED = "device.enrolled"
+    DEVICE_ACTIVATED = "device.activated"
+    DEVICE_SUSPENDED = "device.suspended"
+    DEVICE_REVOKED = "device.revoked"
+    SYNC_QUEUED = "sync.queued"
+    SYNC_UPLOADED = "sync.uploaded"
+    SYNC_REJECTED = "sync.rejected"
+    SYNC_FAILED = "sync.failed"
 
 
 def _utcnow() -> datetime:
@@ -150,6 +209,19 @@ class AuditLog:
             if sequence:
                 return sequence
         return self.next_sequence(run_id)
+
+    async def list_for_run(self, *, tenant_id: str, run_id: str) -> list[AuditEvent]:
+        """Read a run's trail from the first sink that can answer.
+
+        Sinks that cannot read return ``[]``; the first non-empty answer wins.
+        A durable sink (Postgres/local) is registered first, so this returns the
+        persisted trail rather than the process-local view.
+        """
+        for sink in self._sinks:
+            events = await sink.list_for_run(tenant_id=tenant_id, run_id=run_id)
+            if events:
+                return events
+        return []
 
     async def emit(self, event: AuditEvent) -> None:
         import logging

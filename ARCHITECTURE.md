@@ -74,10 +74,13 @@ layer imports a higher one.
 | `models` | Provider abstraction, gateway (retry/fallback/usage), registry |
 | `memory` | Memory entries, store abstraction, write/retention policy |
 | `tasks` | Task plans/steps, durable store, TaskEngine transitions |
+| `workflows` | Durable DAG engine: definitions, versions, runs, steps, conditions, approvals |
+| `triggers` | Cron/event/webhook triggers + scheduler that start workflow runs |
 | `context` | Context assembly with a token budget |
 | `audit` | Audited events, sinks, redaction, sequence |
 | `integrations` | External-service abstraction + registry (webhook reference impl) |
 | `runtime` | Local/Cloud profile and `Transport` boundary |
+| `local` | Local/desktop runtime: lifecycle, modes, devices, sandbox, command runner, boundary, sync, control API |
 | `agent` | The loop, planner, recovery policy, tool executor, prompts |
 | `runs` | `RunRecord` lifecycle/state machine + `RunStore` ABC |
 | `persistence` | SQLAlchemy models, `Database`, Postgres store implementations |
@@ -298,6 +301,110 @@ verify → report, and survives interruption at any step.
 
 ---
 
+## 8a. Workflow engine (Phase 5)
+
+`arabic_agent/workflows/` is a durable DAG engine, separate from the single-run
+agent loop. It is the deterministic counterpart to the LLM-driven loop: a
+workflow is authored once as a graph, then runs repeatably.
+
+**Definition and versioning.** `Workflow` holds identity and status
+(`DRAFT | PUBLISHED | ARCHIVED`). `WorkflowVersion` is an immutable snapshot of
+the graph, and every `WorkflowRun` pins the `workflow_version_id` it started
+from. Editing a workflow creates a new version; a run already in flight is never
+affected. This is the core safety property of the engine.
+
+**Steps.** `WorkflowStep` declares `kind`, `depends_on`, `condition`, and its
+payload. Kinds: `DETERMINISTIC` (a registered action such as `set`/`sum`),
+`TOOL` (a platform tool call), `AGENT` (a nested agent goal), `APPROVAL`
+(human-in-the-loop gate). Each step has a `RetryPolicy` (attempts, backoff) and
+an `error_policy` (`FAIL`, `CONTINUE`, `SKIP`), plus a per-step timeout.
+
+**Execution.** `WorkflowEngine` schedules a step once all its dependencies are
+in a successful terminal state. Steps whose `condition` evaluates false are
+skipped. The engine re-derives what is runnable from persisted rows on every
+pass, so it resumes correctly after an interruption and never re-runs completed
+steps. Parallelism is bounded (`MAX_PARALLELISM`).
+
+**Templating and conditions.** `workflows/expressions.py` renders `{{ ... }}`
+templates over a scope of `inputs`, `steps.<id>.output`, and `env`, and
+evaluates conditions over the same scope. Conditions are evaluated only before a
+step first starts, so an approval step that pauses and resumes is not re-skipped.
+
+**Approvals.** An `APPROVAL` step pauses the run in `WAITING_APPROVAL` and opens
+a real approval through the same permissions/approvals store used by agent runs.
+The approval is routed back to the workflow engine by run-id prefix, and every
+decision is written to the audit log. Resuming re-drives the paused step.
+
+**Persistence.** `WorkflowStore`, `WorkflowVersionStore` and `WorkflowRunStore`
+are ABCs with in-memory defaults and Postgres implementations
+(`persistence/stores/workflow.py`). Run records carry lease/heartbeat fields so
+an interrupted run can be reclaimed by a worker.
+
+**Service and HTTP.** `api/workflow_service.py` owns the rules: persist before
+execute, idempotency-key reuse, a fixed per-run workspace, and approval
+transitions. The API exposes create/get/update workflows, list versions, start
+runs, read runs and step runs; approvals are resolved through the shared
+`POST /approvals/{id}/decide` endpoint.
+
+**Recovery.** The worker's recovery sweep reclaims a workflow run whose lease
+expired: it resets any step stranded in `RUNNING` back to `PENDING`
+(`WorkflowRunStore.reset_running_steps`), clears the run's lease, and enqueues a
+`RECOVER_WORKFLOW` job. Because the engine re-derives runnable work from
+persisted rows, the recovered run is re-driven from where it stopped rather than
+restarted, and completed steps are never re-run.
+
+---
+
+## 8b. Triggers and scheduler (Phase 3B)
+
+`arabic_agent/triggers/` turns "something happened" into a workflow run without a
+human calling the API. It is a *thin* layer over the workflow engine: every kind
+converges on `WorkflowService.start_run`, so triggered work is executed by the
+same worker and engine as any other run. There is no second execution path.
+
+**Kinds.** `TriggerKind`: `MANUAL` (authenticated "fire now"), `CRON` (a
+schedule), `WEBHOOK` (an inbound HTTP call authenticated by an HMAC signature),
+`EVENT` (an internal domain event such as `invoice.created`).
+
+**Cron.** `triggers/cron.py` is a dependency-free 5-field cron parser with
+timezone support and Vixie day-of-month/day-of-week semantics, plus macros
+(`@daily`, …). `CronExpression.next_after` is strictly-after, so a scheduler can
+never spin on the same instant. `MisfirePolicy` governs a missed occurrence:
+`SKIP` advances past it, `RUN_ONE` fires once, `RUN_ALL` catches up (bounded by
+`AAP_SCHEDULER_MAX_CATCHUP`).
+
+**Scheduler.** `TriggerScheduler` scans due triggers and **claims** each
+occurrence atomically with a compare-and-swap that advances `next_fire_at` and
+sets a lease (`TriggerStore.claim_due`). The claim is durable, so a scheduler
+that crashes after claiming does not re-fire the occurrence on restart, and two
+schedulers racing on the same trigger cannot both fire it. The scheduler only
+*starts* runs; the queue consumer executes them.
+
+**Webhooks.** A webhook trigger has a public `webhook_id` and a stored
+HMAC-SHA256 secret. `triggers/signing.py` verifies `sha256=<hmac(secret,
+timestamp + "." + body)>` against a tolerance window; a missing, malformed, or
+stale signature fails closed. The secret is returned exactly once (at creation),
+never by a read, and never written to the audit log.
+
+**Idempotency.** Each firing derives an idempotency key from its cause (a cron
+occurrence, a webhook `X-Delivery-ID`, an event id). The run is created with that
+key, so a redelivered webhook, a retried event, or a scheduler that crashed after
+starting a run yields one run, not many. The firing itself is recorded as a
+`TriggerRun` row.
+
+**Authorisation.** Creating/updating a trigger requires `MANAGE_WORKFLOW`;
+firing one requires `RUN_WORKFLOW`. A fired run is authorised as the trigger
+owner (their roles and permission ceiling were captured at creation), so a
+webhook or cron job can never run with more authority than its author had.
+
+**Service and HTTP.** `triggers/service.py` owns create/update/enable/disable/
+delete and the fire paths. The API exposes `/triggers` CRUD, `/triggers/{id}/
+fire`, `/triggers/{id}/firings`, `POST /webhooks/{webhook_id}` (signature-auth,
+no API key), and `POST /events` (authenticated event ingestion, optionally
+restricted to `AAP_ALLOWED_EVENT_TYPES`).
+
+---
+
 ## 9. Model gateway (Model Abstraction)
 
 `arabic_agent/models/` decouples the agent from any single model.
@@ -318,6 +425,19 @@ provider (Anthropic, Gemini, a local vision or speech model) means implementing
 
 Switching model = changing configuration (`AAP_DEFAULT_MODEL`, fallbacks), not
 code.
+
+**Native-engine isolation.** File-backed engines (llama.cpp via
+`llama-cpp-python`) run inside the same process as the agent by default, but the
+native library can abort on some hardware — a SIGSEGV/SIGABRT that no Python
+`try/except` can catch. When `AAP_LOCAL_MODEL_ISOLATE` is on (the default),
+`local/subprocess_backend.py` runs the engine in a dedicated child process
+(`local/subprocess_worker.py`) and speaks a length-prefixed JSON protocol over
+stdin/stdout. A native abort then surfaces to the agent as a recoverable
+`ExternalServiceError`; the worker is respawned on the next call and the agent
+loop continues. The child verifies the weights file and signals readiness before
+serving, so a bad model fails fast rather than mid-request. This is transparent
+to the rest of the system: `build_backend(..., isolate=True)` returns the same
+`LocalInferenceBackend` protocol the provider and gateway already consume.
 
 ---
 
@@ -425,6 +545,95 @@ registered tools, providers, and stores differ. A desktop runtime registers
 local tools and a local model; a cloud runtime registers integration tools and
 cloud providers.
 
+### 13a. Local runtime implementation (Phase 4)
+
+`arabic_agent/local/` is the concrete local runtime. A build with
+`AAP_RUNTIME_KIND=local` assembles it in the composition root and registers the
+local tools; a cloud build registers none of them, so the local tools cannot
+even be named by the model.
+
+Components:
+
+- **`runtime.py`** — `LocalRuntime` orchestrates lifecycle, mode, devices,
+  boundary, audit and the local tool registry. `build_local_runtime(settings)`
+  constructs it from configuration; `LocalRuntimeStatus` is the honest,
+  non-secret status surface (state, mode, platform, capability ids, workspace
+  roots).
+- **`lifecycle.py`** — `LifecycleStateMachine` with the states
+  `stopped → starting → ready → running ⇄ paused → stopping → stopped` and an
+  explicit `accepts_tools` predicate; illegal transitions raise.
+- **`modes.py`** — `ModeManager` holds the *declared* mode
+  (`online | offline | hybrid`). The mode is never inferred from a failed
+  request; `offline` forces local routing.
+- **`device.py`** — `DeviceIdentity` / `DeviceRegistry` identify a device by an
+  operator-provided `instance_fingerprint`, **not** by serial number or MAC
+  address (no hardware identifiers are collected).
+- **`sandbox.py`** — `FilesystemPolicy` + `FilesystemSandbox`. Allow-list of
+  roots, explicit deny-list, textual `..` refusal, NUL-byte refusal,
+  sensitive-location protection (`/etc`, `~/.ssh`, `~/.aws`, `*.pem`, …) applied
+  *before* the allow-list, and symlink-escape detection. Relative paths are
+  anchored to the run workspace, so a tool path is deterministic and cannot
+  depend on the process CWD.
+- **`command.py`** — `CommandPolicy` + `ControlledCommandRunner`. Commands are
+  allow-listed by basename, executed with `shell=False` (so `;`, `|`, `$(...)`
+  are literal arguments, never a second command), with a minimal environment
+  that inherits **no** secrets, a hard timeout, and a CWD confined to approved
+  roots.
+- **`capabilities.py`** — `LocalCapability` catalogue. Only the filesystem and
+  command capabilities are `implemented=True`; clipboard, screen capture, input
+  control and application launch are declared with `implemented=False` so the
+  vocabulary and audit surface are stable without pretending to work.
+- **`boundary.py`** — `DataBoundaryPolicy` decides where a piece of data may be
+  processed (`LOCAL | REMOTE | EITHER`) given its sensitivity. `SECRET` never
+  routes remotely; `CONFIDENTIAL` is local-only by default; `offline` forces
+  local.
+- **`sync.py`** — `SyncQueue` + `SyncCoordinator`. Only a closed set of
+  `SyncKind`s ever crosses the boundary; secret-like payload keys are redacted
+  and a payload the boundary refuses is marked `REJECTED`, not uploaded.
+- **`control.py` / `http.py`** — `LocalControlAPI` and a small FastAPI app for
+  the desktop UI: token-authenticated `/local/status`, `/local/capabilities`,
+  `/local/start|stop|pause|resume`. Auth fails closed when a token is required
+  but not configured.
+- **`main.py`** — the `agent-desktop` entry point. It builds the local platform,
+  refuses to start without `AAP_LOCAL_CONTROL_TOKEN` when auth is on, and serves
+  the control app on loopback (`AAP_LOCAL_CONTROL_HOST`/`_PORT`).
+- **`sandbox_provider.py`** — `SandboxProvider` is the single seam that turns a
+  tool call into a sandbox; the local tools build every sandbox through it, so
+  the workspace/extra-root/deny-list merge lives in one place.
+
+The local tool set (`tools/builtin/local.py`) is deliberately small and every
+path goes through the sandbox: `read_local_file`, `list_local_directory`,
+`search_local_files`, `write_local_file`, `copy_local_file`, `move_local_file`,
+`create_local_directory`, `delete_local_file`, `run_local_command`. Writes,
+moves and deletes are approval-gated by the permission policy; reads are not.
+
+**Durable local persistence.** A local build is durable, not in-memory.
+`local/persistence/` provides `LocalDatabase` — an async SQLAlchemy engine over
+an embedded SQLite file (WAL journal, `NullPool` so connections close
+deterministically and no aiosqlite thread lingers) — plus local implementations
+of the *same* store ABCs the cloud build uses: workflows, versions, runs and
+steps, approvals, audit, the sync queue and idempotency keys. The schema is
+owned by Alembic (`migrations_local/`, its own `local_alembic_version` table so
+it never collides with the Postgres branch) and the composition root runs the
+migration at build time. `Platform.durable` reports whether the store is on
+disk; `Platform.local_database` is the handle. A local build uses no Postgres
+and no Redis. Tenant isolation and optimistic concurrency are enforced by the
+local stores exactly as in the Postgres ones (wrong-tenant reads raise
+`NotFoundError`; a stale `expected_version` raises `ConflictError`).
+
+**Restart and recovery.** Because the local store is durable, the recoverable
+worker runtime (§3a) works locally too. A run left `RUNNING` with an expired
+lease by a lost worker is reclaimed by `Worker.recover_stale` on the next local
+platform and driven to completion, and the recovery is written to the durable
+audit trail. A run waiting on approval survives a real process restart: the next
+process sees the paused run and its pending approval from disk alone, resolves
+it, and `WorkflowEngine.resume_run` completes the run. Offline operation is
+verified by running a full local agent task inside a Linux network namespace
+with no network, where any outbound connection fails at the OS level.
+
+Not built yet: a `Transport` implementation and desktop process, a cloud sync
+endpoint, desktop packaging, and the local-model hardening in Phase 2.
+
 ---
 
 ## 14. Security
@@ -511,8 +720,9 @@ These have clear insertion points and are tracked in `TODO.md`:
 - **Document generation** — PDF/DOCX/XLSX/PPTX/CSV as independent tools.
 - **Video understanding** — frames → OCR → speech-to-text → timeline → visual
   events, behind a video tool interface.
-- **Workflow engine** — trigger → agent task → tools → approval → result, built
-  on the existing task engine + integrations.
+- **Workflow scheduler** — cron/event/webhook triggers that start workflow runs
+  are implemented; see §8b. The workflow engine itself (definitions, versions,
+  runs, steps, conditions, templating, approvals, retries) is in §8a.
 - **Desktop agent** — a local runtime implementing `Transport`, registering
   local tools and a local model.
 
@@ -526,7 +736,7 @@ recoverable worker runtime are now implemented (see §3a).
 
 The foundation is verified, not assumed.
 
-- **Unit / integration tests** (`tests/`, 130 tests) exercise real code paths:
+- **Unit / integration tests** (`tests/`, 160+ tests) exercise real code paths:
   - `test_permissions.py` — policy decisions (allow/deny/requires-approval),
     risk ceilings, tenant policy overrides.
   - `test_tools.py` — argument validation, sandbox escape refusal, execution.
@@ -535,8 +745,12 @@ The foundation is verified, not assumed.
     and resume, guards.
   - `test_memory.py` — write policy (secrets refused), scoping, expiry.
   - `test_tasks_context.py` — plan transitions and context budgeting.
+  - `test_workflows.py` — the workflow engine: versioning, dependency
+    scheduling, condition skip, templating, retries, approval pause/resume,
+    error policies, idempotency and tenant scoping.
   - `test_core.py` — config, IDs, redaction.
-  - `test_api.py` — auth, runs, approvals, rate limiting, error mapping.
+  - `test_api.py` — auth, runs, approvals, rate limiting, error mapping,
+    workflow CRUD/run/approval over HTTP, and cross-tenant 404 isolation.
   - `test_worker_recovery.py` — worker execution, lease-based recovery,
     approval-safe recovery, poison-job failure bounds (in-memory stores).
   - `test_observability.py` — correlation context propagation and isolation,
