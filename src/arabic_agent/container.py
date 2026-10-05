@@ -28,6 +28,14 @@ from .agent.runner import AgentRunner
 from .audit.base import AuditLog
 from .audit.logging_sink import LoggingAuditSink
 from .audit.memory_sink import InMemoryAuditSink
+from .computer.attachments import ObservationAttachmentProvider
+from .computer.backends import build_computer_backend
+from .computer.ocr import build_ocr_engine
+from .computer.perception import PerceptionLayer
+from .computer.policy import ComputerPolicy
+from .computer.runtime import ComputerRuntime
+from .computer.screen_boundary import ScreenDataBoundary, ScreenDataPolicy
+from .context.attachments import AttachmentProvider
 from .context.manager import ContextManager
 from .core.config import Settings
 from .core.enums import Locale, ModelCapability, OperatingMode
@@ -107,6 +115,7 @@ from .tasks.engine import TaskEngine
 from .tasks.store import InMemoryTaskStore, TaskStore
 from .tools.base import Tool
 from .tools.builtin import (
+    COMPUTER_TOOLS,
     DOCUMENT_TOOLS,
     EXTENDED_FILESYSTEM_TOOLS,
     PROJECT_TOOLS,
@@ -181,6 +190,8 @@ class Platform:
         sync_queue: SyncQueue,
         local_runtime: LocalRuntime | None = None,
         local_model_provider: LocalBackendProvider | None = None,
+        computer_runtime: ComputerRuntime | None = None,
+        attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
         redis_client: aioredis.Redis | None = None,
@@ -217,6 +228,8 @@ class Platform:
         self.sync_queue = sync_queue
         self.local_runtime = local_runtime
         self.local_model_provider = local_model_provider
+        self.computer_runtime = computer_runtime
+        self.attachment_provider = attachment_provider
         self.database = database
         self.local_database = local_database
         self.redis_client = redis_client
@@ -256,6 +269,7 @@ class Platform:
             approvals=self.approvals,
             settings=self.settings,
             locale=locale or self.settings.default_locale,
+            attachment_provider=self.attachment_provider,
         )
 
     async def aclose(self) -> None:
@@ -325,6 +339,8 @@ class Platform:
         sync_queue: SyncQueue | None = None,
         device_registry: DeviceRegistry | None = None,
         local_runtime: LocalRuntime | None = None,
+        computer_runtime: ComputerRuntime | None = None,
+        attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
         redis_client: aioredis.Redis | None = None,
@@ -511,6 +527,15 @@ class Platform:
         document_tools = [tool_cls() for tool_cls in DOCUMENT_TOOLS]
         extended_filesystem_tools = [tool_cls() for tool_cls in EXTENDED_FILESYSTEM_TOOLS]
         project_tools = [tool_cls() for tool_cls in PROJECT_TOOLS]
+        # Phase 7: computer use / perception. Local-only and opt-in — on a cloud
+        # build, or when computer control is disabled, the tools do not exist, so
+        # the model cannot even name them. Every action is still permission- and
+        # approval-gated once they do exist.
+        computer_tools = (
+            [tool_cls() for tool_cls in COMPUTER_TOOLS]
+            if is_local and settings.computer_control_enabled
+            else []
+        )
         tools = ToolRegistry(
             [
                 EchoTool(),
@@ -523,6 +548,7 @@ class Platform:
                 *document_tools,
                 *project_tools,
                 *local_tools,
+                *computer_tools,
                 *(extra_tools or []),
             ]
         )
@@ -654,6 +680,59 @@ class Platform:
                 allowed_cwd_roots=local_runtime.sandbox.policy.allowed_roots,
             )
 
+            # --- Computer use / perception (Phase 7) -------------------
+            # Only assembled for a local build with computer control enabled.
+            # The runtime carries the policy, budget, observation store and
+            # screen-data boundary; it is injected into every tool context by the
+            # executor, exactly like the filesystem/command policies.
+            if computer_runtime is None and settings.computer_control_enabled:
+                computer_backend = build_computer_backend()
+                if settings.computer_backend not in ("auto", computer_backend.name):
+                    computer_backend = build_computer_backend(platform=detect_platform())
+                perception = PerceptionLayer(
+                    computer_backend,
+                    ocr=build_ocr_engine(languages=settings.computer_ocr_languages),
+                    max_dimension=settings.computer_max_image_dimension,
+                )
+                try:
+                    screen_policy = ScreenDataPolicy(settings.computer_screen_policy)
+                except ValueError:
+                    screen_policy = ScreenDataPolicy.LOCAL_ONLY
+                screen_boundary = ScreenDataBoundary(
+                    policy=screen_policy,
+                    mode=settings.local_mode,
+                    allow_confidential_remote=settings.local_allow_confidential_remote,
+                )
+                computer_policy = ComputerPolicy(
+                    require_fresh_observation=settings.computer_require_fresh_observation,
+                    max_observation_age_seconds=settings.computer_max_observation_age_seconds,
+                    max_pointer_actions=settings.computer_max_pointer_actions,
+                    max_keyboard_actions=settings.computer_max_keyboard_actions,
+                    max_captures=settings.computer_max_captures,
+                )
+                computer_runtime = ComputerRuntime(
+                    backend=computer_backend,
+                    perception=perception,
+                    policy=computer_policy,
+                    audit=audit,
+                    boundary=screen_boundary,
+                )
+                logger.info(
+                    "computer backend: %s (available=%s)",
+                    computer_backend.name,
+                    computer_backend.available,
+                )
+            if computer_runtime is not None:
+                tool_metadata["computer_runtime"] = computer_runtime
+                # Offer the latest observation to a vision-capable model, subject
+                # to the screen-data boundary. The destination is remote unless
+                # the default model runs locally.
+                attachment_provider = attachment_provider or ObservationAttachmentProvider(
+                    runtime=computer_runtime,
+                    boundary=computer_runtime.boundary,
+                    destination_is_remote=not gateway.default_is_local(),
+                )
+
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
@@ -721,6 +800,8 @@ class Platform:
             sync_queue=sync_queue_store,
             local_runtime=local_runtime,
             local_model_provider=local_model_provider,
+            computer_runtime=computer_runtime,
+            attachment_provider=attachment_provider,
             database=database,
             local_database=local_database,
             redis_client=redis_client,

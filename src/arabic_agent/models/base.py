@@ -38,6 +38,39 @@ class ToolCall(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class ImageContent(BaseModel):
+    """An image attached to a message, for a vision-capable model.
+
+    Base64-encoded so it is provider-neutral and never depends on a local file
+    path. The bytes are excluded from ``repr`` to keep them out of logs.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    mime_type: str = "image/png"
+    data_base64: str = Field(repr=False)
+    width: int = 0
+    height: int = 0
+
+    @property
+    def size_bytes(self) -> int:
+        # base64 expands by ~4/3; this is an estimate for budgeting only.
+        return len(self.data_base64) * 3 // 4
+
+    @classmethod
+    def from_bytes(
+        cls, data: bytes, *, mime_type: str = "image/png", width: int = 0, height: int = 0
+    ) -> ImageContent:
+        import base64
+
+        return cls(
+            mime_type=mime_type,
+            data_base64=base64.b64encode(data).decode("ascii"),
+            width=width,
+            height=height,
+        )
+
+
 class ChatMessage(BaseModel):
     """A single message in a conversation, provider-neutral."""
 
@@ -48,14 +81,17 @@ class ChatMessage(BaseModel):
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
     name: str | None = None
+    #: Images attached to this message. Only a vision-capable model may receive
+    #: them; the context manager drops them for a text-only model.
+    images: tuple[ImageContent, ...] = ()
 
     @classmethod
     def system(cls, content: str) -> ChatMessage:
         return cls(role="system", content=content)
 
     @classmethod
-    def user(cls, content: str) -> ChatMessage:
-        return cls(role="user", content=content)
+    def user(cls, content: str, *, images: tuple[ImageContent, ...] = ()) -> ChatMessage:
+        return cls(role="user", content=content, images=images)
 
     @classmethod
     def assistant(cls, content: str = "", tool_calls: tuple[ToolCall, ...] = ()) -> ChatMessage:

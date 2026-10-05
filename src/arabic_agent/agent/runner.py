@@ -23,9 +23,10 @@ from pathlib import Path
 from typing import Literal
 
 from ..audit.base import AuditEventType, AuditLog
+from ..context.attachments import AttachmentProvider, ContextAttachment
 from ..context.manager import CORE_TOOLS, ContextManager
 from ..core.config import Settings
-from ..core.enums import ErrorClass, Locale, MemoryKind, RunStatus, StepStatus
+from ..core.enums import ErrorClass, Locale, MemoryKind, ModelCapability, RunStatus, StepStatus
 from ..core.errors import ApprovalRequiredError, PlatformError
 from ..core.ids import PREFIX_RUN, new_id
 from ..memory.base import MemoryEntry, MemoryQuery, MemoryStore
@@ -93,6 +94,7 @@ class AgentRunner:
         settings: Settings,
         recovery: RecoveryPolicy | None = None,
         locale: Locale = Locale.AR,
+        attachment_provider: AttachmentProvider | None = None,
     ) -> None:
         self._gateway = gateway
         self._tools = tools
@@ -110,6 +112,10 @@ class AgentRunner:
         self._locale = locale
         self._planner = Planner(gateway, locale=locale)
         self._loop_guard = LoopGuard()
+        #: Optional multimodal source (the computer subsystem). The runner never
+        #: fetches screens itself; it asks the provider, and only attaches images
+        #: when the active model can see them.
+        self._attachments = attachment_provider
 
     async def run(
         self,
@@ -250,6 +256,7 @@ class AgentRunner:
         while attempt < max_attempts:
             attempt += 1
             memories = await self._recall(principal)
+            attachments = await self._collect_attachments(run_id)
             package = self._context.build(
                 system_prompt=system_prompt(self._locale),
                 goal=plan.goal,
@@ -259,6 +266,8 @@ class AgentRunner:
                 tool_specs=self._step_tool_specs(step),
                 scratchpad=self._scratchpad(step),
                 locale=self._locale,
+                attachments=attachments,
+                allow_images=self._gateway.default_supports(ModelCapability.VISION),
             )
             request = ModelRequest(messages=package.messages, tools=package.tools)
             try:
@@ -679,6 +688,21 @@ class AgentRunner:
                 limit=5,
             )
         )
+
+    async def _collect_attachments(self, run_id: str) -> list[ContextAttachment]:
+        """Ask the multimodal provider for this turn's attachments.
+
+        Absent a provider this is a no-op. A provider failure never breaks the
+        run — an attachment is an enhancement, not a precondition — so it is
+        logged and treated as "no attachment".
+        """
+        if self._attachments is None:
+            return []
+        try:
+            return list(await self._attachments.attachments_for(run_id=run_id))
+        except Exception:
+            logger.exception("attachment provider failed; continuing without attachments")
+            return []
 
     # ------------------------------------------------------------------
     # Utilities

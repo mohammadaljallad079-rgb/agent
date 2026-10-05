@@ -18,6 +18,7 @@ from ..core.enums import Locale
 from ..memory.base import MemoryEntry
 from ..models.base import ChatMessage, ToolSpec
 from ..tasks.base import TaskPlan
+from .attachments import ContextAttachment
 from .budget import TokenBudget, estimate_tokens, estimate_tool_schema, normalize_text
 
 #: Fraction of the window reserved for the model's own output.
@@ -71,6 +72,8 @@ class ContextPackage(BaseModel):
     budget: dict[str, int] = Field(default_factory=dict)
     dropped: tuple[str, ...] = ()
     truncated: bool = False
+    #: Image attachments actually included (empty for a text-only model).
+    attachments: tuple[ContextAttachment, ...] = ()
 
 
 class ContextManager:
@@ -90,6 +93,8 @@ class ContextManager:
         tool_specs: Sequence[ToolSpec] = (),
         scratchpad: str = "",
         locale: Locale = Locale.AR,
+        attachments: Sequence[ContextAttachment] = (),
+        allow_images: bool = False,
     ) -> ContextPackage:
         total = self._settings.max_context_tokens
         output_reserve = int(total * _OUTPUT_RESERVE)
@@ -168,12 +173,32 @@ class ContextManager:
                 break
         kept.reverse()
 
+        # 7. Image attachments — only for a model that can actually see them.
+        #    Each image is charged against the budget; one that does not fit is
+        #    dropped rather than silently overflowing the window.
+        included: list[ContextAttachment] = []
+        if allow_images and attachments:
+            for attachment in attachments:
+                if budget.reserve("images", attachment.estimated_tokens):
+                    included.append(attachment)
+                else:
+                    dropped.append(f"image:{attachment.source or attachment.kind}")
+                    truncated = True
+
         messages: list[ChatMessage] = [
             ChatMessage.system(
                 self._compose_system(system_text, goal_text, plan, memory_lines, locale)
             )
         ]
         messages.extend(kept)
+        if included:
+            messages.append(
+                ChatMessage.user(
+                    "Attached screen capture(s) for the current step: "
+                    + ", ".join(a.description or a.kind for a in included),
+                    images=tuple(a.image for a in included),
+                )
+            )
 
         return ContextPackage(
             messages=tuple(messages),
@@ -181,6 +206,7 @@ class ContextManager:
             budget={**budget.sections, "total": total, "used": budget.used},
             dropped=tuple(dropped),
             truncated=truncated,
+            attachments=tuple(included),
         )
 
     @staticmethod

@@ -9,10 +9,10 @@ read ``os.environ`` at import time.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .enums import Locale, NetworkPolicy, OperatingMode, RuntimeKind
 
@@ -165,6 +165,31 @@ class Settings(BaseSettings):
     #: Injected via environment only; never stored in source control.
     local_control_token: SecretStr = SecretStr("")
 
+    # --- Computer use / perception (Phase 7) -------------------------------
+    #: Whether the local runtime may control the machine (screen capture, pointer,
+    #: keyboard, windows). Off by default: computer control is opt-in, and even
+    #: when on, every action is still permission- and approval-gated.
+    computer_control_enabled: bool = False
+    #: Which computer backend to use. ``auto`` picks the platform backend
+    #: (X11 on Linux); an unavailable backend is reported honestly.
+    computer_backend: str = "auto"
+    #: OCR languages for local perception, in order (Arabic-first). Accepts a
+    #: comma-separated environment value (e.g. ``ara,eng``).
+    computer_ocr_languages: Annotated[tuple[str, ...], NoDecode] = ("ara", "eng")
+    #: How sensitive screen content is: ``never_store`` (discard, never remote),
+    #: ``local_only`` (default; local use, never remote) or ``cloud_allowed``.
+    computer_screen_policy: str = "local_only"
+    #: Longest side a capture is downscaled to before perception/vision.
+    computer_max_image_dimension: int = Field(default=1600, ge=64)
+    #: Whether an action must reference a fresh observation.
+    computer_require_fresh_observation: bool = True
+    #: Maximum age (seconds) of an observation an action may act on.
+    computer_max_observation_age_seconds: float = Field(default=30.0, gt=0)
+    #: Per-run caps on computer actions (anti-runaway).
+    computer_max_pointer_actions: int = Field(default=60, ge=1)
+    computer_max_keyboard_actions: int = Field(default=60, ge=1)
+    computer_max_captures: int = Field(default=40, ge=1)
+
     # --- Agent limits (guard rails against infinite loops) ------------------
     max_steps_per_run: int = Field(default=40, ge=1, le=500)
     max_tool_retries: int = Field(default=3, ge=0, le=10)
@@ -225,6 +250,7 @@ class Settings(BaseSettings):
         "local_denied_roots",
         "local_network_allowlist",
         "local_command_allowlist",
+        "computer_ocr_languages",
         mode="before",
     )
     @classmethod

@@ -112,9 +112,28 @@ curl -H "X-Local-Token: $AAP_LOCAL_CONTROL_TOKEN" localhost:8765/local/status
 ```
 
 Every local path goes through the filesystem sandbox and every write, move or
-delete is approval-gated. Clipboard, printing, screen capture and application
-control are declared but **not implemented** — the capability catalogue reports
+delete is approval-gated. Clipboard, printing, browser and application control
+are declared but **not implemented** — the capability catalogue reports
 `implemented: false` rather than pretending.
+
+### Computer use (opt-in)
+
+The agent can see and operate the local machine, but only when the operator
+explicitly turns it on. It is a local-only capability — a cloud build never
+registers the tools.
+
+```bash
+export AAP_COMPUTER_CONTROL_ENABLED=true   # default false
+export AAP_COMPUTER_SCREEN_POLICY=local_only   # screenshots never go remote
+export AAP_COMPUTER_OCR_LANGUAGES=ara,eng      # Arabic-first
+```
+
+The X11 backend captures the screen (Pillow), enumerates monitors (`xrandr`)
+and synthesises input (`xdotool`) with explicit arguments and `shell=False`. The
+tools are ordinary tools: `SCREEN_READ`, `POINTER_CONTROL`, `KEYBOARD_CONTROL`
+and `WINDOW_CONTROL` are approval-gated and audited, typed text is recorded by
+length only, and a per-run action budget stops runaway loops. The real-X11
+end-to-end tests run only when `AAP_TEST_DISPLAY` names a display.
 
 ## Development
 

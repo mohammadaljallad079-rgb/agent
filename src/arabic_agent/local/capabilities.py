@@ -77,13 +77,15 @@ class LocalCapability(BaseModel):
         return not (self.requires_network and not online)
 
 
-def default_local_capabilities() -> tuple[LocalCapability, ...]:
+def default_local_capabilities(*, computer_control: bool = False) -> tuple[LocalCapability, ...]:
     """The capability catalogue for this build.
 
     Only the safe foundational filesystem capabilities are marked
     ``implemented=True``. The higher-risk computer-control capabilities are
     declared with ``implemented=False`` so the API and audit surface exist, the
-    policy vocabulary is stable, and nothing pretends to work.
+    policy vocabulary is stable, and nothing pretends to work. When the operator
+    explicitly enables computer control (a local runtime only), screen capture
+    and synthetic input become implemented, since the real tools are registered.
     """
     return (
         LocalCapability(
@@ -284,6 +286,8 @@ def default_local_capabilities() -> tuple[LocalCapability, ...]:
             audit_events=("project.inspected",),
         ),
         # --- Declared but NOT implemented (no fake functionality) -----------
+        # Computer control becomes implemented only when the operator enables it
+        # (see ``computer_control``); the vocabulary is declared either way.
         LocalCapability(
             id="clipboard.read",
             name="Read clipboard",
@@ -307,12 +311,17 @@ def default_local_capabilities() -> tuple[LocalCapability, ...]:
         LocalCapability(
             id="screen.capture",
             name="Capture screen",
-            description="Capture a screenshot of the display.",
+            description="Capture a screenshot of the display and perceive its elements.",
+            tool_name="computer_screen",
             risk=CapabilityRisk.HIGH_RISK,
             permissions=(Permission.SCREEN_READ,),
             requires_approval=True,
             data_boundary=DataBoundary.LOCAL,
-            implemented=False,
+            implemented=computer_control,
+            audit_events=(
+                "computer.screen_captured",
+                "computer.boundary_decision",
+            ),
         ),
         LocalCapability(
             id="input.control",
@@ -323,6 +332,42 @@ def default_local_capabilities() -> tuple[LocalCapability, ...]:
             requires_approval=True,
             data_boundary=DataBoundary.LOCAL,
             implemented=False,
+        ),
+        LocalCapability(
+            id="input.pointer",
+            name="Control pointer",
+            description="Move, click and scroll the pointer.",
+            tool_name="computer_pointer",
+            risk=CapabilityRisk.HIGH_RISK,
+            permissions=(Permission.POINTER_CONTROL,),
+            requires_approval=True,
+            data_boundary=DataBoundary.LOCAL,
+            implemented=computer_control,
+            audit_events=("computer.pointer_moved", "computer.clicked", "computer.scrolled"),
+        ),
+        LocalCapability(
+            id="input.keyboard",
+            name="Control keyboard",
+            description="Type text and press keys on the user's machine.",
+            tool_name="computer_keyboard",
+            risk=CapabilityRisk.HIGH_RISK,
+            permissions=(Permission.KEYBOARD_CONTROL,),
+            requires_approval=True,
+            data_boundary=DataBoundary.LOCAL,
+            implemented=computer_control,
+            audit_events=("computer.text_typed", "computer.key_pressed"),
+        ),
+        LocalCapability(
+            id="window.control",
+            name="Control windows",
+            description="List and focus windows on the user's display.",
+            tool_name="computer_window",
+            risk=CapabilityRisk.MODERATE_RISK,
+            permissions=(Permission.WINDOW_CONTROL,),
+            requires_approval=True,
+            data_boundary=DataBoundary.LOCAL,
+            implemented=computer_control,
+            audit_events=("computer.window_focused",),
         ),
         LocalCapability(
             id="application.launch",
@@ -382,8 +427,17 @@ def default_local_capabilities() -> tuple[LocalCapability, ...]:
 class LocalCapabilityRegistry:
     """An immutable, queryable catalogue of local capabilities."""
 
-    def __init__(self, capabilities: tuple[LocalCapability, ...] | None = None) -> None:
-        items = capabilities if capabilities is not None else default_local_capabilities()
+    def __init__(
+        self,
+        capabilities: tuple[LocalCapability, ...] | None = None,
+        *,
+        computer_control: bool = False,
+    ) -> None:
+        items = (
+            capabilities
+            if capabilities is not None
+            else default_local_capabilities(computer_control=computer_control)
+        )
         self._by_id: dict[str, LocalCapability] = {}
         for capability in items:
             if capability.id in self._by_id:

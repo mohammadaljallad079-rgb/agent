@@ -81,6 +81,7 @@ layer imports a higher one.
 | `integrations` | External-service abstraction + registry (webhook reference impl) |
 | `runtime` | Local/Cloud profile and `Transport` boundary |
 | `local` | Local/desktop runtime: lifecycle, modes, devices, sandbox, command runner, boundary, sync, control API |
+| `computer` | Computer use: backends (X11), coordinate model, capture, OCR, perception, grounding, policy, screen-data boundary, runtime |
 | `agent` | The loop, planner, recovery policy, tool executor, prompts |
 | `runs` | `RunRecord` lifecycle/state machine + `RunStore` ABC |
 | `persistence` | SQLAlchemy models, `Database`, Postgres store implementations |
@@ -674,6 +675,131 @@ endpoint, desktop packaging, and the local-model hardening in Phase 2.
 
 ---
 
+## 13b. Computer use, perception & screen control (Phase 7)
+
+The agent can *see* and *operate* the machine it runs on, under the same
+governance as every other tool. This is a local-only capability: on a cloud
+runtime the tools do not exist, so the model cannot even name them.
+
+### The `computer/` subsystem
+
+The OS logic lives in `src/arabic_agent/computer/`, behind an interface, never
+inside the agent core or a tool handler:
+
+- **`base.py`** — `ComputerBackend` (ABC): `capture_screen`, `get_screen_metadata`,
+  `list_windows`, `get_active_window`, `focus_window`, `pointer_move/click/scroll`,
+  `keyboard_type/key/hotkey`, plus `available` / `unavailable_reason` and
+  `require_available()`. A backend that cannot work reports *why* instead of
+  pretending. `CapturedImage`, `ScreenMetadata`, `WindowInfo`, `PointerButton`
+  are the value types.
+- **`coords.py`** — the coordinate model. `CoordinateSpace` (`LOGICAL` vs
+  `PHYSICAL`) is explicit, never assumed: a `Point`/`Rect` carries its space, and
+  `to_physical` / `to_logical` convert via a monitor's DPI scale. `MonitorInfo`,
+  `virtual_bounds` (handles negative origins in a multi-monitor layout),
+  `monitor_for_point`, and `clamp_point` (an off-screen target is pulled back in
+  rather than silently clicking the wrong place).
+- **`capture.py`** — pure image helpers: PNG encode, bounded downscale
+  (`resize_to_fit`), crop, and a perceptual hash (`difference_hash`) for
+  change detection. No OS access.
+- **`ocr.py`** — `OcrEngine` Protocol with `NullOcr` and `TesseractOcr`
+  (Arabic-first: `build_ocr_engine(languages=("ara","eng"))`). A missing
+  tesseract yields `NullOcr`, which reports `available=False` rather than
+  returning empty text as if it had read the screen.
+- **`perception.py`** — `PerceptionLayer` fuses the backend and OCR into an
+  `Observation`: image dimensions, monitors, cursor, active window, and
+  `PerceivedElement`s / `TextBlock`s with boxes and provenance (`sources`).
+  `Observation` is a frozen, Arabic-aware model with a `summary()` for the model.
+- **`grounding.py`** — turns a *semantic* target into a point. `GroundingTarget`
+  can be an element id, a role+label, recognised text, or raw coordinates.
+  `normalize_text` is Arabic-aware (strips diacritics/tatweel, folds
+  presentation forms, normalises alef/ya/ta-marbuta), and text matching prefers
+  the longest overlap. A miss raises `NotFoundError` — the agent must re-observe,
+  not click blindly.
+- **`policy.py`** — `ComputerPolicy` and `ActionBudget`: coordinate clamping,
+  allowed keys, max scroll, and per-run caps on pointer/keyboard/capture actions
+  plus a minimum interval between actions. `ResourceExhaustedError` when a cap is
+  hit. This is the anti-runaway layer.
+- **`observations.py`** — `ObservationStore`: the in-memory, run-scoped store of
+  recent observations with freshness checks.
+- **`runtime.py`** — `ComputerRuntime` is the single entry point the tools call.
+  It bundles the backend, perception, policy, budget, observation store, the
+  screen-data boundary and the audit log, and enforces the
+  **observe → act → observe** discipline: an action must reference a fresh
+  observation (or capture one first), and every action is budgeted and audited.
+  `changed_since` compares a fresh capture against a prior observation's hash.
+- **`attachments.py`** — `ObservationAttachmentProvider` offers the latest
+  observation to the runner as a `ContextAttachment`, but only when the
+  screen-data boundary permits the destination and the model can see.
+- **`screen_boundary.py`** — `ScreenDataPolicy` (`never_store` | `local_only`
+  | `cloud_allowed`) mapped onto the existing `DataBoundaryPolicy` and
+  `DataSensitivity`. A screenshot is treated as `SECRET` under `never_store` and
+  `CONFIDENTIAL` under `local_only`, so a remote model never receives one; the
+  mapping fails closed.
+- **`backends/`** — `linux_x11.py` is a *real* backend: capture through Pillow's
+  `ImageGrab`, monitors via `xrandr`, input and windows via `xdotool`, all with
+  `shell=False` and an explicit argv (no model value can become a second
+  command). It probes the display socket at construction and reports itself
+  unavailable with a reason when `DISPLAY`, `xdotool`, `xrandr` or Pillow are
+  missing. `null.py` is the honest "not available" backend; `build_computer_backend`
+  selects per platform (Windows/macOS return a Null backend with a clear reason —
+  design only, no pretence).
+
+### Tools (`tools/builtin/computer.py`)
+
+Ordinary `Tool`s, registered only for a local runtime with
+`AAP_COMPUTER_CONTROL_ENABLED=true`, so the permission/policy/approval/audit path
+is the *existing* one — computer control is not a bypass:
+
+- `computer_screen` (`SCREEN_READ`) — capture and return a structured perception.
+- `computer_metadata` (`SCREEN_READ`) — monitors, bounds, cursor, active window;
+  no pixels.
+- `computer_pointer` (`POINTER_CONTROL`) — move/click/double-click/right-click/scroll,
+  targeting by element, role+label, text, or coordinates.
+- `computer_keyboard` (`KEYBOARD_CONTROL`) — type Unicode (Arabic included),
+  press a key, or a hotkey.
+- `computer_window` (`WINDOW_CONTROL`) — list, active, focus.
+- `computer_verify` (`SCREEN_READ`) — re-capture and report whether the screen
+  changed, so the agent confirms an effect instead of assuming it.
+
+`SCREEN_READ`/`POINTER_CONTROL`/`KEYBOARD_CONTROL` are `HIGH` risk and
+`WINDOW_CONTROL` is `MEDIUM`; the default policy requires approval for the
+input-control permissions. `INPUT_CONTROL` remains reserved as a `CRITICAL`
+catch-all.
+
+### Vision models & attachments
+
+The model layer is multimodal-ready without depending on any one provider:
+`ChatMessage` can carry `ImageContent` (base64, `repr`-hidden), and the
+OpenAI-compatible provider encodes images as a `data:` URI content array.
+`ModelGateway.default_supports(VISION)` lets the context manager include an image
+*only* when the active model can see; `default_is_local()` decides whether the
+destination is remote. `ContextManager.build(attachments=…, allow_images=…)`
+charges each image against the token budget and drops one that does not fit
+rather than overflowing the window. The runner asks an `AttachmentProvider` for
+the turn's attachments and treats a provider failure as "no attachment", never as
+a run failure.
+
+### Audit
+
+Every step is audited: `computer.screen_captured`, `computer.pointer_moved`,
+`computer.clicked`, `computer.scrolled`, `computer.text_typed` (**length only**,
+never the typed text), `computer.key_pressed`, `computer.window_focused`,
+`computer.action_verified`, `computer.action_failed`, `computer.stop_requested`,
+`computer.action_throttled`, `computer.observation_stale`,
+`computer.boundary_decision`. The boundary decision is recorded so "why did this
+screenshot not reach the model" is answerable.
+
+### Settings
+
+`AAP_COMPUTER_CONTROL_ENABLED` (default false), `AAP_COMPUTER_BACKEND` (`auto`),
+`AAP_COMPUTER_OCR_LANGUAGES` (`ara,eng`), `AAP_COMPUTER_SCREEN_POLICY`
+(`local_only`), `AAP_COMPUTER_MAX_IMAGE_DIMENSION`,
+`AAP_COMPUTER_REQUIRE_FRESH_OBSERVATION`,
+`AAP_COMPUTER_MAX_OBSERVATION_AGE_SECONDS`, and the per-run caps
+`AAP_COMPUTER_MAX_POINTER_ACTIONS` / `_KEYBOARD_ACTIONS` / `_CAPTURES`.
+
+---
+
 ## 14. Security
 
 Baseline, designed in from the start:
@@ -808,6 +934,25 @@ The foundation is verified, not assumed.
   - `test_runtime_e2e.py` — the Phase 2 acceptance path: a run created through
     `RunService` in `queued` mode is persisted to Postgres, enqueued on Redis,
     executed by a real `Worker`, and recovered after simulated worker loss.
+  - `test_computer.py` — Phase 7: coordinate model and DPI round-trips, Arabic
+    normalisation/grounding (diacritics, longest overlap), perception fusing,
+    policy clamps and budgets, the observe→act→observe discipline, stop and
+    staleness, the screen-data boundary, and OCR-engine construction — against a
+    scripted backend (only the OS is doubled).
+  - `test_computer_tools.py` — the computer tools run through the **real**
+    executor, policy engine, approval store and audit log: allow / deny /
+    requires-approval, Arabic typing audited by length only, and honest failure
+    when no runtime is present.
+  - `test_vision_context.py` — `ImageContent`, the OpenAI-compatible multimodal
+    encoding, the gateway capability query, and context-manager attachment
+    inclusion/budget-dropping.
+  - `test_computer_container.py` — the composition root registers computer tools
+    only for a local runtime with computer control enabled; an unknown screen
+    policy fails closed; a CSV OCR-language env value parses.
+  - `test_computer_e2e.py` — **real X11** (opt-in via `AAP_TEST_DISPLAY`): the
+    actual display is captured and real input is synthesised through `xdotool`,
+    driving capture → perceive → ground → act → verify. Skips when no display is
+    provided.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.

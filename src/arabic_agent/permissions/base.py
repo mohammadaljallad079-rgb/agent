@@ -31,12 +31,18 @@ class Permission(StrEnum):
     FILES_MOVE = "FILES_MOVE"
     FILES_SEARCH = "FILES_SEARCH"
 
-    # Local computer control (reserved; declared so policy and audit exist
-    # before any such tool is implemented).
+    # Local computer control (the desktop runtime's screen/perception/input
+    # surface). SCREEN_READ and INPUT_CONTROL were reserved in an earlier phase;
+    # POINTER_CONTROL / KEYBOARD_CONTROL / WINDOW_CONTROL split input control
+    # into finer, independently grantable capabilities so reading the screen and
+    # moving the pointer are not the same risk.
     CLIPBOARD_READ = "CLIPBOARD_READ"
     CLIPBOARD_WRITE = "CLIPBOARD_WRITE"
     SCREEN_READ = "SCREEN_READ"
     INPUT_CONTROL = "INPUT_CONTROL"
+    POINTER_CONTROL = "POINTER_CONTROL"
+    KEYBOARD_CONTROL = "KEYBOARD_CONTROL"
+    WINDOW_CONTROL = "WINDOW_CONTROL"
     APPLICATION_LAUNCH = "APPLICATION_LAUNCH"
     APPLICATION_CLOSE = "APPLICATION_CLOSE"
 
@@ -89,6 +95,9 @@ _PERMISSION_RISK: dict[Permission, RiskLevel] = {
     Permission.DELETE_FILE: RiskLevel.HIGH,
     Permission.FILES_DELETE: RiskLevel.HIGH,
     Permission.SCREEN_READ: RiskLevel.HIGH,
+    Permission.POINTER_CONTROL: RiskLevel.HIGH,
+    Permission.KEYBOARD_CONTROL: RiskLevel.HIGH,
+    Permission.WINDOW_CONTROL: RiskLevel.MEDIUM,
     Permission.APPLICATION_LAUNCH: RiskLevel.HIGH,
     Permission.APPLICATION_CLOSE: RiskLevel.HIGH,
     Permission.SEND_EMAIL: RiskLevel.HIGH,

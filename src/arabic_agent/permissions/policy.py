@@ -152,6 +152,21 @@ def platform_default_policy() -> PolicySet:
             ),
             Rule(
                 effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.POINTER_CONTROL,
+                reason="moving/clicking the pointer changes the user's machine",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.KEYBOARD_CONTROL,
+                reason="synthetic keyboard input changes the user's machine",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.WINDOW_CONTROL,
+                reason="focusing windows changes what the user sees",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
                 permission=Permission.APPLICATION_LAUNCH,
                 reason="launching applications changes the user's machine",
             ),

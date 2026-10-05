@@ -283,6 +283,52 @@ real, not interface-only.
       and boundary exist; conflict handling and a cloud endpoint are not built.
 - [ ] Desktop packaging and update mechanism.
 
+## Phase 7a — Computer use, perception & screen control (done)
+
+- [x] Computer subsystem (`computer/`): `ComputerBackend` ABC with value types
+      (`CapturedImage`, `ScreenMetadata`, `WindowInfo`), an explicit coordinate
+      model (`CoordinateSpace`, `Point`, `Rect`, `MonitorInfo`, `virtual_bounds`,
+      `clamp_point`, DPI transforms), and pure capture helpers (PNG encode,
+      bounded downscale, crop, difference-hash change detection).
+- [x] Real X11 backend (`computer/backends/linux_x11.py`): Pillow capture,
+      `xrandr` monitors, `xdotool` input/windows — explicit argv, `shell=False`,
+      honest `available`/`unavailable_reason`, display-socket probe at
+      construction. Null backend for unsupported platforms (design only).
+- [x] OCR layer (`computer/ocr.py`): `OcrEngine` protocol, `TesseractOcr`
+      (Arabic-first language list) and `NullOcr` that reports itself unavailable
+      instead of returning empty text.
+- [x] Perception + Arabic-aware grounding (`computer/perception.py`,
+      `computer/grounding.py`): fused `Observation` with provenance; target by
+      element, role+label, recognised text, or point; diacritic/tatweel folding
+      and longest-overlap matching; a miss raises rather than clicking blindly.
+- [x] Policy and budget (`computer/policy.py`): coordinate clamping, allowed
+      keys, max scroll, per-run pointer/keyboard/capture caps and a minimum
+      interval — the anti-runaway layer.
+- [x] Runtime (`computer/runtime.py`): single entry point enforcing
+      observe → act → observe, freshness checks, stop/cancellation, and
+      `changed_since` verification; `ObservationAttachmentProvider` offers the
+      latest capture to the model only when the screen-data boundary and model
+      capability allow.
+- [x] Screen-data boundary (`computer/screen_boundary.py`): `never_store` /
+      `local_only` / `cloud_allowed` mapped onto the existing data-boundary
+      policy; fails closed so a screenshot never reaches a remote model by
+      default.
+- [x] Tools (`tools/builtin/computer.py`): `computer_screen`, `computer_metadata`,
+      `computer_pointer`, `computer_keyboard`, `computer_window`,
+      `computer_verify` — registered only for a local runtime with computer
+      control enabled, and gated by the existing permission/approval/audit path.
+- [x] Vision models (`models/base.py`, OpenAI-compatible provider): `ImageContent`
+      (base64, repr-hidden) and multimodal content encoding; the gateway reports
+      `VISION` support so the context manager includes an image only when the
+      model can see, charging it against the token budget.
+- [x] Capability catalogue now marks `screen.capture`, `input.pointer`,
+      `input.keyboard` and `window.control` as implemented **only** when the
+      operator enables computer control.
+- [x] Audit events for every step, with typed text recorded by length only.
+- [x] Tests: `test_computer.py`, `test_computer_tools.py`, `test_vision_context.py`,
+      `test_computer_container.py`, and real-X11 `test_computer_e2e.py`
+      (opt-in via `AAP_TEST_DISPLAY`).
+
 ## Phase 7 — Product surface
 
 - [ ] Web UI with full RTL/LTR support, locale switching, plan/timeline view,
@@ -348,6 +394,19 @@ real, not interface-only.
   loop, which had regressed when the tool set grew, is fixed by advertising only
   the planned step's tool plus the core set; the regression is pinned by
   `test_step_advertises_only_planned_and_core_tools`.
+- Phase 7 closeout: the full suite is green — 481 passed, 0 skipped — with real
+  Postgres + Redis, a real GGUF model, and a real X11 display (`AAP_TEST_DISPLAY`).
+  Phase 7 added computer use: a real X11 backend, an explicit coordinate model,
+  Arabic-aware OCR and grounding, a per-run action budget, the observe→act→observe
+  runtime, the screen-data boundary, the computer tools, and multimodal vision
+  context. Two notes are recorded honestly: (1) computer control is opt-in
+  (`AAP_COMPUTER_CONTROL_ENABLED`, default false) and local-only — a cloud build
+  never registers the tools, and the capability catalogue only marks screen
+  capture / input control implemented when the operator enables it; (2) the
+  screen-data boundary defaults to `local_only`, so a screenshot is never routed
+  to a remote model unless the operator explicitly sets `cloud_allowed` *and* the
+  data-boundary policy permits it. The real-X11 end-to-end suite is opt-in via
+  `AAP_TEST_DISPLAY`; without a display it skips rather than passing vacuously.
 
 ## Verification commands
 
@@ -370,7 +429,10 @@ export AAP_TEST_REDIS_URL=redis://localhost:6379/15
 # Optional: exercise the real local model (Phase 5) end to end. Without it the
 # @local_model tests skip; everything else still runs.
 export AAP_TEST_MODEL_PATH=/path/to/model.gguf
-uv run pytest                                          # 406 passed, 0 skipped
+# Optional: exercise the real X11 computer-use path (Phase 7). Without it the
+# computer e2e tests skip; everything else still runs.
+export AAP_TEST_DISPLAY=:99
+uv run pytest                                          # 481 passed, 0 skipped
 ```
 
 The 36 Postgres/Redis tests own the schema via `create_all`/`drop_all`, so run

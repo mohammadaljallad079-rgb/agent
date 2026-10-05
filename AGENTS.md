@@ -240,16 +240,37 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   loop guard aborts runs that repeat an identical tool call (`LOOP_DETECTED`),
   and a step with a `tool_hint` is advertised only that tool plus the core set.
   Green.
-- Tests are 406 when real Postgres/Redis are reachable and a real local model is
-  provided (unit tests + 36 Postgres/Redis integration tests + local model and
-  agent-loop tests + subprocess-isolation tests). Without
+- Computer use, perception & screen control phase: `computer/` implements a
+  `ComputerBackend` ABC with a real X11 backend (Pillow capture, `xrandr`
+  monitors, `xdotool` input/windows; explicit argv, `shell=False`), an explicit
+  logical/physical coordinate model with DPI transforms, pure capture helpers
+  (PNG encode, bounded downscale, difference-hash change detection),
+  Arabic-first OCR (`TesseractOcr`/`NullOcr`), fused perception with provenance,
+  Arabic-aware grounding, a `ComputerPolicy` + `ActionBudget`, and a
+  `ComputerRuntime` that enforces observe → act → observe with freshness checks,
+  stop, and `changed_since` verification. The screen-data boundary
+  (`never_store`/`local_only`/`cloud_allowed`) fails closed so a screenshot
+  never reaches a remote model by default. The computer tools
+  (`computer_screen`, `computer_metadata`, `computer_pointer`,
+  `computer_keyboard`, `computer_window`, `computer_verify`) are ordinary tools
+  gated by the existing permission/approval/audit path and registered only for a
+  local runtime with `AAP_COMPUTER_CONTROL_ENABLED=true`. `ImageContent` and
+  multimodal encoding make the model layer vision-ready, and the context manager
+  includes an observation image only when the model can see and the boundary
+  allows, charging it against the token budget. Green.
+- Tests are 481 when real Postgres/Redis are reachable, a real local model is
+  provided, and a real X display is available (unit tests + 36 Postgres/Redis
+  integration tests + local model and agent-loop tests + subprocess-isolation
+  tests + 8 real-X11 computer e2e tests). Without
   `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` the 36 integration tests skip,
-  and without `AAP_TEST_MODEL_PATH` the `@local_model` inference tests skip by
-  design. Run the full set with:
+  without `AAP_TEST_MODEL_PATH` the `@local_model` inference tests skip by
+  design, and without `AAP_TEST_DISPLAY` the real-X11 computer tests skip. Run
+  the full set with:
   `AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test
   AAP_TEST_REDIS_URL=redis://localhost:6379/15
-  AAP_TEST_MODEL_PATH=/path/to/model.gguf pytest` (after `docker compose up -d`
-  and `CREATE DATABASE aap_test`). The Postgres tests own the schema via
+  AAP_TEST_MODEL_PATH=/path/to/model.gguf
+  AAP_TEST_DISPLAY=:99 pytest` (after `docker compose up -d` and
+  `CREATE DATABASE aap_test`). The Postgres tests own the schema via
   `create_all`/`drop_all`, so run `alembic check` on a freshly migrated DB, not
   right after the suite.
 - Local-model deadlines: CPU-only inference of a planning + tool-schema prompt

@@ -68,6 +68,21 @@ class OpenAICompatibleProvider(ModelProvider):
     @staticmethod
     def _encode_message(message: ChatMessage) -> dict[str, Any]:
         payload: dict[str, Any] = {"role": message.role, "content": message.content}
+        if message.images:
+            # OpenAI-compatible multimodal content array: a text part plus one
+            # image_url part per attached image (a data URI, so no external
+            # fetch and no local path leaks to the provider).
+            parts: list[dict[str, Any]] = []
+            if message.content:
+                parts.append({"type": "text", "text": message.content})
+            for image in message.images:
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{image.mime_type};base64,{image.data_base64}"},
+                    }
+                )
+            payload["content"] = parts
         if message.tool_calls:
             payload["tool_calls"] = [
                 {

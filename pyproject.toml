@@ -109,3 +109,11 @@ follow_imports = "skip"
 module = ["pypdf.*", "docx.*", "openpyxl.*", "pptx.*", "bs4.*", "lxml.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
+
+# Screen capture / perception (Phase 7) are optional, lazily-imported
+# dependencies: Pillow for pixels and pytesseract for OCR. Neither ships
+# first-party stubs; mypy neither follows nor requires stubs for them.
+[[tool.mypy.overrides]]
+module = ["PIL.*", "pytesseract.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

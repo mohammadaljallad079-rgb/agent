@@ -111,6 +111,22 @@ class AuditEventType(StrEnum):
     SYNC_UPLOADED = "sync.uploaded"
     SYNC_REJECTED = "sync.rejected"
     SYNC_FAILED = "sync.failed"
+    # Computer use / perception (Phase 7). These record *metadata* only — an
+    # observation id, dimensions, window and policy — never a raw screenshot or
+    # typed secret value.
+    COMPUTER_SCREEN_CAPTURED = "computer.screen_captured"
+    COMPUTER_POINTER_MOVED = "computer.pointer_moved"
+    COMPUTER_CLICKED = "computer.clicked"
+    COMPUTER_SCROLLED = "computer.scrolled"
+    COMPUTER_TEXT_TYPED = "computer.text_typed"
+    COMPUTER_KEY_PRESSED = "computer.key_pressed"
+    COMPUTER_WINDOW_FOCUSED = "computer.window_focused"
+    COMPUTER_ACTION_VERIFIED = "computer.action_verified"
+    COMPUTER_ACTION_FAILED = "computer.action_failed"
+    COMPUTER_STOP_REQUESTED = "computer.stop_requested"
+    COMPUTER_ACTION_THROTTLED = "computer.action_throttled"
+    COMPUTER_OBSERVATION_STALE = "computer.observation_stale"
+    COMPUTER_BOUNDARY_DECISION = "computer.boundary_decision"
 
 
 def _utcnow() -> datetime:

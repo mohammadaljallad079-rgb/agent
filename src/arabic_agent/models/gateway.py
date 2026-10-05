@@ -95,6 +95,26 @@ class ModelGateway:
     def fallbacks(self) -> tuple[str, ...]:
         return self._fallbacks
 
+    def default_supports(self, capability: ModelCapability) -> bool:
+        """Whether the default model can serve ``capability``.
+
+        Used by the context manager to decide whether an image attachment may be
+        sent at all, so a text-only model never receives one silently.
+        """
+        try:
+            provider, _ = self._registry.resolve(self._default_model)
+        except PlatformError:
+            return False
+        return provider.supports(capability)
+
+    def default_is_local(self) -> bool:
+        """Whether the default model runs on this machine (not remote)."""
+        try:
+            provider, _ = self._registry.resolve(self._default_model)
+        except PlatformError:
+            return False
+        return provider.is_local
+
     def _resolve(self, model_id: str, capability: ModelCapability) -> tuple[ModelProvider, str]:
         provider, model = self._registry.resolve(model_id)
         if not provider.supports(capability):
