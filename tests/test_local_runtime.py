@@ -462,7 +462,9 @@ async def test_sync_redacts_secret_like_payload_keys():
 def test_capability_registry_marks_only_safe_caps_implemented():
     registry = LocalCapabilityRegistry()
     implemented = {c.id for c in registry.implemented()}
-    assert implemented == {
+    # The safe filesystem/command capabilities plus the Phase 6 file,
+    # document and project-intelligence capabilities are implemented.
+    assert {
         "files.read",
         "files.list",
         "files.search",
@@ -472,8 +474,26 @@ def test_capability_registry_marks_only_safe_caps_implemented():
         "files.mkdir",
         "files.delete",
         "command.execute",
-    }
+    } <= implemented
+    # Phase 6 additions are implemented and read-mostly.
+    assert {
+        "files.read_range",
+        "files.edit",
+        "files.info",
+        "files.tree",
+        "files.search_contents",
+        "documents.inspect",
+        "documents.read",
+        "documents.search",
+        "documents.list",
+        "archives.inspect",
+        "project.inspect",
+    } <= implemented
+    # High-risk computer-control capabilities remain unimplemented.
     assert "input.control" not in implemented
+    assert "screen.capture" not in implemented
+    assert "clipboard.read" not in implemented
+    assert "browser.control" not in implemented
 
 
 def test_capability_availability_respects_platform_and_network():

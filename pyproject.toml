@@ -36,6 +36,16 @@ dev = [
     "mypy>=1.10,<2",
     "ruff>=0.5,<1",
 ]
+# Document/project ingestion parsers (Phase 6). Optional: the ingestion layer
+# degrades honestly (reports the format as unsupported) when a parser is absent,
+# so a minimal install still runs — it just cannot read that format.
+documents = [
+    "pypdf>=4,<6",
+    "python-docx>=1.1,<2",
+    "openpyxl>=3.1,<4",
+    "python-pptx>=0.6.23,<2",
+    "beautifulsoup4>=4.12,<5",
+]
 
 [project.scripts]
 agent-platform = "arabic_agent.api.app:main"
@@ -92,3 +102,10 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["llama_cpp.*", "numpy.*"]
 follow_imports = "skip"
+
+# Document parsers (Phase 6) are optional, lazily-imported dependencies with no
+# first-party stubs; mypy neither follows nor requires stubs for them.
+[[tool.mypy.overrides]]
+module = ["pypdf.*", "docx.*", "openpyxl.*", "pptx.*", "bs4.*", "lxml.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

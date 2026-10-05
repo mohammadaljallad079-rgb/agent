@@ -81,6 +81,11 @@ class AuditEventType(StrEnum):
     RECOVERY_LEASE_ACQUIRED = "recovery.lease.acquired"
     RECOVERY_LEASE_CONFLICT = "recovery.lease.conflict"
     WORKFLOW_RESUMED = "workflow.run.resumed"
+    LOOP_DETECTED = "agent.loop.detected"
+    DOCUMENT_PARSED = "document.parsed"
+    DOCUMENT_RETRIEVED = "document.retrieved"
+    PROJECT_INSPECTED = "project.inspected"
+    SECRET_DETECTED = "security.secret_detected"  # noqa: S105 - event name, not a credential
     # Local / desktop runtime
     LOCAL_RUNTIME_STARTED = "local.runtime.started"
     LOCAL_RUNTIME_READY = "local.runtime.ready"

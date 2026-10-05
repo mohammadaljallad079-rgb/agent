@@ -23,14 +23,14 @@ from pathlib import Path
 from typing import Literal
 
 from ..audit.base import AuditEventType, AuditLog
-from ..context.manager import ContextManager
+from ..context.manager import CORE_TOOLS, ContextManager
 from ..core.config import Settings
 from ..core.enums import ErrorClass, Locale, MemoryKind, RunStatus, StepStatus
 from ..core.errors import ApprovalRequiredError, PlatformError
 from ..core.ids import PREFIX_RUN, new_id
 from ..memory.base import MemoryEntry, MemoryQuery, MemoryStore
 from ..memory.policy import MemoryPolicy
-from ..models.base import ChatMessage, ModelRequest, Usage
+from ..models.base import ChatMessage, ModelRequest, ToolSpec, Usage
 from ..models.gateway import ModelGateway
 from ..permissions.approvals import Approval, ApprovalStore
 from ..permissions.base import Principal
@@ -40,6 +40,7 @@ from ..tools.base import ToolContext
 from ..tools.registry import ToolRegistry
 from .base import AgentRunResult, RecoveryAction
 from .executor import ExecutionOutcomeKind, ToolExecutor
+from .loops import LoopGuard
 from .planner import Planner
 from .prompts import system_prompt
 from .recovery import RecoveryPolicy
@@ -108,6 +109,7 @@ class AgentRunner:
         )
         self._locale = locale
         self._planner = Planner(gateway, locale=locale)
+        self._loop_guard = LoopGuard()
 
     async def run(
         self,
@@ -122,6 +124,9 @@ class AgentRunner:
         run_id = run_id or new_id(PREFIX_RUN)
         workspace = self._prepare_workspace(workspace_dir, run_id)
         started = time.monotonic()
+        # Loop protection is per-run: a fresh guard each time the runner is
+        # entered, so one run's repetition history cannot abort another's.
+        self._loop_guard = LoopGuard()
 
         await self._audit.record(
             (
@@ -251,7 +256,7 @@ class AgentRunner:
                 plan=plan,
                 recent_messages=history[-_HISTORY_WINDOW:],
                 memories=memories,
-                tool_specs=self._tools.specs(),
+                tool_specs=self._step_tool_specs(step),
                 scratchpad=self._scratchpad(step),
                 locale=self._locale,
             )
@@ -301,6 +306,38 @@ class AgentRunner:
             history.append(response.message)
             for call in response.tool_calls:
                 tool_calls += 1
+                verdict = self._loop_guard.observe_call(call.name, call.arguments)
+                if verdict.action == "abort":
+                    await self._audit.record(
+                        AuditEventType.LOOP_DETECTED,
+                        tenant_id=principal.tenant_id,
+                        user_id=principal.user_id,
+                        run_id=run_id,
+                        message=verdict.reason,
+                        data={"tool": call.name},
+                    )
+                    return await self._fail(
+                        principal,
+                        run_id,
+                        plan,
+                        verdict.reason,
+                        _RunStats(
+                            steps_executed=stats.steps_executed,
+                            tool_calls=stats.tool_calls + tool_calls,
+                            retries=stats.retries + attempt - 1,
+                            replans=stats.replans,
+                            usage=usage,
+                        ),
+                        workspace=workspace,
+                    )
+                if verdict.action == "warn":
+                    history.append(
+                        ChatMessage.tool_result(
+                            call.id,
+                            f"LOOP WARNING: {verdict.reason}",
+                            name=call.name,
+                        )
+                    )
                 try:
                     outcome = await self._executor.execute(
                         tool_name=call.name,
@@ -414,6 +451,32 @@ class AgentRunner:
                 failed = await self._tasks.fail_step(
                     plan, step.id, error_class=ErrorClass.EXTERNAL, message=result.summary
                 )
+                failure_verdict = self._loop_guard.observe_failure(
+                    call.name, ErrorClass.EXTERNAL.value
+                )
+                if failure_verdict.action == "abort":
+                    await self._audit.record(
+                        AuditEventType.LOOP_DETECTED,
+                        tenant_id=principal.tenant_id,
+                        user_id=principal.user_id,
+                        run_id=run_id,
+                        message=failure_verdict.reason,
+                        data={"tool": call.name},
+                    )
+                    return await self._fail(
+                        principal,
+                        run_id,
+                        failed,
+                        failure_verdict.reason,
+                        _RunStats(
+                            steps_executed=stats.steps_executed,
+                            tool_calls=stats.tool_calls + tool_calls,
+                            retries=stats.retries + attempt - 1,
+                            replans=stats.replans,
+                            usage=usage,
+                        ),
+                        workspace=workspace,
+                    )
                 recovery = self._recovery.decide(
                     ErrorClass.EXTERNAL, step_attempts=attempt, replans_used=stats.replans
                 )
@@ -642,6 +705,21 @@ class AgentRunner:
     @staticmethod
     def _scratchpad(step: TaskStep) -> str:
         return f"Current step: {step.description}"
+
+    def _step_tool_specs(self, step: TaskStep) -> tuple[ToolSpec, ...]:
+        """Advertise the tools a step actually needs — the smallest sufficient set.
+
+        When the planner named a tool for the step, present that tool plus the
+        always-available core tools (so the agent can read/write, run the step,
+        and call ``finish``). This keeps the prompt small and, on a small local
+        model, stops an irrelevant tool from being chosen over the planned one.
+        With no hint, advertise everything and let the context budget trim.
+        """
+        specs = self._tools.specs()
+        hint = step.tool_hint
+        if not hint or hint not in {spec.name for spec in specs}:
+            return specs
+        return tuple(spec for spec in specs if spec.name == hint or spec.name in CORE_TOOLS)
 
     def _prepare_workspace(self, workspace_dir: str | None, run_id: str) -> str:
         base = (

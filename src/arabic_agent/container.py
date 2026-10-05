@@ -107,6 +107,9 @@ from .tasks.engine import TaskEngine
 from .tasks.store import InMemoryTaskStore, TaskStore
 from .tools.base import Tool
 from .tools.builtin import (
+    DOCUMENT_TOOLS,
+    EXTENDED_FILESYSTEM_TOOLS,
+    PROJECT_TOOLS,
     EchoTool,
     ListDirectoryTool,
     ReadFileTool,
@@ -502,6 +505,12 @@ class Platform:
         # they must not exist there at all (defence in depth: policy would deny
         # them anyway, but absent tools cannot be invoked).
         local_tools = [tool_cls() for tool_cls in LOCAL_TOOLS] if is_local else []
+        # Phase 6: workspace filesystem intelligence, document ingestion and
+        # project understanding. These are workspace-sandboxed (not host-level),
+        # so they are available in every runtime.
+        document_tools = [tool_cls() for tool_cls in DOCUMENT_TOOLS]
+        extended_filesystem_tools = [tool_cls() for tool_cls in EXTENDED_FILESYSTEM_TOOLS]
+        project_tools = [tool_cls() for tool_cls in PROJECT_TOOLS]
         tools = ToolRegistry(
             [
                 EchoTool(),
@@ -510,6 +519,9 @@ class Platform:
                 WriteFileTool(),
                 ListDirectoryTool(),
                 ShellCommandTool(),
+                *extended_filesystem_tools,
+                *document_tools,
+                *project_tools,
                 *local_tools,
                 *(extra_tools or []),
             ]

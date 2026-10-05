@@ -18,10 +18,47 @@ from ..core.enums import Locale
 from ..memory.base import MemoryEntry
 from ..models.base import ChatMessage, ToolSpec
 from ..tasks.base import TaskPlan
-from .budget import TokenBudget, estimate_tokens, normalize_text
+from .budget import TokenBudget, estimate_tokens, estimate_tool_schema, normalize_text
 
 #: Fraction of the window reserved for the model's own output.
 _OUTPUT_RESERVE = 0.15
+#: Default ceiling on advertised tools when settings do not specify one.
+_DEFAULT_MAX_TOOLS = 64
+
+
+def _tool_cost(spec: ToolSpec) -> int:
+    """Estimated tokens a tool schema adds to the request.
+
+    Counts the full serialised function object (wrapper + JSON-schema
+    ``parameters``), matching what providers actually send.
+    """
+    return estimate_tool_schema(spec.name, spec.description, spec.parameters)
+
+
+#: Tools the agent needs to operate at all; always advertised. ``inspect_project``
+#: and ``inspect_document`` let it discover which richer tools exist, so they are
+#: part of the core set rather than droppable.
+CORE_TOOLS = frozenset(
+    {
+        "finish",
+        "echo",
+        "read_file",
+        "write_file",
+        "list_directory",
+        "run_command",
+        "inspect_project",
+        "inspect_document",
+    }
+)
+
+
+def _split_tool_specs(
+    specs: Sequence[ToolSpec],
+) -> tuple[tuple[ToolSpec, ...], tuple[ToolSpec, ...]]:
+    """Partition specs into (core, optional), preserving the given order."""
+    core = tuple(s for s in specs if s.name in CORE_TOOLS)
+    optional = tuple(s for s in specs if s.name not in CORE_TOOLS)
+    return core, optional
 
 
 class ContextPackage(BaseModel):
@@ -64,16 +101,33 @@ class ContextManager:
         system_text = normalize_text(system_prompt)
         budget.force_reserve("system", estimate_tokens(system_text))
 
-        # 2. Tool schemas are part of the contract; reserve but allow trimming
-        #    of long descriptions if the budget is tight.
-        tool_text = "\n".join(f"{t.name}: {t.description}" for t in tool_specs)
-        tool_tokens = estimate_tokens(tool_text)
-        if not budget.reserve("tools", tool_tokens):
-            # Keep the tool names only; a degraded but usable fallback.
-            trimmed = "\n".join(t.name for t in tool_specs)
-            trimmed_tokens = estimate_tokens(trimmed)
-            budget.reserve("tools", trimmed_tokens)
-            truncated = True
+        # 2. Tool schemas are part of the contract. Advertise the core tools
+        #    plus as many optional tools as the budget allows (counted with
+        #    their full JSON schema), so a small local window is never
+        #    overflowed. Core tools are always present; optional ones may be
+        #    dropped, and the drop is reported.
+        core, optional = _split_tool_specs(tool_specs)
+        selected: list[ToolSpec] = []
+        for spec in core:
+            cost = _tool_cost(spec)
+            if budget.reserve("tools", cost):
+                selected.append(spec)
+            else:
+                budget.force_reserve("tools", cost)
+                selected.append(spec)
+                truncated = True
+        max_tools = self._settings.max_tools_per_call or _DEFAULT_MAX_TOOLS
+        for spec in optional:
+            if len(selected) >= max_tools:
+                dropped.append(f"tool:{spec.name}")
+                truncated = True
+                continue
+            cost = _tool_cost(spec)
+            if budget.reserve("tools", cost):
+                selected.append(spec)
+            else:
+                dropped.append(f"tool:{spec.name}")
+                truncated = True
 
         # 3. Goal + current plan.
         goal_text = normalize_text(goal)
@@ -123,7 +177,7 @@ class ContextManager:
 
         return ContextPackage(
             messages=tuple(messages),
-            tools=tuple(tool_specs),
+            tools=tuple(selected),
             budget={**budget.sections, "total": total, "used": budget.used},
             dropped=tuple(dropped),
             truncated=truncated,

@@ -8,6 +8,7 @@ window.
 
 from __future__ import annotations
 
+import json
 import math
 import unicodedata
 from dataclasses import dataclass, field
@@ -28,6 +29,26 @@ def estimate_tokens(text: str) -> int:
     arabic_tokens = arabic / _ARABIC_CHARS_PER_TOKEN
     other_tokens = other / _LATIN_CHARS_PER_TOKEN
     return max(1, math.ceil(arabic_tokens + other_tokens))
+
+
+def estimate_tool_schema(name: str, description: str, parameters: object) -> int:
+    """Estimate the tokens a single advertised tool adds to a request.
+
+    Providers (and llama.cpp's chat template) serialise the *whole* function
+    object — the ``{"type": "function", ...}`` wrapper plus the JSON-schema
+    ``parameters`` — not just the name and description. Counting the full
+    payload keeps the context budget and the local-model guard honest, so a
+    small window is never overflowed.
+    """
+    payload = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters or {"type": "object", "properties": {}},
+        },
+    }
+    return estimate_tokens(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def _is_arabic(ch: str) -> bool:

@@ -131,6 +131,36 @@ control did not actually do what it claimed. Each fix is covered by a test.
       reasoning, local model for private data).
 - [ ] Prompt/version management and per-tenant model policy.
 
+## Phase 3a — File, document & project intelligence (done)
+
+The agent can now operate on real files like an operator, through the same
+sandbox → policy → approval → audit path as every other tool. Nothing here is a
+stub: parsers read the actual bytes, archives are inspected without extraction,
+and secrets are reported by kind + locator only, never by value.
+
+- [x] Extended workspace filesystem tools: `read_file_range`, `edit_file`
+      (exact replacement), `append_file`, `create_file`, `copy_file`,
+      `move_file`, `delete_file`, `make_directory`, `file_info`, `directory_tree`,
+      `search_files`, `file_type`. Move/delete/overwrite are `MOVE_FILE` /
+      `DELETE_FILE` / `WRITE_FILE` gated and approval-aware.
+- [x] Document ingestion layer (`documents/`): real parsers for text/Markdown/
+      JSON/CSV/HTML/PDF/DOCX/XLSX/PPTX plus ZIP/TAR inspection, with section
+      provenance (page/slide/sheet/line) and conservative parse limits. Optional
+      dependencies degrade honestly — an absent parser reports the format as
+      unsupported, it does not fake a result.
+- [x] Document tools: `inspect_document` (structure only), `read_document`
+      (bounded, provenance-bearing), `search_document` (lexical retrieval of the
+      best sections), `list_documents`, `inspect_archive`.
+- [x] Secret detection on ingested content (`SECRET_DETECTED` audit event;
+      kind + locator only).
+- [x] Project understanding (`project/`): `inspect_project` detects languages,
+      manifests, tests, entrypoints and docs from real filesystem evidence.
+- [x] Loop detection (`agent/loops.py`): repeated identical tool calls abort the
+      run with `LOOP_DETECTED` instead of spinning forever.
+- [x] Per-step tool advertisement: a step with a `tool_hint` sees only that tool
+      plus the core set, keeping the prompt small and a small local model on the
+      planned tool.
+
 ## Phase 3 — Tools & documents
 
 - [ ] Document generation tools: PDF, DOCX, XLSX, PPTX, CSV (independent tools).
@@ -142,7 +172,7 @@ control did not actually do what it claimed. Each fix is covered by a test.
 - [ ] Video understanding tool: frames → OCR → speech-to-text → timeline →
       visual events → understanding. Define the interface first; implement
       incrementally.
-- [ ] File move/delete tools (`MOVE_FILE`, `DELETE_FILE`), approval-gated.
+- [x] File move/delete tools (`MOVE_FILE`, `DELETE_FILE`), approval-gated.
 
 ## Phase 4 — Integrations
 
@@ -284,7 +314,9 @@ real, not interface-only.
   model is a first-class provider: llama.cpp (in-process), Ollama, and any
   OpenAI-compatible local endpoint all run behind the same `ModelProvider`
   contract and route through the same gateway.
-- Only the tool set listed in Phase 0 exists; the rest are planned.
+- The tool set now covers the workspace filesystem, document ingestion/search
+  and project inspection (Phase 3a). Document *generation*, browser, email,
+  calendar, printing, image and video tools are still planned (Phase 3).
 - The desktop runtime foundation (local runtime, filesystem sandbox, controlled
   command execution, local tool set, capability catalogue, data-boundary policy,
   sync queue, and control API) is implemented and tested. The desktop
@@ -306,6 +338,16 @@ real, not interface-only.
   the test's run bound to 900s made it pass 5/5. Crash/timeout/malformed-frame
   handling is now covered by `tests/test_subprocess_isolation.py`, which drives
   the real parent against a controlled child process.
+- Phase 6 closeout: the full suite is green (406 passed, 0 skipped) against real
+  Postgres + Redis and a real GGUF model. Phase 6 added the extended workspace
+  filesystem tools, the document ingestion/search layer, project understanding
+  and the loop guard (Phase 3a). Along the way two accounting bugs were fixed:
+  the context budget and the local-model guard now both count a tool's *full*
+  JSON schema (name + description + `parameters`) via one shared estimator, and
+  the token estimator is script-aware for Arabic. The real-model Arabic agent
+  loop, which had regressed when the tool set grew, is fixed by advertising only
+  the planned step's tool plus the core set; the regression is pinned by
+  `test_step_advertises_only_planned_and_core_tools`.
 
 ## Verification commands
 
@@ -328,7 +370,7 @@ export AAP_TEST_REDIS_URL=redis://localhost:6379/15
 # Optional: exercise the real local model (Phase 5) end to end. Without it the
 # @local_model tests skip; everything else still runs.
 export AAP_TEST_MODEL_PATH=/path/to/model.gguf
-uv run pytest                                          # 352 passed, 0 skipped
+uv run pytest                                          # 406 passed, 0 skipped
 ```
 
 The 36 Postgres/Redis tests own the schema via `create_all`/`drop_all`, so run

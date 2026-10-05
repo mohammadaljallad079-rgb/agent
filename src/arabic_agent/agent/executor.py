@@ -56,6 +56,19 @@ def _local_audit_event(tool: Tool) -> AuditEventType | None:
     return None
 
 
+#: Semantic audit events keyed by tool name, so a document parse, a retrieval
+#: and a project inspection are visible on the audit trail by *meaning*, not
+#: only as a generic tool.result. Values are the event emitted on success.
+_SEMANTIC_AUDIT_EVENTS: dict[str, AuditEventType] = {
+    "inspect_document": AuditEventType.DOCUMENT_PARSED,
+    "read_document": AuditEventType.DOCUMENT_PARSED,
+    "search_document": AuditEventType.DOCUMENT_RETRIEVED,
+    "list_documents": AuditEventType.DOCUMENT_RETRIEVED,
+    "inspect_archive": AuditEventType.DOCUMENT_PARSED,
+    "inspect_project": AuditEventType.PROJECT_INSPECTED,
+}
+
+
 class ExecutionOutcome(BaseModel):
     """Result of an executor attempt."""
 
@@ -374,6 +387,34 @@ class ToolExecutor:
                     "path": result.data.get("path")
                     or result.data.get("source")
                     or result.data.get("root"),
+                },
+            )
+        semantic_event = _SEMANTIC_AUDIT_EVENTS.get(tool.name) if result.ok else None
+        if semantic_event is not None:
+            await self._audit.record(
+                semantic_event,
+                tenant_id=context.tenant_id,
+                user_id=context.user_id,
+                run_id=context.run_id,
+                message=f"{tool.name} completed",
+                data={
+                    "tool": tool.name,
+                    "path": result.data.get("path"),
+                    "format": result.data.get("format"),
+                },
+            )
+        findings = result.data.get("sensitive_findings")
+        if result.ok and isinstance(findings, list) and findings:
+            await self._audit.record(
+                AuditEventType.SECRET_DETECTED,
+                tenant_id=context.tenant_id,
+                user_id=context.user_id,
+                run_id=context.run_id,
+                message="likely secrets detected in a document",
+                data={
+                    "tool": tool.name,
+                    "path": result.data.get("path"),
+                    "kinds": [f.get("kind") for f in findings if isinstance(f, dict)],
                 },
             )
         return result

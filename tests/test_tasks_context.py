@@ -102,3 +102,63 @@ def test_context_includes_goal_and_language(settings):
     system = package.messages[0].content
     assert "أنشئ فاتورة" in system
     assert "right-to-left" in system
+
+
+def _schema_tool(name: str, n_props: int) -> ToolSpec:
+    props = {f"p{i}": {"type": "string", "description": "x" * 40} for i in range(n_props)}
+    return ToolSpec(
+        name=name,
+        description="d" * 60,
+        parameters={"type": "object", "properties": props},
+    )
+
+
+def test_tool_budget_counts_full_schema_and_trims_optional():
+    # A small window with many schema-heavy tools: the budget must count the
+    # parameters (not just names/descriptions) and drop optional tools so the
+    # request stays inside the window.
+    from arabic_agent.core.config import Settings
+
+    small = Settings(
+        environment="test",
+        require_auth=False,
+        max_context_tokens=1024,
+        max_tools_per_call=64,
+    )
+    manager = ContextManager(small)
+    specs = [_schema_tool("read_file", 4), _schema_tool("finish", 2)]
+    specs += [_schema_tool(f"tool{i}", 20) for i in range(30)]
+    package = manager.build(
+        system_prompt="system",
+        goal="goal",
+        plan=None,
+        recent_messages=[],
+        tool_specs=tuple(specs),
+        locale=Locale.AR,
+    )
+    assert package.truncated
+    assert any(d.startswith("tool:") for d in package.dropped)
+    assert package.budget["used"] <= package.budget["total"]
+    # Core tools survive; the count is far below the 32 offered.
+    names = {t.name for t in package.tools}
+    assert {"read_file", "finish"} <= names
+    assert len(package.tools) < len(specs)
+
+
+def test_core_tools_always_advertised_even_when_tiny(settings):
+    from arabic_agent.core.config import Settings
+
+    tiny = Settings(environment="test", require_auth=False, max_context_tokens=512)
+    manager = ContextManager(tiny)
+    specs = [_schema_tool("read_file", 1), _schema_tool("finish", 1)]
+    specs += [_schema_tool(f"opt{i}", 10) for i in range(10)]
+    package = manager.build(
+        system_prompt="s",
+        goal="g",
+        plan=None,
+        recent_messages=[],
+        tool_specs=tuple(specs),
+        locale=Locale.AR,
+    )
+    names = {t.name for t in package.tools}
+    assert {"read_file", "finish"} <= names

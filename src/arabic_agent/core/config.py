@@ -171,6 +171,11 @@ class Settings(BaseSettings):
     max_replans: int = Field(default=3, ge=0, le=10)
     max_run_seconds: float = Field(default=600.0, gt=0)
     max_context_tokens: int = Field(default=16_000, ge=512)
+    #: Safety ceiling on tool schemas advertised per call. The token budget is
+    #: the real limiter (it counts each tool's full JSON schema and drops
+    #: optional tools that do not fit), so this only guards against a
+    #: mis-configured window. 0 means "use the context default".
+    max_tools_per_call: int = Field(default=64, ge=0, le=64)
 
     # --- Security ----------------------------------------------------------
     approval_ttl_seconds: int = Field(default=3600, ge=30)

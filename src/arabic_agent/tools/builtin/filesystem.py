@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 from ...core.errors import NotFoundError, ValidationError
 from ...permissions.base import Permission
 from ..base import Tool, ToolContext, ToolResult
+from ._fileops import read_text_file
 from ._paths import resolve_workspace_path
 
 #: Maximum bytes returned to the model in one read, to protect context budget.
@@ -33,21 +34,19 @@ class ReadFileTool(Tool):
         path = resolve_workspace_path(context.workspace_dir, arguments["path"], must_exist=True)
         if not path.is_file():
             raise ValidationError("path is not a regular file", details={"path": arguments["path"]})
-        raw = path.read_bytes()
-        truncated = len(raw) > MAX_READ_BYTES
-        chunk = raw[:MAX_READ_BYTES]
-        try:
-            text = chunk.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValidationError(
-                "file is not valid UTF-8 text", details={"path": arguments["path"]}
-            ) from exc
-        summary = f"read {len(chunk)} bytes from {arguments['path']}"
-        if truncated:
+        result = read_text_file(path, max_bytes=MAX_READ_BYTES)
+        summary = f"read {len(result.text)} chars from {arguments['path']}"
+        if result.truncated:
             summary += " (truncated)"
         return ToolResult.success(
             summary,
-            data={"path": arguments["path"], "content": text, "truncated": truncated},
+            data={
+                "path": arguments["path"],
+                "content": result.text,
+                "truncated": result.truncated,
+                "has_more": result.has_more,
+                "encoding": result.encoding,
+            },
         )
 
 

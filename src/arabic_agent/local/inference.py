@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from ..context.budget import estimate_tokens, estimate_tool_schema
 from ..core.errors import (
     ExternalServiceError,
     ResourceExhaustedError,
@@ -55,14 +56,17 @@ _CLOSE_TAG = "</tool_call>"
 def _estimate_message_tokens(message: ChatMessage) -> int:
     """Cheap, dependency-free token estimate for one message.
 
-    Uses the same ~4-characters-per-token heuristic the context manager uses,
-    so the guard and the budget speak the same units. It only needs to be good
-    enough to refuse an obviously oversized request before it reaches ggml.
+    Delegates to the platform's script-aware estimator (Arabic is tokenised
+    less efficiently than Latin), so the guard and the context budget speak the
+    same units. It only needs to be good enough to refuse an obviously
+    oversized request before it reaches ggml.
     """
-    length = len(message.content or "")
+    total = estimate_tokens(message.content or "")
     for call in message.tool_calls or ():
-        length += len(call.name) + len(json.dumps(call.arguments, ensure_ascii=False))
-    return length // 4 + 4  # per-message overhead
+        total += estimate_tokens(call.name) + estimate_tokens(
+            json.dumps(call.arguments, ensure_ascii=False)
+        )
+    return total + 4  # per-message overhead
 
 
 def _extract_balanced_json(text: str, start: int) -> int | None:
@@ -287,8 +291,9 @@ class LlamaCppBackend:
         for message in request.messages:
             prompt_tokens += _estimate_message_tokens(message)
         if request.tools:
-            prompt_tokens += (
-                sum(len(tool.name) + len(tool.description) for tool in request.tools) // 4
+            prompt_tokens += sum(
+                estimate_tool_schema(tool.name, tool.description, tool.parameters)
+                for tool in request.tools
             )
         # Always keep headroom for generation. A prompt that fills the window
         # leaves the sampler with no logits, which aborts inside ggml; fail

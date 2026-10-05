@@ -178,7 +178,14 @@ Key invariants:
 - **The first execution is never assumed correct.** Tool results are read,
   failures classified, the plan revised, and the result verified.
 - **Loops are impossible by construction.** Guards on max steps, max tool
-  retries, max replans, and a wall-clock deadline terminate any run.
+  retries, max replans, and a wall-clock deadline terminate any run. On top of
+  those bounds, `agent/loops.py::LoopGuard` detects a run that repeats an
+  identical tool call and aborts it with a `LOOP_DETECTED` audit event, so a
+  model that spins on the same action fails fast instead of burning the budget.
+- **Context is the smallest sufficient set.** The context manager advertises a
+  step's planned tool (`tool_hint`) plus the always-available core tools, so an
+  unrelated tool is never dangled in front of a small local model, and the
+  prompt stays inside the window.
 - **Sensitive operations pause.** When policy returns `REQUIRES_APPROVAL`, the
   runner persists an `Approval` and returns a `PENDING_APPROVAL` result instead
   of executing. `resume_after_approval()` continues exactly where it stopped.
@@ -213,15 +220,46 @@ Built-in today (real, sandboxed, tested):
 | `echo` | none |
 | `finish` | none (control signal that ends a step) |
 | `read_file` | `READ_FILE` |
+| `read_file_range` | `READ_FILE` |
 | `write_file` | `WRITE_FILE` |
-| `list_directory` | `READ_FILE` |
-| `shell_command` | `RUN_COMMAND` |
+| `edit_file` (exact replacement) | `WRITE_FILE` |
+| `append_file` | `WRITE_FILE` |
+| `create_file` | `WRITE_FILE` |
+| `copy_file` | `WRITE_FILE` |
+| `move_file` | `MOVE_FILE` |
+| `delete_file` | `DELETE_FILE` |
+| `make_directory` | `WRITE_FILE` |
+| `file_info` | `READ_FILE` |
+| `directory_tree` | `LIST_DIRECTORY` |
+| `search_files` | `LIST_DIRECTORY` |
+| `file_type` | `READ_FILE` |
+| `list_directory` | `LIST_DIRECTORY` |
+| `run_command` | `RUN_COMMAND` |
+| `inspect_document` | `FILES_READ` |
+| `read_document` | `FILES_READ` |
+| `search_document` | `FILES_READ` |
+| `inspect_archive` | `FILES_READ` |
+| `list_documents` | `FILES_SEARCH` |
+| `inspect_project` | `FILES_READ`, `FILES_SEARCH` |
 
 Filesystem tools resolve every path against the run workspace and refuse
-escapes (`tools/builtin/_paths.py`). `shell_command` runs with the workspace as
-its working directory. Future tools (browser, email, ERP, WhatsApp, social,
-documents, spreadsheets, presentations, video, image, calendar) are declared in
-`TODO.md` and plug into the same interface.
+escapes (`tools/builtin/_paths.py`); the heavy lifting is shared in
+`tools/builtin/_fileops.py` so the workspace and local-runtime tools behave
+identically. `run_command` runs with the workspace as its working directory.
+
+`documents/` is a real ingestion layer: parsers read the actual bytes for
+text/Markdown/JSON/CSV/HTML/PDF/DOCX/XLSX/PPTX and inspect ZIP/TAR archives
+without extracting. Each section carries provenance (page/slide/sheet/line) and
+parse limits are conservative. Optional parser dependencies degrade honestly —
+an absent parser reports the format as unsupported rather than fabricating a
+result. Ingested content is scanned for likely secrets; a finding is reported by
+kind + locator only (`SECRET_DETECTED`), never by value. `project/` builds a
+project summary from real filesystem evidence (languages, manifests, tests,
+entrypoints, docs).
+
+Future tools (document generation, browser, email, ERP, WhatsApp, social,
+image, video, calendar, printing) are declared in `TODO.md` and plug into the
+same interface.
 
 ---
 

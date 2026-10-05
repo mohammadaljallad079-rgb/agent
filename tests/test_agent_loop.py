@@ -47,6 +47,39 @@ async def test_agent_completes_simple_goal(make_platform, tmp_path):
     assert "تم" in result.result
 
 
+async def test_step_advertises_only_planned_and_core_tools(make_platform, tmp_path):
+    """A step with a tool hint advertises that tool plus the core set only.
+
+    This is what keeps a small local model from picking an unrelated tool (for
+    example ``run_command``) when the plan already named the right one.
+    """
+    seen: list[ModelRequest] = []
+    base = scripted_responder(
+        plan=plan_json(("echo a greeting", "echo")),
+        tool_calls=[("echo", {"text": "hi"}), ("finish", {"result": "ok"})],
+        verification=verify_json(True, "ok"),
+    )
+
+    def capturing(request: ModelRequest, n: int) -> ModelResponse:
+        seen.append(request)
+        return base(request, n)
+
+    platform = make_platform(capturing)
+    result = await platform.build_runner().run(
+        principal=_principal(), goal="greet", workspace_dir=str(tmp_path / "ws")
+    )
+    assert result.status is RunStatus.COMPLETED
+
+    advertised: set[str] = set()
+    for request in seen:
+        if is_planner(request) or is_verifier(request) or not request.tools:
+            continue
+        advertised |= {spec.name for spec in request.tools}
+    assert "echo" in advertised
+    assert "delete_file" not in advertised  # non-core tool is scoped out
+    assert "write_file" in advertised  # core tool stays available
+
+
 async def test_agent_pauses_for_approval_on_sensitive_tool(make_platform, tmp_path):
     responder = scripted_responder(
         plan=plan_json(("write a file", "write_file")),
@@ -97,9 +130,13 @@ async def test_approval_then_resume_completes_and_writes_file(make_platform, tmp
 
 
 class _DeleteTool(Tool):
-    """A tool whose permission is denied by the default policy."""
+    """A tool whose permission is denied by the default policy.
 
-    name = "delete_file"
+    Named distinctly from the real ``delete_file`` tool so this test asserts the
+    *deny* path (not tool-name registration).
+    """
+
+    name = "purge_file"
     description = "delete a file (denied by default policy)"
     parameters: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -114,8 +151,8 @@ class _DeleteTool(Tool):
 
 async def test_denied_tool_never_executes(make_platform, tmp_path):
     responder = scripted_responder(
-        plan=plan_json(("delete a file", "delete_file")),
-        tool_calls=[("delete_file", {"path": "x"})],
+        plan=plan_json(("delete a file", "purge_file")),
+        tool_calls=[("purge_file", {"path": "x"})],
     )
     platform = make_platform(responder, extra_tools=[_DeleteTool()])
     result = await platform.build_runner().run(

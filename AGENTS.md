@@ -223,7 +223,24 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   (`test_real_model_arabic_agent_loop`) that plans, calls the real `echo` tool
   with an Arabic argument, verifies and finishes. See
   `tests/test_local_agent_loop.py` and `tests/test_subprocess_isolation.py`.
-- Tests are 352 when real Postgres/Redis are reachable and a real local model is
+- File, document & project intelligence phase: the agent now operates on real
+  files through the same sandbox → policy → approval → audit path. The workspace
+  filesystem tool set is extended (`read_file_range`, `edit_file`, `append_file`,
+  `create_file`, `copy_file`, `move_file`, `delete_file`, `make_directory`,
+  `file_info`, `directory_tree`, `search_files`, `file_type`), with move/delete/
+  overwrite gated by `MOVE_FILE`/`DELETE_FILE`/`WRITE_FILE`. `documents/` parses
+  text/Markdown/JSON/CSV/HTML/PDF/DOCX/XLSX/PPTX and inspects ZIP/TAR archives
+  without extracting, carrying section provenance (page/slide/sheet/line) and
+  conservative limits; optional parsers degrade honestly (an absent one reports
+  the format as unsupported, never a fake result). Document tools
+  (`inspect_document`, `read_document`, `search_document`, `list_documents`,
+  `inspect_archive`) and project understanding (`inspect_project`) are ordinary
+  `Tool`s, so nothing bypasses policy/audit. Ingested content is scanned for
+  likely secrets (`SECRET_DETECTED`; kind + locator only, never the value), a
+  loop guard aborts runs that repeat an identical tool call (`LOOP_DETECTED`),
+  and a step with a `tool_hint` is advertised only that tool plus the core set.
+  Green.
+- Tests are 406 when real Postgres/Redis are reachable and a real local model is
   provided (unit tests + 36 Postgres/Redis integration tests + local model and
   agent-loop tests + subprocess-isolation tests). Without
   `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` the 36 integration tests skip,
@@ -247,9 +264,9 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   passed 5/5. `tests/test_subprocess_isolation.py` covers the crash/timeout/
   malformed-frame paths against a real child process and asserts they surface as
   recoverable `ExternalServiceError`s with no cloud fallback under `OFFLINE`.
-- Not yet implemented (see `TODO.md`): desktop application/packaging,
-  document/media tools, social/ERP connectors, browser/printing/email tools,
-  and the web UI.
+- Not yet implemented (see `TODO.md`): desktop application/packaging, document
+  *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social/ERP
+  connectors, browser/printing/email/calendar tools, and the web UI.
 - Migrations: `migrations/versions/` is the source of truth for the durable
   schema. After changing `persistence/schema.py`, run
   `AAP_DATABASE_URL=<test url> uv run alembic revision --autogenerate -m "..."`,
