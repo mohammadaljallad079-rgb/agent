@@ -312,8 +312,17 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   malformed-frame paths against a real child process and asserts they surface as
   recoverable `ExternalServiceError`s with no cloud fallback under `OFFLINE`.
 - Not yet implemented (see `TODO.md`): desktop application/packaging, document
-  *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social/ERP
-  connectors, printing/email/calendar tools, and the web UI.
+  *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social connectors,
+  printing/calendar tools, and the web UI.
+- Connectors (Phase 9) reach *remote* systems, so unlike the local-only
+  computer/browser tools they are available in a cloud runtime too; they are
+  still opt-in (`AAP_CONNECTORS_ENABLED`) and every write/send is
+  approval-gated. Secrets are referenced by environment variable in
+  `AAP_CONNECTORS_JSON` and never stored in source, a spec, or the audit trail.
+  Their tests run against real local SMTP/IMAP + HTTP servers (`tests/fake_*`),
+  not mocks. The action ledger is in-memory for the local runtime; a
+  Postgres-backed ledger is the cloud swap behind the same `ActionLedger`
+  interface.
 - Migrations: `migrations/versions/` is the source of truth for the durable
   schema. After changing `persistence/schema.py`, run
   `AAP_DATABASE_URL=<test url> uv run alembic revision --autogenerate -m "..."`,

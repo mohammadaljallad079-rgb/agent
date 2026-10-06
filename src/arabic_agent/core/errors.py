@@ -75,6 +75,19 @@ class TimeoutError_(PlatformError):
     retryable = True
 
 
+class AmbiguousActionError(PlatformError):
+    """An external action may or may not have taken effect.
+
+    Raised when a consequential request times out or returns an indeterminate
+    result. It is deliberately **not** retryable: blindly retrying could perform
+    the effect twice. The caller must verify against the provider (and only then
+    decide whether a retry is safe).
+    """
+
+    error_class = ErrorClass.TIMEOUT
+    retryable = False
+
+
 class NotFoundError(PlatformError):
     """A referenced resource does not exist."""
 

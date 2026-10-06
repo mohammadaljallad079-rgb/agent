@@ -379,6 +379,62 @@ real, not interface-only.
       `test_browser_container.py`, and real-Playwright `test_browser_e2e.py`
       (opt-in via `AAP_TEST_BROWSER=1`).
 
+## Phase 9 — Communications, external apps & real-world actions (done)
+
+- [x] Connector subsystem (`connectors/`): `Connector` ABC with
+      `healthcheck`/`call`/`operations` and value types (`ConnectorCall`,
+      `ConnectorResult`, `OperationSpec`/`OperationKind`, `ConnectorHealth`,
+      `ConnectorInfo`, `ConnectorRegistry`); an unusable connector reports why.
+- [x] Credentials (`connectors/credentials.py`): `CredentialRef` names a secret
+      (provider + env var), never inlines it; resolved only at the execution
+      boundary, never stored on a connector, a spec or the audit trail.
+- [x] HTTP connector (`connectors/http.py`): URL validated by the existing
+      `UrlPolicy` (SSRF/private/link-local/metadata and dangerous schemes
+      refused), permitted methods only, size-capped and redacted responses, and
+      redirects re-validated with the credential attached only to the configured
+      origin.
+- [x] Email connector (`connectors/email.py`): provider-neutral SMTP send and
+      IMAP search; attachments read only from workspace-authorized paths; a
+      received body is scanned for prompt-injection and returned as a warning.
+- [x] Business connector (`connectors/business.py`): generic ERP/CRM adapter over
+      declarative `ResourceMapping`s (collection path + derived item template);
+      `record.search`/`get` (READ) and `record.create`/`update` (WRITE). No
+      vendor logic.
+- [x] Messaging connector (`connectors/messaging.py`): provider-neutral over a
+      `MessagingProvider` ABC; the only bundled provider is the official WhatsApp
+      Business Cloud API.
+- [x] Webhook connector (`connectors/webhooks.py`): HMAC-SHA256 signing of the
+      exact bytes with a timestamp and delivery id (`X-AAP-Signature` /
+      `X-AAP-Timestamp` / `X-AAP-Delivery-Id`).
+- [x] Action ledger (`connectors/ledger.py`): cause-derived idempotency key and
+      `ActionRecord` state machine, so a retry/redelivery does not repeat an
+      effect; `canonical_digest` is the single source of truth for approval
+      binding.
+- [x] Runtime (`connectors/runtime.py`): the one enforcement boundary —
+      availability → data boundary → approval binding → idempotency claim →
+      execute → verify → audit; a consequential timeout is `UNKNOWN` and raises a
+      non-retryable `AmbiguousActionError` rather than retrying blindly.
+- [x] Tools (`tools/builtin/connectors.py`): `connector_list`, `http_request`,
+      `email_send`, `email_search`, `message_send`, `webhook_send`,
+      `business_records`, `connector_verify` — registered when connectors are
+      enabled, gated by the existing permission/approval/audit path.
+- [x] Trusted approval gate: the `approval_granted` signal is injected by the
+      executor from the stored approval record, never read from model arguments;
+      the approval is bound to the exact payload digest and a changed payload is
+      refused.
+- [x] Audit events for every step (metadata only — never a secret, a message body
+      or a record payload).
+- [x] OAuth 2.0 (`connectors/oauth.py`): provider-neutral authorization-code +
+      PKCE flow, refresh and revoke; single-use TTL-bounded `state`, verifier held
+      server-side, `SecretStr` tokens, and a rejected grant classified for
+      reauthentication.
+- [x] Connector policy (`connectors/policy.py`): declarative enable/disable,
+      force-approval, deny and sensitivity overrides.
+- [x] Tests: `test_connectors.py` (real local SMTP/IMAP + HTTP servers),
+      `test_connector_runtime.py` (real executor/policy/approval/audit),
+      `test_connector_container.py` and `test_connector_oauth.py` (real local
+      token endpoint).
+
 ## Phase 7 — Product surface
 
 - [ ] Web UI with full RTL/LTR support, locale switching, plan/timeline view,
@@ -475,6 +531,25 @@ real, not interface-only.
   record and is never read from model arguments, so a forged `"approved": true`
   cannot bypass the gate. The real-Playwright end-to-end suite is opt-in via
   `AAP_TEST_BROWSER=1`.
+- Phase 9 closeout: the full suite is green — 663 passed, 0 failed, 0 errors —
+  with real Postgres + Redis, a real GGUF model, a real X11 display, a real
+  Playwright/Chromium browser, and real local SMTP/IMAP + HTTP servers. Phase 9
+  added communications and real-world actions: a provider-neutral connector
+  subsystem (HTTP, email, generic ERP/CRM, messaging, signed webhooks), a
+  credential *reference* model (a secret is named, never inlined, and resolved
+  only at the execution boundary), an action ledger that makes an external effect
+  happen at most once, approval binding to the exact payload digest, honest
+  `UNKNOWN` handling for an ambiguous timeout (never a blind retry), and the
+  connector tools. Notes recorded honestly: (1) connectors are opt-in
+  (`AAP_CONNECTORS_ENABLED`, default false); unlike the local-only
+  computer/browser tools they are available in a cloud runtime too, because they
+  reach remote SaaS/SMTP/webhook systems — every write/send stays
+  approval-gated; (2) secrets are referenced by environment variable in
+  `AAP_CONNECTORS_JSON` and never stored in source, a spec, or the audit trail;
+  (3) the data boundary still applies — a `LOCAL_ONLY` payload is refused to a
+  remote destination; (4) the action ledger is in-memory for the local runtime;
+  a Postgres-backed ledger is the cloud deployment's swap behind the same
+  interface. The tests use real local servers (no fake APIs) rather than mocks.
 
 ## Verification commands
 

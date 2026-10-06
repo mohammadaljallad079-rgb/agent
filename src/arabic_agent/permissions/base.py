@@ -55,8 +55,18 @@ class Permission(StrEnum):
 
     # Communications
     SEND_EMAIL = "SEND_EMAIL"
+    READ_EMAIL = "READ_EMAIL"
     SEND_WHATSAPP = "SEND_WHATSAPP"
     SEND_SOCIAL_MESSAGE = "SEND_SOCIAL_MESSAGE"
+    SEND_WEBHOOK = "SEND_WEBHOOK"
+
+    # External connectors (Phase 9). Coarse, provider-neutral grants: reading
+    # external data, writing it, and generic outbound HTTP. A connector's own
+    # declared risk decides whether a write additionally needs approval.
+    CONNECTOR_READ = "CONNECTOR_READ"
+    CONNECTOR_WRITE = "CONNECTOR_WRITE"
+    CONNECTOR_HTTP = "CONNECTOR_HTTP"
+    MANAGE_CONNECTOR = "MANAGE_CONNECTOR"
 
     # Business systems
     CREATE_INVOICE = "CREATE_INVOICE"
@@ -111,8 +121,14 @@ _PERMISSION_RISK: dict[Permission, RiskLevel] = {
     Permission.APPLICATION_LAUNCH: RiskLevel.HIGH,
     Permission.APPLICATION_CLOSE: RiskLevel.HIGH,
     Permission.SEND_EMAIL: RiskLevel.HIGH,
+    Permission.READ_EMAIL: RiskLevel.MEDIUM,
     Permission.SEND_WHATSAPP: RiskLevel.HIGH,
     Permission.SEND_SOCIAL_MESSAGE: RiskLevel.HIGH,
+    Permission.SEND_WEBHOOK: RiskLevel.HIGH,
+    Permission.CONNECTOR_READ: RiskLevel.MEDIUM,
+    Permission.CONNECTOR_WRITE: RiskLevel.HIGH,
+    Permission.CONNECTOR_HTTP: RiskLevel.HIGH,
+    Permission.MANAGE_CONNECTOR: RiskLevel.HIGH,
     Permission.CREATE_INVOICE: RiskLevel.HIGH,
     Permission.DELETE_INVOICE: RiskLevel.CRITICAL,
     Permission.WRITE_ERP: RiskLevel.HIGH,

@@ -41,6 +41,10 @@ from .computer.perception import PerceptionLayer
 from .computer.policy import ComputerPolicy
 from .computer.runtime import ComputerRuntime
 from .computer.screen_boundary import ScreenDataBoundary, ScreenDataPolicy
+from .connectors.config import build_connectors, parse_connector_specs
+from .connectors.credentials import CredentialResolver
+from .connectors.ledger import InMemoryActionLedger
+from .connectors.runtime import ConnectorRuntime
 from .context.attachments import AttachmentProvider
 from .context.manager import ContextManager
 from .core.config import Settings
@@ -123,6 +127,7 @@ from .tools.base import Tool
 from .tools.builtin import (
     BROWSER_TOOLS,
     COMPUTER_TOOLS,
+    CONNECTOR_TOOLS,
     DOCUMENT_TOOLS,
     EXTENDED_FILESYSTEM_TOOLS,
     PROJECT_TOOLS,
@@ -199,6 +204,7 @@ class Platform:
         local_model_provider: LocalBackendProvider | None = None,
         computer_runtime: ComputerRuntime | None = None,
         browser_runtime: BrowserRuntime | None = None,
+        connector_runtime: ConnectorRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
@@ -238,6 +244,7 @@ class Platform:
         self.local_model_provider = local_model_provider
         self.computer_runtime = computer_runtime
         self.browser_runtime = browser_runtime
+        self.connector_runtime = connector_runtime
         self.attachment_provider = attachment_provider
         self.database = database
         self.local_database = local_database
@@ -555,6 +562,12 @@ class Platform:
             if is_local and settings.browser_enabled
             else []
         )
+        # Phase 9: external connectors and real-world actions. Opt-in. On a
+        # cloud build the tools still exist (the cloud reaches SaaS APIs), but
+        # only when connectors are enabled; every write/send is approval-gated.
+        connector_tools = (
+            [tool_cls() for tool_cls in CONNECTOR_TOOLS] if settings.connectors_enabled else []
+        )
         tools = ToolRegistry(
             [
                 EchoTool(),
@@ -569,6 +582,7 @@ class Platform:
                 *local_tools,
                 *computer_tools,
                 *browser_tools,
+                *connector_tools,
                 *(extra_tools or []),
             ]
         )
@@ -699,6 +713,9 @@ class Platform:
                 allowlist=frozenset(settings.local_command_allowlist),
                 allowed_cwd_roots=local_runtime.sandbox.policy.allowed_roots,
             )
+            # The local data boundary governs what may leave the machine; the
+            # connector runtime consults it before any external transmission.
+            tool_metadata["data_boundary"] = boundary
 
             # --- Computer use / perception (Phase 7) -------------------
             # Only assembled for a local build with computer control enabled.
@@ -825,6 +842,42 @@ class Platform:
                         destination_is_remote=not gateway.default_is_local(),
                     )
 
+        # --- External connectors (Phase 9) -----------------------------
+        # Built from declarative configuration. The runtime enforces the data
+        # boundary, approval binding, the idempotency ledger and verification;
+        # it is injected into every tool context, exactly like the browser and
+        # computer runtimes. The ledger is local for now (a Postgres-backed
+        # ledger is the cloud deployment's swap, behind the same interface).
+        connector_runtime: ConnectorRuntime | None = None
+        if connector_tools:
+            from .local.sandbox import FilesystemPolicy
+
+            connector_credentials = CredentialResolver()
+            connector_fs = tool_metadata.get("filesystem_policy")
+            connector_registry = build_connectors(
+                parse_connector_specs(settings.connectors_json),
+                credentials=connector_credentials,
+                filesystem_policy=(
+                    connector_fs if isinstance(connector_fs, FilesystemPolicy) else None
+                ),
+                workspace_dir=str(Path(settings.local_store_dir) / "workspace"),
+                allow_local_addresses=settings.connectors_allow_local_addresses,
+                max_response_bytes=settings.connector_max_response_bytes,
+                retry_max_attempts=settings.connector_retry_max_attempts,
+            )
+            connector_boundary = tool_metadata.get("data_boundary")
+            connector_runtime = ConnectorRuntime(
+                registry=connector_registry,
+                audit=audit,
+                ledger=InMemoryActionLedger(),
+                boundary=(
+                    connector_boundary
+                    if isinstance(connector_boundary, DataBoundaryPolicy)
+                    else None
+                ),
+            )
+            tool_metadata["connector_runtime"] = connector_runtime
+
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
@@ -894,6 +947,7 @@ class Platform:
             local_model_provider=local_model_provider,
             computer_runtime=computer_runtime,
             browser_runtime=browser_runtime,
+            connector_runtime=connector_runtime,
             attachment_provider=attachment_provider,
             database=database,
             local_database=local_database,

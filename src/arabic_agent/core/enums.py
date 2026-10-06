@@ -328,6 +328,82 @@ class SyncStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ConnectorKind(StrEnum):
+    """The kind of external system a connector talks to."""
+
+    HTTP = "http"
+    EMAIL = "email"
+    MESSAGING = "messaging"
+    WEBHOOK = "webhook"
+    BUSINESS = "business"
+
+
+class ConnectorState(StrEnum):
+    """An honest lifecycle/health state for an external connector.
+
+    The agent is told the state rather than left to guess: a connector that is
+    ``NOT_CONFIGURED`` or ``REAUTHENTICATION_REQUIRED`` is still discoverable,
+    but it can never be used, and the reason is recorded.
+    """
+
+    READY = "ready"
+    DEGRADED = "degraded"
+    NOT_CONFIGURED = "not_configured"
+    UNAUTHENTICATED = "unauthenticated"
+    REAUTHENTICATION_REQUIRED = "reauthentication_required"
+    UNAVAILABLE = "unavailable"
+    DISABLED = "disabled"
+
+
+class ActionRisk(StrEnum):
+    """Classification of an external operation, driving permission/approval.
+
+    Finer than :class:`RiskLevel` because "write to an external system" ranges
+    from an internal note to a payment. The classification is *declared* by the
+    connector operation, never inferred from the model's phrasing.
+    """
+
+    READ_ONLY = "read_only"
+    LOW_RISK_WRITE = "low_risk_write"
+    CONSEQUENTIAL_WRITE = "consequential_write"
+    HIGH_RISK_ACTION = "high_risk_action"
+
+    @property
+    def requires_approval(self) -> bool:
+        return self in (ActionRisk.CONSEQUENTIAL_WRITE, ActionRisk.HIGH_RISK_ACTION)
+
+
+class ActionState(StrEnum):
+    """Lifecycle of an external action (the action ledger's state machine).
+
+    ``UNKNOWN`` is the important one: an ambiguous timeout means the platform
+    does *not* know whether the effect happened, and must verify before retrying
+    rather than blindly repeating a consequential action.
+    """
+
+    PREPARED = "prepared"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    EXECUTING = "executing"
+    UNKNOWN = "unknown"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    VERIFYING = "verifying"
+    VERIFIED = "verified"
+    CANCELLED = "cancelled"
+
+
+class ActionOutcome(StrEnum):
+    """The recovery-relevant outcome of an attempted external action."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    UNKNOWN = "unknown"
+    RETRYABLE = "retryable"
+    NEEDS_VERIFICATION = "needs_verification"
+    NEEDS_USER = "needs_user"
+
+
 class Locale(StrEnum):
     """Supported UI/content locales. Arabic is first-class, not a translation."""
 

@@ -209,6 +209,41 @@ def platform_default_policy() -> PolicySet:
                 permission=Permission.BROWSER_UPLOAD,
                 reason="uploading sends local data to a remote site",
             ),
+            # External connectors (Phase 9). Reading external data is allowed
+            # (it is still bounded by the connector's URL/domain policy and the
+            # data boundary); anything that writes to an external system, sends
+            # a webhook, or makes a generic outbound request needs a human in the
+            # loop. A connector's own declared risk narrows this further.
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.CONNECTOR_READ,
+                reason="reading external data is read-only",
+            ),
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.READ_EMAIL,
+                reason="reading email is read-only",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.CONNECTOR_WRITE,
+                reason="writing to an external system changes remote state",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.CONNECTOR_HTTP,
+                reason="an outbound HTTP request can reach an external service",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.SEND_WEBHOOK,
+                reason="delivering a webhook is externally visible",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.MANAGE_CONNECTOR,
+                reason="configuring a connector changes what the agent may reach",
+            ),
             # Destructive, irreversible operations are denied by default.
             Rule(
                 effect=PermissionEffect.DENY,

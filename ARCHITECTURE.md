@@ -933,6 +933,151 @@ secrets and screenshots are never written to the audit trail — only metadata
 
 ---
 
+## 13d. Communications, external apps & real-world actions (Phase 9)
+
+The agent can act on systems *outside* the machine — send email, message a
+customer, call a business API (ERP/CRM), deliver a webhook — under the same
+governance as every other tool. These are the first operations that leave the
+sandbox and change state the platform does not own, so the phase adds one
+enforcement boundary, not a pile of new tools.
+
+### The `connectors/` subsystem
+
+All external-system logic lives in `src/arabic_agent/connectors/`, behind
+interfaces, never inside the agent core or a tool handler. The agent core never
+learns a provider's name or protocol.
+
+- **`base.py`** — `Connector` (ABC): `healthcheck`, `call`, `operations`,
+  `operation`, `catalogue`. Value types: `ConnectorCall`, `ConnectorResult`,
+  `OperationSpec`/`OperationKind` (READ/WRITE), `ConnectorHealth`
+  (`READY` / `NOT_CONFIGURED` / `REAUTHENTICATION_REQUIRED` / `UNAVAILABLE`),
+  `ConnectorInfo`, and `ConnectorRegistry`. A connector that cannot work reports
+  *why* rather than pretending.
+- **`credentials.py`** — `CredentialRef` (a *reference*: provider + name, never a
+  value) and `CredentialResolver` over `CredentialProvider`s
+  (`EnvCredentialProvider`, `StaticCredentialProvider` for tests). A secret is
+  resolved only at the execution boundary and never stored on a connector, a
+  spec, or the audit trail.
+- **`retry.py`** — `RetryPolicy` / `with_retry`: bounded transport retries with
+  backoff and jitter for *idempotent, safe-to-repeat* work only. A consequential
+  action is never retried here — ambiguity is handled by the ledger.
+- **`http.py`** — `HttpConnector` over `httpx`: every URL is validated by the
+  existing `UrlPolicy` (SSRF/loopback/private/link-local/metadata refused,
+  dangerous schemes refused), only permitted methods are accepted, the response
+  is size-capped and redacted, and a redirect is re-validated — a credential is
+  attached **only** to the configured origin, never carried across a redirect to
+  another host.
+- **`email.py`** — `EmailConnector`: SMTP send (`email.send`) and IMAP search
+  (`email.search`), provider-neutral (any SMTP/IMAP host). Attachments are read
+  only from workspace-authorized paths through the same `FilesystemPolicy` the
+  file tools use. A received body is untrusted data: it is scanned for
+  prompt-injection indicators and returned as a *warning*.
+- **`business.py`** — `BusinessConnector`: a generic ERP/CRM adapter over an HTTP
+  transport with declarative `ResourceMapping`s (collection `path` plus a derived
+  item template). Operations: `record.search`/`get` (READ) and
+  `record.create`/`update` (WRITE). No vendor logic; a concrete ERP is a mapping,
+  not a subclass.
+- **`messaging.py`** — `MessagingConnector` over a `MessagingProvider` ABC
+  (`send`/`read`/`verify`). The only bundled provider is
+  `WhatsAppBusinessProvider` (the official Cloud API), so the connector is
+  provider-neutral by construction.
+- **`webhooks.py`** — `WebhookConnector`: signs the exact JSON bytes with
+  HMAC-SHA256 and a timestamp, sending `X-AAP-Signature` / `X-AAP-Timestamp` /
+  `X-AAP-Delivery-Id`, so a receiver can verify authenticity and reject replays.
+  `sign_payload` is pure and testable.
+- **`oauth.py`** — provider-neutral OAuth 2.0: an `OAuthProvider` record
+  (endpoints + scopes) drives an `OAuthClient` implementing the
+  authorization-code + PKCE flow, refresh and revoke. Security is enforced here:
+  a single-use, TTL-bounded `state` (anti-CSRF/replay), a PKCE verifier held
+  server-side and never sent to the browser, tokens wrapped in `SecretStr` with a
+  masking `repr`, and a rejected grant classified for reauthentication (never
+  looped). No provider is hardcoded — a new one is configuration.
+- **`policy.py`** — `ConnectorPolicy`: pure, declarative per-connector overrides
+  (enable/disable, force-approval, deny, and a data-sensitivity assignment) so an
+  operator can narrow the runtime's declared-risk decisions without editing code.
+- **`ledger.py`** — `ActionLedger` (ABC) + `InMemoryActionLedger` and
+  `ActionRecord`/`ActionState`/`ActionTransitionError`. Every external action is
+  claimed by a **cause-derived idempotency key** (tenant + run + step + connector
+  + operation + payload digest) so a retry or a redelivered job does not repeat
+  the effect. `canonical_digest` is the single source of truth for the action
+  digest used both by the ledger key and by approval binding.
+- **`runtime.py`** — `ConnectorRuntime` is the single entry point the tools call,
+  and the one place every Phase 9 safety property is enforced, in this order:
+  **availability → data boundary → approval binding → idempotency claim →
+  execute → verify → audit**. It exposes the catalogue for discovery, refuses a
+  `LOCAL_ONLY` payload to a remote destination via the existing
+  `DataBoundaryPolicy`, requires a *trusted* `approval_granted` signal for a
+  consequential write, recomputes the action digest and refuses an approval whose
+  payload changed, records a consequential timeout as `UNKNOWN` and raises a
+  non-retryable `AmbiguousActionError` rather than retrying blindly, and runs
+  act → observe → verify so a success is only `VERIFIED` when the provider
+  confirms it.
+
+### Approval binding, idempotency and ambiguity
+
+Three properties distinguish this from "a chat that calls an API":
+
+- **An approval is bound to the exact payload.** The digest is computed from the
+  precise consequential arguments; on resume the runtime recomputes it and
+  refuses to execute if anything changed. An approval for one action can never
+  authorise a different one (`EXTERNAL_ACTION_APPROVAL_MISMATCH` is audited).
+- **An effect happens at most once.** The ledger claims the action before it is
+  attempted; an identical action that already succeeded is not repeated, one in
+  flight is not started twice, and one left `UNKNOWN` must be verified before any
+  retry.
+- **An unknown outcome is never blindly retried.** A consequential request that
+  times out is `UNKNOWN`; `connector_verify` looks it up at the provider and only
+  then may a retry be safe.
+
+### Tools (`tools/builtin/connectors.py`)
+
+Ordinary `Tool`s, so they run through the *existing* executor, policy gate,
+approval flow and audit trail. Registered when `AAP_CONNECTORS_ENABLED=true`
+(the tools reach remote SaaS/SMTP/webhook systems, so unlike the local-only
+computer/browser tools they exist in a cloud runtime too — still opt-in, and
+every write/send stays approval-gated):
+
+- `connector_list` — the catalogue: capabilities, health, read/write/approval
+  flags, so the model uses a connector that exists and is usable.
+- `http_request` (`CONNECTOR_HTTP`, HIGH) — a bounded, validated HTTP call.
+- `email_send` (`SEND_EMAIL`, HIGH) — SMTP send, approval bound to the exact
+  recipient/subject/body/attachments.
+- `email_search` (`READ_EMAIL`, MEDIUM) — IMAP search; bodies are untrusted data.
+- `message_send` (`CONNECTOR_WRITE`, HIGH) — provider-neutral messaging send.
+- `webhook_send` (`SEND_WEBHOOK`, HIGH) — signed delivery.
+- `business_records` (`CONNECTOR_READ`/`CONNECTOR_WRITE`, MEDIUM/HIGH) —
+  ERP/CRM search/get/create/update; reads pass, writes require approval.
+- `connector_verify` (`CONNECTOR_READ`, MEDIUM) — confirm an `UNKNOWN` action
+  before retrying it.
+
+### The approval gate is trusted, not model-supplied
+
+Sending mail, messaging a customer, or writing to an ERP is consequential, so the
+runtime refuses it unless the call carries an approval. As in Phase 8, the signal
+is **not** a tool argument the model could forge: the executor injects
+`context.metadata["approval_granted"]` only on the resume path, after re-checking
+policy against the stored, granted `ApprovalRecord`. A model that emits
+`"approval_granted": true` in its own arguments still gets an approval request.
+
+### Audit
+
+Every step is audited with metadata only — never a secret, a message body or a
+record payload: `connector.registered`, `connector.called`, `connector.result`,
+`connector.error`, `connector.healthcheck`, `connector.unavailable`,
+`external_action.boundary_decision`, `external_action.executing`,
+`external_action.succeeded`, `external_action.failed`, `external_action.verifying`,
+`external_action.verified`, `external_action.unknown`,
+`external_action.approval_mismatch`, `external_action.deduplicated`.
+
+### Settings
+
+`AAP_CONNECTORS_ENABLED` (default false), `AAP_CONNECTORS_JSON` (a JSON array of
+connector specs; secrets are named by environment variable, never inlined),
+`AAP_CONNECTORS_ALLOW_LOCAL_ADDRESSES` (default false),
+`AAP_CONNECTOR_MAX_RESPONSE_BYTES`, `AAP_CONNECTOR_RETRY_MAX_ATTEMPTS`.
+
+---
+
 ## 14. Security
 
 Baseline, designed in from the start:
@@ -1110,6 +1255,30 @@ The foundation is verified, not assumed.
     `AAP_TEST_BROWSER=1`): a real local site is served, navigated, observed,
     screenshot, typed, submitted, downloaded and driven through a real
     JavaScript dialog and a download. Skips when no browser is available.
+  - `test_connectors.py` — Phase 9: connector building from declarative specs,
+    credential resolution, the URL policy on the HTTP connector, email send/read
+    against a **real** local SMTP/IMAP server, the business adapter's
+    search/get/create/update against a **real** local HTTP server, the messaging
+    connector's send/read/verify, and webhook signing (signature/timestamp/
+    delivery-id over the exact bytes).
+  - `test_connector_runtime.py` — the `ConnectorRuntime` and the connector tools
+    through the **real** executor, policy engine, approval store and audit log:
+    reads pass, a consequential write pauses for a trusted approval, an approval
+    is bound to the exact payload digest, an identical action is not repeated, a
+    consequential action is verified against the provider, a verification failure
+    and an ambiguous timeout both leave the action `UNKNOWN` (never retried), a
+    `LOCAL_ONLY` payload is refused to a remote destination, an unavailable
+    connector fails honestly, and a forged approval is not honoured.
+  - `test_connector_container.py` — the composition root registers connector
+    tools and builds the runtime only when connectors are enabled, an empty spec
+    list still wires an empty registry, and a cloud runtime with connectors off
+    has none.
+  - `test_connector_oauth.py` — provider-neutral OAuth 2.0 against a **real**
+    local token endpoint: PKCE (S256) is used and the verifier never appears in
+    the browser URL, a state is single-use and expires (CSRF/replay refused), a
+    rejected grant is classified for reauthentication (never looped), a refresh
+    preserves the previous refresh token, the token set's `repr` masks the
+    secret, and the declarative `ConnectorPolicy` overrides.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.

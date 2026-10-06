@@ -232,6 +232,22 @@ class Settings(BaseSettings):
     #: Whether submitting a form is treated as consequential and needs approval.
     browser_require_approval_for_submit: bool = True
 
+    # --- External connectors & real-world actions (Phase 9) ---------------
+    #: Whether the connector tools exist at all. Off by default; when on, every
+    #: write/send still requires approval and every action is audited.
+    connectors_enabled: bool = False
+    #: Declarative connector configuration as a JSON array. Each item names a
+    #: connector, its kind, and its non-secret settings; secrets are referenced
+    #: by environment-variable name only and never inlined here.
+    connectors_json: str = ""
+    #: Whether a connector may target private/loopback/link-local hosts. Off by
+    #: default; a controlled local test service turns it on deliberately.
+    connectors_allow_local_addresses: bool = False
+    #: Hard cap on a connector HTTP response body, in bytes.
+    connector_max_response_bytes: int = Field(default=1_048_576, ge=1)
+    #: Bounded transport retry budget for connector calls.
+    connector_retry_max_attempts: int = Field(default=3, ge=1, le=10)
+
     # --- Agent limits (guard rails against infinite loops) ------------------
     max_steps_per_run: int = Field(default=40, ge=1, le=500)
     max_tool_retries: int = Field(default=3, ge=0, le=10)

@@ -148,6 +148,37 @@ class AuditEventType(StrEnum):
     BROWSER_BOUNDARY_DECISION = "browser.boundary_decision"
     BROWSER_INJECTION_SUSPECTED = "browser.injection_suspected"
     BROWSER_RESEARCH_SOURCE = "browser.research_source"
+    # External connectors & real-world actions (Phase 9). These record connector
+    # metadata, operation, risk, approval binding, retries, verification and the
+    # action-ledger state — never a raw secret, message body or record payload.
+    CONNECTOR_REGISTERED = "connector.registered"
+    CONNECTOR_CALLED = "connector.called"
+    CONNECTOR_RESULT = "connector.result"
+    CONNECTOR_ERROR = "connector.error"
+    CONNECTOR_HEALTHCHECK = "connector.healthcheck"
+    CONNECTOR_UNAVAILABLE = "connector.unavailable"
+    CREDENTIAL_RESOLVED = "credential.resolved"
+    CREDENTIAL_MISSING = "credential.missing"
+    OAUTH_AUTHORIZATION_REQUESTED = "oauth.authorization_requested"
+    OAUTH_CALLBACK_ACCEPTED = "oauth.callback_accepted"
+    OAUTH_CALLBACK_REJECTED = "oauth.callback_rejected"
+    OAUTH_TOKEN_REFRESHED = "oauth.token_refreshed"  # noqa: S105 - event name, not a credential
+    OAUTH_REVOKED = "oauth.revoked"
+    OAUTH_REAUTH_REQUIRED = "oauth.reauth_required"
+    EXTERNAL_ACTION_PREPARED = "external_action.prepared"
+    EXTERNAL_ACTION_APPROVAL_BOUND = "external_action.approval_bound"
+    EXTERNAL_ACTION_APPROVAL_MISMATCH = "external_action.approval_mismatch"
+    EXTERNAL_ACTION_EXECUTING = "external_action.executing"
+    EXTERNAL_ACTION_SUCCEEDED = "external_action.succeeded"
+    EXTERNAL_ACTION_FAILED = "external_action.failed"
+    EXTERNAL_ACTION_UNKNOWN = "external_action.unknown"
+    EXTERNAL_ACTION_VERIFYING = "external_action.verifying"
+    EXTERNAL_ACTION_VERIFIED = "external_action.verified"
+    EXTERNAL_ACTION_CANCELLED = "external_action.cancelled"
+    EXTERNAL_ACTION_DEDUPLICATED = "external_action.deduplicated"
+    EXTERNAL_ACTION_RETRY = "external_action.retry"
+    EXTERNAL_ACTION_RATE_LIMITED = "external_action.rate_limited"
+    EXTERNAL_ACTION_BOUNDARY_DECISION = "external_action.boundary_decision"
 
 
 def _utcnow() -> datetime:
