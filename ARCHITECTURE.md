@@ -889,7 +889,7 @@ Ordinary `Tool`s, registered only for a local runtime with
 
 - `browser_navigate` (`BROWSER_NAVIGATE`, MEDIUM) — validate then navigate.
 - `browser_observe` (`BROWSER_READ`, MEDIUM) — the bounded, freshness-tracked view.
-- `browser_interact` (`BROWSER_INTERACT`, HIGH) — click/type/press/select/scroll/wait.
+- `browser_interact` (`BROWSER_INTERACT`, HIGH) — click/type/press/select/check/scroll.
 - `browser_submit` (`BROWSER_SUBMIT`, CRITICAL) — consequential form submit.
 - `browser_download` (`BROWSER_DOWNLOAD`, MEDIUM) / `browser_upload`
   (`BROWSER_UPLOAD` + `FILES_READ`, HIGH).
