@@ -60,6 +60,20 @@ LOCAL_MIGRATIONS_DIR = "migrations_local"
 LOCAL_VERSION_TABLE = "local_alembic_version"
 
 
+def _default_migrations_dir() -> Path:
+    """Locate the local migration chain for the current install.
+
+    Prefers the copy shipped inside the installed package
+    (``arabic_agent/_migrations_local``), which is the only copy present in a
+    real desktop install. Falls back to the repository-root ``migrations_local``
+    for a source checkout that has not been packaged.
+    """
+    packaged = Path(__file__).resolve().parent.parent.parent / "_migrations_local"
+    if packaged.is_dir():
+        return packaged
+    return Path(__file__).resolve().parents[4] / LOCAL_MIGRATIONS_DIR
+
+
 def local_database_url(db_path: str | Path) -> str:
     """Return the async SQLite URL for ``db_path``.
 
@@ -154,11 +168,7 @@ class LocalDatabase:
         from alembic import command
         from alembic.config import Config
 
-        script_location = (
-            Path(migrations_dir)
-            if migrations_dir
-            else Path(__file__).resolve().parents[4] / LOCAL_MIGRATIONS_DIR
-        )
+        script_location = Path(migrations_dir) if migrations_dir else _default_migrations_dir()
         if not script_location.is_dir():
             raise ConfigurationError(f"local migrations directory not found: {script_location}")
         config = Config()

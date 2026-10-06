@@ -485,6 +485,46 @@ in-memory in the local runtime are made durable here.
 - [ ] Packaged/signed binary distribution (PyInstaller/MSIX) and an auto-update
       mechanism. The wheel ships the UI asset and both console scripts.
 
+## Phase 10W — Real Windows acceptance & installer verification (blocked)
+
+Acceptance must run on **actual Windows**. The current development host is a
+headless Linux container (Debian 13, no Windows, no Wine, no `/dev/kvm`, no
+display), so no Windows acceptance flow can be executed here and none is
+claimed. See ARCHITECTURE.md §18a for the full status.
+
+Two genuine defects found by a static audit + clean-venv install (both are
+host-independent and were fixed with regression tests):
+
+- [x] Install-blocking: the local Alembic chain was **not shipped in the wheel**
+      and resolved to a repo-relative `parents[4]` path, so an installed product
+      could not create its SQLite schema (`local migrations directory not
+      found`). The chain now ships as `arabic_agent/_migrations_local`
+      (`force-include` in `pyproject.toml`) and `_default_migrations_dir()`
+      prefers the packaged copy. Proven by installing the wheel into a clean venv
+      and creating the schema. Regression:
+      `test_local_durable.py::test_migrations_resolve_for_installed_package`.
+- [x] Installer `verify` step did not actually invoke the runtime (it read a
+      version constant in-process) and `python -m arabic_agent.desktop.installer`
+      had no `__main__` guard, so the module entry point was dead.
+      `_verify_runtime` now runs the installed entry point as a subprocess and
+      reports failure honestly. Regressions in `test_desktop_installer.py`.
+
+Still required before Phase 10W can pass (needs real Windows + a packaged
+binary; not implementable in this environment):
+
+- [ ] A real Windows computer backend (`computer/backends/`): screen capture,
+      mouse, keyboard, DPI, multi-monitor. Today `PlatformKind.WINDOWS` returns
+      an unavailable backend ("design only"). Without it, screen/mouse/keyboard/
+      visual E2E cannot be accepted.
+- [ ] A binary Windows installer (MSI/MSIX/EXE) with a bundled runtime, so a
+      normal user needs no Python tooling. Today the installer is a real script
+      installer whose launcher depends on the interpreter that ran it.
+- [ ] Code signing certificate and signing.
+- [ ] Tray/background runtime and Windows notifications (not implemented).
+- [ ] Run the full acceptance matrix on real Windows (install, first run, real
+      GGUF model, real Agent file/browser/computer tasks, Arabic, approval,
+      emergency stop, offline `remote_requests == 0`, crash/restart, uninstall).
+
 ## Phase 7 — Product surface
 
 - [ ] Web UI with full RTL/LTR support, locale switching, plan/timeline view,

@@ -319,7 +319,19 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   installer steps (registry, Startup shortcut) report `skipped` off Windows —
   never success. The shell bridge is a closed set of named methods, not a
   generic URL proxy; the UI is served with `default-src 'none'` / `connect-src
-  'none'`. `recommend`/`health_check` are honest gates, not benchmarks.
+  'none'`. `recommend`/`health_check` are honest gates, not benchmarks. The
+  installer `verify` step really invokes the installed entry point as a
+  subprocess (never a green state from a version constant).
+- Phase 10W (real Windows acceptance) is **not** run: the development host is
+  headless Linux (no Windows/Wine/KVM/display), so no Windows flow is claimed.
+  A static audit + clean-venv install fixed two host-independent defects: the
+  local Alembic chain is now shipped in the wheel
+  (`arabic_agent/_migrations_local`, resolved by `_default_migrations_dir()`),
+  and the installer module entry point now runs (`__main__` guard). Still
+  blocked on real Windows: the Windows computer backend (`computer/backends/`
+  is Linux/X11 only — `PlatformKind.WINDOWS` is "design only"), a binary
+  MSI/MSIX/EXE installer with a bundled runtime, code signing, tray/background
+  runtime and notifications. See ARCHITECTURE.md §18a and TODO.md.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   document *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social
   connectors, printing/calendar tools, and the web UI.

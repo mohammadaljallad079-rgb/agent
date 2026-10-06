@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -111,17 +112,34 @@ def write_manifest(install_dir: Path, *, extra: dict[str, object] | None = None)
     return path
 
 
-def _verify_runtime() -> tuple[bool, str]:
-    """Verify the installed runtime answers ``--version`` (a real check)."""
-    from . import version as version_module
+def _verify_runtime(*, python: str | None = None) -> tuple[bool, str]:
+    """Verify the installed runtime actually works by *invoking* it.
 
+    A real check, not a claim: the product's own entry point is run as a
+    subprocess with the interpreter the launcher will use, and its exit status
+    and output are inspected. A broken install (missing dependency, import
+    error, wrong interpreter) therefore reports ``verify: failed`` instead of
+    passing on a version string read in-process.
+    """
+    interpreter = python or sys.executable
     try:
-        reported = version_module.product_version()
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f"could not read version: {exc}"
+        result = subprocess.run(  # noqa: S603 - fixed module invocation, no shell
+            [interpreter, "-m", "arabic_agent.desktop.installer", "version"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"could not invoke the installed runtime: {exc}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        tail = detail[-1] if detail else "no output"
+        return False, f"runtime exited with code {result.returncode}: {tail}"
+    reported = result.stdout.strip()
     if not reported:
-        return False, "empty version"
-    return True, f"runtime reports version {reported}"
+        return False, "runtime reported an empty version"
+    return True, f"runtime invoked and reports version {reported}"
 
 
 def install(*, install_dir: Path | None = None, create_shortcut: bool = True) -> InstallReport:
@@ -161,8 +179,8 @@ def install(*, install_dir: Path | None = None, create_shortcut: bool = True) ->
         report.ok = False
         report.add("manifest", "failed", str(exc))
 
-    # Verify the runtime actually works.
-    verified, detail = _verify_runtime()
+    # Verify the runtime actually works (invokes the installed entry point).
+    verified, detail = _verify_runtime(python=sys.executable)
     report.add("verify", "ok" if verified else "failed", detail)
     if not verified:
         report.ok = False
@@ -320,3 +338,7 @@ __all__ = [
     "uninstall",
     "write_manifest",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess
+    main()

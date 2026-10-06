@@ -655,7 +655,12 @@ of the *same* store ABCs the cloud build uses: workflows, versions, runs and
 steps, approvals, audit, the sync queue and idempotency keys. The schema is
 owned by Alembic (`migrations_local/`, its own `local_alembic_version` table so
 it never collides with the Postgres branch) and the composition root runs the
-migration at build time. `Platform.durable` reports whether the store is on
+migration at build time. The chain is also shipped *inside the package* as
+`arabic_agent/_migrations_local` (see `[tool.hatch.build.targets.wheel]` in
+`pyproject.toml`), and `_default_migrations_dir()` resolves the packaged copy
+first and falls back to the repository root — so an installed wheel, which has
+no repository checkout, can still create and upgrade its own SQLite schema.
+`Platform.durable` reports whether the store is on
 disk; `Platform.local_database` is the handle. A local build uses no Postgres
 and no Redis. Tenant isolation and optimistic concurrency are enforced by the
 local stores exactly as in the Postgres ones (wrong-tenant reads raise
@@ -1118,7 +1123,7 @@ stores. This is why the connector runtime's ledger is now durable in local mode.
 | `runtime_manager.py` | Desktop lifecycle: start the runtime as a child process, inject the port/token in the environment, poll readiness, restart, stop. |
 | `shell.py` | The native-webview shell (pywebview `js_api` bridge). |
 | `ui/index.html` | Arabic-first, RTL shell. |
-| `installer.py` | Windows per-user installer (launcher, manifest, registry uninstall entry, Startup shortcut, verified uninstall). |
+| `installer.py` | Windows per-user installer (launcher, manifest, registry uninstall entry, Startup shortcut, verified uninstall). `_verify_runtime` invokes the installed entry point as a subprocess (a broken install reports `verify: failed`, never a green state from a version constant). |
 
 ### The shell bridge is not a generic proxy
 
@@ -1265,6 +1270,40 @@ an existing abstraction. Durable Postgres persistence, the Redis queue, the
 recoverable worker runtime (see §3a) and the desktop product surface (see §13e)
 are now implemented.
 
+### 18a. Windows acceptance status (Phase 10W) — NOT VERIFIED
+
+Phase 10W requires proving the product on **actual Windows**. That acceptance
+has **not** been run and cannot be run from the current development host, which
+is a headless Linux container (Debian 13, no Windows, no Wine, no `/dev/kvm`,
+no display). Builds, unit tests and clean-venv installs on Linux are **not**
+evidence of Windows functionality and are not recorded as such.
+
+What was verified on Linux (reproducible, but Linux-only):
+
+- The wheel builds and ships the desktop UI asset and the local Alembic chain.
+- A clean-venv install creates its SQLite schema (`local_runs`,
+  `local_action_ledger`, …) and the installer install/uninstall cycle runs with
+  `verify: ok` by really invoking the installed entry point.
+
+What is **not implemented in the product at all** (independent of the host OS),
+and therefore cannot pass Windows acceptance as written:
+
+- **Windows computer backend** — `computer/backends/` implements only Linux/X11;
+  `PlatformKind.WINDOWS` returns an unavailable backend whose reason is "the
+  Windows computer backend is not implemented yet (design only)". Windows
+  screen capture, mouse, keyboard and the visual/computer-control E2E therefore
+  have no implementation to accept.
+- **Binary Windows installer** — `desktop/installer.py` is a real per-user
+  *script* installer (launcher, manifest, registry uninstall entry, Startup
+  shortcut). There is no MSI/MSIX/EXE packaging, no bundled Python runtime, and
+  the launcher depends on the interpreter that ran the installer. No installer
+  artifact or SHA-256 can be produced from this repository today.
+- **Code signing**, **tray/background runtime** and **Windows notifications** —
+  not implemented.
+
+Consequently the Phase 10W verdict is **PARTIALLY VERIFIED — WINDOWS BLOCKERS
+REMAIN**. See `TODO.md` for the Phase 10W follow-up items.
+
 ---
 
 ## 19. Testing strategy
@@ -1399,9 +1438,10 @@ The foundation is verified, not assumed.
     URL method, rejects a bad token, and the UI assets are Arabic-first, RTL, CSP
     isolated and free of the control token.
   - `test_desktop_installer.py` — the installer writes a launcher and manifest,
-    verifies the installed runtime, reports the Windows-only steps as `skipped`
-    (not success) off Windows, never embeds a secret, and uninstalls cleanly with
-    or without user data.
+    verifies the installed runtime **by invoking it** (and reports `failed`, not
+    a green state, when the interpreter is broken), reports the Windows-only
+    steps as `skipped` (not success) off Windows, never embeds a secret, and
+    uninstalls cleanly with or without user data.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.

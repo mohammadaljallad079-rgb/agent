@@ -135,6 +135,35 @@ async def test_local_platform_is_durable_and_migrated(tmp_path):
         await platform.aclose()
 
 
+async def test_migrations_resolve_for_installed_package(tmp_path):
+    """The migration chain is found from an installed package layout.
+
+    A packaged desktop install has no repository root, so the default migration
+    directory must resolve inside the package (``_migrations_local``). This
+    guards the install-time path that previously pointed at a repo-relative
+    ``parents[4]`` and failed on a real install.
+    """
+    from arabic_agent.local.persistence import database as db_module
+
+    resolved = db_module._default_migrations_dir()
+    assert resolved.is_dir()
+    assert (resolved / "env.py").is_file()
+    assert (resolved / "versions").is_dir()
+    assert any((resolved / "versions").glob("*.py"))
+
+    # And an upgrade with no explicit dir uses it to create the schema.
+    store = db_module.LocalDatabase(str(tmp_path / "local.db"))
+    await store.upgrade_async()
+    con = sqlite3.connect(store.path)
+    try:
+        rows = con.execute("select name from sqlite_master where type='table'")
+        tables = {row[0] for row in rows}
+    finally:
+        con.close()
+    assert {"local_alembic_version", "local_runs", "local_action_ledger"} <= tables
+    await store.dispose()
+
+
 async def test_workflow_run_survives_platform_restart(tmp_path):
     platform1 = _build(tmp_path)
     service1 = WorkflowService(platform1)

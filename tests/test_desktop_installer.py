@@ -9,6 +9,7 @@ are checked on disk. Nothing here touches the network or the registry.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from arabic_agent.desktop.installer import (
@@ -43,6 +44,33 @@ def test_default_install_dir_falls_back_without_env():
 
 def test_version_is_a_single_source():
     assert product_version() == PRODUCT_VERSION
+
+
+def test_verify_runtime_invokes_the_entry_point(tmp_path: Path):
+    """The verify step really invokes the runtime, and reports failure honestly."""
+    from arabic_agent.desktop.installer import _verify_runtime
+
+    ok, detail = _verify_runtime(python=sys.executable)
+    assert ok is True
+    assert PRODUCT_VERSION in detail
+    assert "invoked" in detail
+
+    # A broken interpreter must fail the check rather than pass on a constant.
+    failed, why = _verify_runtime(python=str(tmp_path / "does-not-exist"))
+    assert failed is False
+    assert "could not invoke" in why
+
+
+def test_install_reports_failed_verify_when_runtime_is_broken(tmp_path: Path, monkeypatch):
+    """A broken install reports verify: failed and ok=False (no false green)."""
+    import arabic_agent.desktop.installer as installer
+
+    monkeypatch.setattr(
+        installer, "_verify_runtime", lambda *, python=None: (False, "broken interpreter")
+    )
+    report = installer.install(install_dir=tmp_path / "install", create_shortcut=False)
+    assert report.ok is False
+    assert _statuses(report)["verify"] == "failed"
 
 
 def test_install_writes_launcher_manifest_and_verifies(tmp_path: Path):
