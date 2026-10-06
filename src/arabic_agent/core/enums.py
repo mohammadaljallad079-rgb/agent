@@ -416,3 +416,41 @@ class Direction(StrEnum):
 
     RTL = "rtl"
     LTR = "ltr"
+
+
+class ModelProfile(StrEnum):
+    """A local-model capability tier the desktop offers.
+
+    Profiles describe a *class* of local model, not a specific file: the
+    lightweight tier trades quality for a small memory footprint, the balanced
+    tier is the general default, and the high-quality tier needs real head-room.
+    The names are deliberately not interchangeable — a lightweight model is not
+    claimed to be equivalent to a high-quality one.
+    """
+
+    LIGHTWEIGHT = "lightweight"
+    BALANCED = "balanced"
+    HIGH_QUALITY = "high_quality"
+
+
+class ModelHealth(StrEnum):
+    """The result of a bounded local-model health check.
+
+    ``UNKNOWN`` means the check could not be run; it is never reported as
+    healthy merely because the weights file exists.
+    """
+
+    HEALTHY = "healthy"
+    UNHEALTHY = "unhealthy"
+    UNKNOWN = "unknown"
+
+
+class InstallState(StrEnum):
+    """Lifecycle of a model-install request."""
+
+    NOT_INSTALLED = "not_installed"
+    DOWNLOADING = "downloading"
+    VERIFYING = "verifying"
+    INSTALLED = "installed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"

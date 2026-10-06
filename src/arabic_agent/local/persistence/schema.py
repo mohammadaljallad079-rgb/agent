@@ -265,12 +265,99 @@ class LocalIdempotencyRow(LocalBase):
     updated_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
 
 
+class LocalActionLedgerRow(LocalBase):
+    """Durable local external-action ledger entry.
+
+    Phase 10 makes the local action ledger durable: an external effect (an email
+    sent, a record written, a webhook delivered) must not be repeated after an
+    application or runtime restart. This row stores only safe metadata and a
+    canonical digest — never the raw payload or any secret — mirroring the
+    in-memory record exactly so the same ``ActionRecord`` round-trips.
+    """
+
+    __tablename__ = "local_action_ledger"
+
+    id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+    step_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
+    connector: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    risk: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="")
+    state: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    request_digest: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(200), nullable=False, default="")
+    approval_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    approved_digest: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    provider_request_id: Mapped[str] = mapped_column(sa.String(200), nullable=False, default="")
+    verification_status: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
+    error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_local_action_ledger_tenant_idem"
+        ),
+        sa.Index("ix_local_action_ledger_tenant_run", "tenant_id", "run_id"),
+    )
+
+
+class LocalRunRow(LocalBase):
+    """Durable local agent run (desktop sessions/tasks).
+
+    The cloud runtime persists runs in Postgres. The local/desktop runtime needs
+    the same durability so a user can close the app and reopen a completed task,
+    and so a crash mid-run is recoverable. Column names match the cloud
+    ``runs`` table, so the shared ``persistence.mapping`` helpers round-trip the
+    record unchanged.
+    """
+
+    __tablename__ = "local_runs"
+
+    id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    goal: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    workspace_dir: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    idempotency_key: Mapped[str | None] = mapped_column(sa.String(200), nullable=True)
+    parent_run_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    roles: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
+    granted_permissions: Mapped[list[str] | None] = mapped_column(JSONType, nullable=True)
+    result: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    verified: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    pending_approval_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    steps_executed: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    tool_calls: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    retries: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    replans: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    recovery_attempts: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    usage: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=1)
+    worker_id: Mapped[str | None] = mapped_column(sa.String(120), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_local_runs_tenant_idem"),
+        sa.Index("ix_local_runs_tenant_status", "tenant_id", "status"),
+    )
+
+
 __all__ = [
     "JSONType",
+    "LocalActionLedgerRow",
     "LocalApprovalRow",
     "LocalAuditEventRow",
     "LocalBase",
     "LocalIdempotencyRow",
+    "LocalRunRow",
     "LocalSyncActionRow",
     "LocalWorkflowRow",
     "LocalWorkflowRunRow",

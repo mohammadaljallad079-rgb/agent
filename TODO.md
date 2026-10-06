@@ -256,9 +256,10 @@ real, not interface-only.
       (`Worker.recover_stale`) and driven to completion on real durable state,
       with the recovery recorded in the durable audit trail. A pending approval
       survives a real process restart and resumes afterwards.
-- [~] Desktop runtime implementing `Transport` — the local runtime and its
-      process entry point exist; the `Transport` implementation and a desktop
-      shell (tray, installer) are not built yet.
+- [~] Desktop runtime implementing `Transport` — the local runtime, its process
+      entry point, a desktop shell (pywebview), an installer and durable
+      desktop state exist (see Phase 10); the cloud `Transport` implementation
+      and a secure cloud sync endpoint are not built yet.
 - [x] Offline isolation verified: an end-to-end local run completes inside a
       Linux network namespace with no network, where any outbound connection
       fails at the OS level (`tests/test_local_offline.py`).
@@ -281,7 +282,11 @@ real, not interface-only.
       GGUF model (`tests/test_local_agent_loop.py`, `@local_model`).
 - [~] Secure sync between desktop (local runtime) and cloud runtime — the queue
       and boundary exist; conflict handling and a cloud endpoint are not built.
-- [ ] Desktop packaging and update mechanism.
+- [x] Desktop packaging: a wheel ships the UI asset and both console scripts
+      (`agent-desktop`, `agent-shell`); a per-user Windows installer
+      (`desktop/installer.py`) writes the launcher, manifest, uninstall entry and
+      Startup shortcut and verifies the install. A packaged/signed binary
+      distribution and an update mechanism remain (see Phase 10).
 
 ## Phase 7a — Computer use, perception & screen control (done)
 
@@ -435,6 +440,51 @@ real, not interface-only.
       `test_connector_container.py` and `test_connector_oauth.py` (real local
       token endpoint).
 
+## Phase 10 — Windows desktop productization, Local AI Manager & installer (done)
+
+Turns the existing local runtime into an installable desktop product. No agent
+logic is added; the desktop package is a facade over the run service, model
+manager, policy engine, approvals, audit and local runtime. Two things that were
+in-memory in the local runtime are made durable here.
+
+- [x] Durable desktop state (migration `9faa23d73417`, local SQLite branch):
+      `local_runs` (`LocalRunStore`) — the same `RunStore` contract as Postgres,
+      optimistic concurrency included — so a desktop session survives closing
+      the app and a crash mid-run. `local_action_ledger` (`LocalActionLedger`)
+      — the same `ActionLedger` contract — so an external effect is not repeated
+      after a restart; only safe metadata and a canonical digest are stored, and
+      `prune_before` retains an unresolved `UNKNOWN` row.
+- [x] Composition root wiring (`container.py`): the local build uses the durable
+      run store and, when connectors are enabled, the durable action ledger; a
+      purely in-memory build falls back to the in-memory stores.
+- [x] Desktop subsystem (`desktop/`): version single-source, `DesktopEventBroker`
+      (an `AuditSink` mirroring real audit events to bounded per-tenant
+      subscribers with SSE + replay), model catalogue/manager, product service,
+      authenticated loopback HTTP+SSE surface, runtime manager (start/stop a real
+      child process, readiness, restart), pywebview shell bridge, and an
+      Arabic-first RTL UI.
+- [x] Local AI Manager honesty: `recommend` is a hardware-gated recommendation
+      (never a benchmark), `install` is real (verified size + SHA-256, hardware
+      gate), `health_check` reports `UNKNOWN` without a real probe (a present
+      file is not health), `remove` refuses the active model, and every path
+      stays inside the model store.
+- [x] Shell bridge is a closed set of named product methods — no generic
+      URL/proxy method — and never hands the control token to JavaScript. The UI
+      is served with `default-src 'none'` / `connect-src 'none'`.
+- [x] Windows installer (`desktop/installer.py`): per-user install dir, launcher
+      and manifest, registry uninstall entry and Startup shortcut (Windows), a
+      real verification step, and clean uninstall with optional data removal.
+      Windows-only steps report `skipped` with a reason off Windows.
+- [x] Entry points: `agent-desktop` (runtime) and `agent-shell` (native window);
+      `python -m arabic_agent.desktop.installer [uninstall|version]`.
+- [x] Tests: `test_desktop_events.py`, `test_desktop_model_manager.py`,
+      `test_desktop_durable.py`, `test_desktop_app.py`, `test_desktop_runtime.py`,
+      `test_desktop_installer.py` — real SQLite files, a real local HTTP server,
+      a real child process, the real desktop app under uvicorn, and the real
+      platform (only the LLM is faked).
+- [ ] Packaged/signed binary distribution (PyInstaller/MSIX) and an auto-update
+      mechanism. The wheel ships the UI asset and both console scripts.
+
 ## Phase 7 — Product surface
 
 - [ ] Web UI with full RTL/LTR support, locale switching, plan/timeline view,
@@ -471,8 +521,12 @@ real, not interface-only.
   calendar, printing, image and video tools are still planned (Phase 3).
 - The desktop runtime foundation (local runtime, filesystem sandbox, controlled
   command execution, local tool set, capability catalogue, data-boundary policy,
-  sync queue, and control API) is implemented and tested. The desktop
-  *application* — a `Transport` implementation, packaging, UI — is not built.
+  sync queue, and control API) is implemented and tested. The desktop product
+  surface (durable sessions and action ledger, authenticated loopback UI, Local
+  AI Manager, pywebview shell, Windows installer) is implemented and tested
+  (Phase 10). Still not built: a packaged/signed binary distribution, an
+  auto-update mechanism, a cloud `Transport` implementation and a secure cloud
+  sync endpoint.
 - The workflow engine core (definitions, versions, runs, steps, conditions,
   templating, approvals, retries), its HTTP API, the trigger/scheduler layer
   (cron, event, webhook, manual) and workflow-run worker recovery are
@@ -550,6 +604,27 @@ real, not interface-only.
   remote destination; (4) the action ledger is in-memory for the local runtime;
   a Postgres-backed ledger is the cloud deployment's swap behind the same
   interface. The tests use real local servers (no fake APIs) rather than mocks.
+- Phase 10 closeout: the full suite is green — 699 passed, 55 skipped (skips are
+  the opt-in Postgres/Redis/model/display/browser suites), 0 failed — with the
+  local runtime. Phase 10 productized the desktop: durable local runs and a
+  durable local action ledger (migration `9faa23d73417`), an authenticated
+  loopback HTTP+SSE desktop surface, a `DesktopEventBroker` mirroring real audit
+  events, a Local AI Manager, a pywebview shell bridge, an Arabic-first RTL UI,
+  a runtime manager that drives a real child process, and a per-user Windows
+  installer. Notes recorded honestly: (1) the desktop package adds no agent
+  logic — it is a facade over the run service, model manager, policy engine,
+  approvals, audit and local runtime; (2) `recommend` and `health_check` are
+  honest gates, never benchmarks — "installed" is never reported as "healthy"
+  without a real probe; (3) the shell bridge is a closed set of named methods
+  with no generic URL/proxy method and never hands the control token to
+  JavaScript; the UI is served with `default-src 'none'` / `connect-src 'none'`;
+  (4) the installer's Windows-only steps report `skipped` with a reason off
+  Windows, never success; (5) the action ledger is now durable in local mode
+  (the in-memory ledger remains only for a storeless build); (6) a packaged,
+  signed binary distribution and an auto-update mechanism are not built yet. The
+  desktop tests use a real SQLite file, a real local HTTP server, a real child
+  process, the real app under uvicorn and the real platform (only the LLM is
+  faked) — no mocks of code under test.
 
 ## Verification commands
 

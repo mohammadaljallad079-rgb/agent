@@ -53,11 +53,18 @@ documents = [
 browser = [
     "playwright>=1.40,<2",
 ]
+# Desktop shell (Phase 10). Optional: the runtime and the desktop HTTP surface
+# work headless without it; only the native window (`agent-shell`) needs
+# pywebview and a system web engine (WebView2 on Windows).
+desktop = [
+    "pywebview>=5,<7",
+]
 
 [project.scripts]
 agent-platform = "arabic_agent.api.app:main"
 agent-worker = "arabic_agent.worker.main:main"
 agent-desktop = "arabic_agent.local.main:main"
+agent-shell = "arabic_agent.desktop.shell:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arabic_agent"]

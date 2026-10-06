@@ -1,0 +1,199 @@
+"""Desktop shell: the native-webview window the user sees.
+
+Technology decision (see ``ARCHITECTURE.md`` §"Desktop technology"): a
+native-webview shell in pure Python (pywebview), not Electron and not a bundled
+Chromium. It reuses the operating system's own web engine — WebView2 on Windows,
+WebKit on macOS/Linux — so the bundle stays small, there is no second browser to
+patch, and Windows support comes from a component the OS already maintains. It is
+the same shape as a Tauri shell without adding a Rust toolchain to the build.
+
+Security boundary: the UI **never** touches the operating system. It calls a
+Python bridge (:class:`DesktopBridge`) that forwards each request to the local
+runtime's authenticated loopback API. The control token lives only in this
+process; it is never written into the page, so a compromised page cannot
+recover it. Rendered agent/browser/email content is untrusted and is inserted as
+text, never as markup.
+
+The bridge is ordinary Python and is unit-tested without a display; only
+:func:`launch_shell` needs pywebview and a web engine.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from .runtime_manager import DesktopRuntimeManager, RuntimeStartError
+
+logger = logging.getLogger(__name__)
+
+#: Directory holding the bundled UI (HTML/CSS/JS).
+UI_DIR = Path(__file__).resolve().parent / "ui"
+
+
+class DesktopBridge:
+    """The JS-facing API. Holds the control token; the page never sees it.
+
+    Every method is a thin, authenticated proxy to the runtime's ``/desktop``
+    surface. It deliberately exposes *operations*, not the token or a generic
+    "call any URL" method, so a page cannot escalate beyond the product API.
+    """
+
+    def __init__(self, *, base_url: str, token: str, timeout: float = 120.0) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._token = token
+        self._client = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"X-Local-Token": token},
+            timeout=timeout,
+        )
+
+    async def _get(self, path: str) -> Any:
+        response = await self._client.get(path)
+        response.raise_for_status()
+        return response.json()
+
+    async def _post(self, path: str, payload: dict[str, Any] | None = None) -> Any:
+        response = await self._client.post(path, json=payload or {})
+        response.raise_for_status()
+        return response.json()
+
+    async def _delete(self, path: str) -> Any:
+        response = await self._client.delete(path)
+        response.raise_for_status()
+        return response.json()
+
+    # -- Read surface ----------------------------------------------------
+    async def bootstrap(self) -> Any:
+        return await self._get("/desktop/bootstrap")
+
+    async def list_runs(self) -> Any:
+        return await self._get("/desktop/runs")
+
+    async def run_timeline(self, run_id: str) -> Any:
+        return await self._get(f"/desktop/runs/{run_id}/timeline")
+
+    async def list_models(self) -> Any:
+        return await self._get("/desktop/models")
+
+    async def list_approvals(self) -> Any:
+        return await self._get("/desktop/approvals")
+
+    async def modes(self) -> Any:
+        return await self._get("/desktop/modes")
+
+    async def settings(self) -> Any:
+        return await self._get("/desktop/settings")
+
+    async def permissions(self) -> Any:
+        return await self._get("/desktop/permissions")
+
+    async def diagnostics(self) -> Any:
+        return await self._get("/desktop/diagnostics")
+
+    async def export_diagnostics(self) -> Any:
+        return await self._get("/desktop/diagnostics/export")
+
+    async def version(self) -> Any:
+        return await self._get("/desktop/version")
+
+    # -- Write surface ---------------------------------------------------
+    async def start_run(self, goal: str, workspace_dir: str | None = None) -> Any:
+        return await self._post("/desktop/runs", {"goal": goal, "workspace_dir": workspace_dir})
+
+    async def cancel_run(self, run_id: str) -> Any:
+        return await self._post(f"/desktop/runs/{run_id}/cancel")
+
+    async def decide_approval(
+        self, approval_id: str, approve: bool, reason: str | None = None
+    ) -> Any:
+        return await self._post(
+            f"/desktop/approvals/{approval_id}", {"approve": approve, "reason": reason}
+        )
+
+    async def install_model(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/models/{model_id}/install")
+
+    async def model_progress(self, model_id: str) -> Any:
+        return await self._get(f"/desktop/models/{model_id}/progress")
+
+    async def cancel_model_install(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/models/{model_id}/cancel")
+
+    async def verify_model(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/models/{model_id}/verify")
+
+    async def model_health(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/models/{model_id}/health")
+
+    async def remove_model(self, model_id: str) -> Any:
+        return await self._delete(f"/desktop/models/{model_id}")
+
+    async def set_mode(self, mode: str) -> Any:
+        return await self._post("/desktop/modes", {"mode": mode})
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+def _load_index_html() -> str:
+    index = UI_DIR / "index.html"
+    if not index.is_file():
+        raise RuntimeStartError(f"desktop UI assets are missing: {index}")
+    return index.read_text(encoding="utf-8")
+
+
+def launch_shell(
+    *,
+    manager: DesktopRuntimeManager | None = None,
+    title: str = "Arabic AI Agent",
+) -> int:
+    """Start the runtime, open the native window, and block until it closes.
+
+    Returns a process exit code. Raises :class:`RuntimeStartError` if the runtime
+    cannot start or pywebview/web engine is unavailable — the caller reports the
+    reason rather than opening a broken window.
+    """
+    try:
+        import webview  # pywebview
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeStartError(
+            "the desktop shell needs pywebview (pip install pywebview) and a system web engine"
+        ) from exc
+
+    import asyncio
+
+    runtime_manager = manager or DesktopRuntimeManager()
+    try:
+        handle = asyncio.run(runtime_manager.start())
+    except RuntimeStartError:
+        raise
+    bridge = DesktopBridge(base_url=handle.base_url, token=handle.token)
+
+    # pywebview's js_api exposes the bridge's coroutine methods to the page as
+    # `window.pywebview.api.<name>()`. The token never crosses into the DOM.
+    # pywebview keeps its own reference to the window, so no local is needed.
+    webview.create_window(title, html=_load_index_html(), js_api=bridge, width=1200, height=800)
+    try:
+        webview.start(debug=False)
+    finally:
+        asyncio.run(bridge.aclose())
+        asyncio.run(runtime_manager.stop())
+    return 0
+
+
+def main() -> None:
+    """Console entry point for the desktop shell."""
+    try:
+        code = launch_shell()
+    except RuntimeStartError as exc:
+        print(f"desktop shell error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    raise SystemExit(code)
+
+
+__all__ = ["UI_DIR", "DesktopBridge", "launch_shell", "main"]

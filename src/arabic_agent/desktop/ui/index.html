@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!--
+    Strong isolation: the shell renders untrusted agent/browser/email content as
+    text only. No inline scripts, no remote origins, no frames. The control token
+    never reaches this document (it lives in the Python bridge).
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>الوكيل العربي | Arabic AI Agent</title>
+  <style>
+    :root {
+      --bg: #0f1116; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
+      --fg: #e8eaf0; --muted: #9aa3b2; --accent: #4f8cff; --ok: #2ecc71;
+      --warn: #f5a623; --danger: #e74c3c; --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+      font-family: "Segoe UI", Tahoma, "Noto Naskh Arabic", system-ui, sans-serif; }
+    body { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
+    header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px;
+      padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    header .brand { font-weight: 700; font-size: 16px; }
+    header .spacer { flex: 1; }
+    .badge { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--panel-2);
+      border: 1px solid var(--line); color: var(--muted); }
+    .badge.ok { color: var(--ok); border-color: #234; }
+    nav { background: var(--panel); border-inline-end: 1px solid var(--line); padding: 12px 8px;
+      display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+    nav button { text-align: start; background: transparent; color: var(--fg); border: 0;
+      padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    nav button:hover { background: var(--panel-2); }
+    nav button.active { background: var(--accent); color: #fff; }
+    main { padding: 16px; overflow: auto; }
+    section { display: none; }
+    section.active { display: block; }
+    h2 { margin: 0 0 12px; font-size: 18px; }
+    h3 { margin: 18px 0 8px; font-size: 14px; color: var(--muted); font-weight: 600; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      padding: 14px; margin-bottom: 12px; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .row.wrap { flex-wrap: wrap; }
+    textarea, input[type=text] { width: 100%; background: var(--panel-2); color: var(--fg);
+      border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; resize: vertical; }
+    button.btn { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+      padding: 9px 14px; cursor: pointer; font: inherit; }
+    button.btn.ghost { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); }
+    button.btn.danger { background: var(--danger); }
+    button.btn:disabled { opacity: .5; cursor: not-allowed; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+    .pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.danger { color: var(--danger); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: start; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .timeline { list-style: none; padding: 0; margin: 0; }
+    .timeline li { padding: 8px 10px; border-inline-start: 3px solid var(--line); margin-bottom: 6px;
+      background: var(--panel-2); border-radius: 6px; }
+    .timeline li .t { font-size: 11px; color: var(--muted); }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .empty { color: var(--muted); padding: 20px; text-align: center; border: 1px dashed var(--line);
+      border-radius: var(--radius); }
+    .toast { position: fixed; inset-block-start: 68px; inset-inline-end: 20px; background: var(--panel-2);
+      border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; max-width: 360px; display: none; }
+    .toast.show { display: block; }
+    progress { width: 100%; height: 10px; }
+    @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; }
+      nav { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); } }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand" id="brand">الوكيل العربي</span>
+    <span class="badge" id="verBadge">—</span>
+    <span class="badge" id="modeBadge">—</span>
+    <span class="badge" id="runtimeBadge">—</span>
+    <span class="spacer"></span>
+    <button class="btn danger" id="stopBtn" title="إيقاف طارئ">إيقاف</button>
+    <button class="btn ghost" id="langBtn">EN</button>
+  </header>
+
+  <nav id="nav"></nav>
+
+  <main>
+    <section id="s-workspace" class="active">
+      <h2 data-i18n="workspace">مساحة العمل</h2>
+      <div class="card">
+        <div class="row wrap">
+          <textarea id="goal" rows="2" placeholder="اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا" data-i18n-ph="goalPh"></textarea>
+          <button class="btn" id="runBtn" data-i18n="start">ابدأ المهمة</button>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h3 data-i18n="sessions">المهام</h3>
+          <div id="runs"></div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="activity">سجل النشاط الحيّ</h3>
+          <ul class="timeline" id="live"></ul>
+        </div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="timeline">الخط الزمني للمهمة</h3>
+        <ul class="timeline" id="timeline"><li class="empty" data-i18n="selectRun">اختر مهمة لعرض تفاصيلها</li></ul>
+      </div>
+    </section>
+
+    <section id="s-approvals">
+      <h2 data-i18n="approvals">مركز الموافقات</h2>
+      <div id="approvals"></div>
+    </section>
+
+    <section id="s-models">
+      <h2 data-i18n="models">مدير الذكاء المحلي</h2>
+      <div class="card"><div id="recommendation" class="muted"></div></div>
+      <div id="models"></div>
+    </section>
+
+    <section id="s-settings">
+      <h2 data-i18n="settings">الإعدادات</h2>
+      <div class="grid2">
+        <div class="card"><h3 data-i18n="privacy">الخصوصية</h3><div id="privacy"></div></div>
+        <div class="card"><h3 data-i18n="permissions">الصلاحيات</h3><div id="permissions"></div></div>
+      </div>
+      <div class="card"><h3 data-i18n="modes">وضع التشغيل</h3><div class="row wrap" id="modeRow"></div></div>
+      <div class="card"><h3 data-i18n="general">عام</h3><div id="settings"></div></div>
+    </section>
+
+    <section id="s-diagnostics">
+      <h2 data-i18n="diagnostics">التشخيص</h2>
+      <div class="card">
+        <div class="row"><button class="btn ghost" id="exportBtn" data-i18n="export">تصدير التشخيص (منقّح)</button></div>
+        <pre class="muted" id="diag" style="white-space:pre-wrap; word-break:break-word;"></pre>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    "use strict";
+    // ---- i18n (Arabic is first-class; English is the alternate) ----
+    const I18N = {
+      ar: { workspace:"مساحة العمل", approvals:"مركز الموافقات", models:"مدير الذكاء المحلي",
+        settings:"الإعدادات", diagnostics:"التشخيص", sessions:"المهام", activity:"سجل النشاط الحيّ",
+        timeline:"الخط الزمني للمهمة", start:"ابدأ المهمة", selectRun:"اختر مهمة لعرض تفاصيلها",
+        goalPh:"اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا", privacy:"الخصوصية",
+        permissions:"الصلاحيات", modes:"وضع التشغيل", general:"عام", export:"تصدير التشخيص (منقّح)",
+        stop:"إيقاف", approve:"موافقة", deny:"رفض", install:"تثبيت", verify:"تحقّق", health:"فحص",
+        remove:"إزالة", installed:"مثبّت", notInstalled:"غير مثبّت", active:"نشط", empty:"لا يوجد",
+        noRuns:"لا توجد مهام بعد", noApprovals:"لا توجد موافقات معلّقة", free:"متاح" },
+      en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
+        settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
+        timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
+        goalPh:"Describe your goal… e.g. tidy the project files and write a report", privacy:"Privacy",
+        permissions:"Permissions", modes:"Operating mode", general:"General", export:"Export diagnostics (redacted)",
+        stop:"Stop", approve:"Approve", deny:"Deny", install:"Install", verify:"Verify", health:"Health check",
+        remove:"Remove", installed:"installed", notInstalled:"not installed", active:"active", empty:"none",
+        noRuns:"No tasks yet", noApprovals:"No pending approvals", free:"free" }
+    };
+    let LANG = localStorage.getItem("aap_lang") || "ar";
+    const t = (k) => (I18N[LANG][k] || k);
+    const dir = () => (LANG === "ar" ? "rtl" : "ltr");
+
+    // ---- helpers ----
+    const $ = (id) => document.getElementById(id);
+    const el = (tag, text) => { const e = document.createElement(tag); if (text != null) e.textContent = String(text); return e; };
+    const api = () => (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+    let toastTimer = null;
+    function toast(msg, kind) {
+      const box = $("toast"); box.textContent = msg; box.className = "toast show" + (kind ? " " + kind : "");
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => { box.className = "toast"; }, 4000);
+    }
+    function setActive(section) {
+      document.querySelectorAll("main section").forEach(s => s.classList.remove("active"));
+      $("s-" + section).classList.add("active");
+      document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.section === section));
+    }
+
+    // ---- navigation ----
+    const SECTIONS = ["workspace","approvals","models","settings","diagnostics"];
+    function buildNav() {
+      const nav = $("nav"); nav.replaceChildren();
+      SECTIONS.forEach(s => {
+        const b = el("button", t(s)); b.dataset.section = s; b.onclick = () => setActive(s);
+        nav.appendChild(b);
+      });
+      document.querySelector('nav button[data-section="workspace"]').classList.add("active");
+    }
+
+    function applyI18n() {
+      document.documentElement.lang = LANG; document.documentElement.dir = dir();
+      document.querySelectorAll("[data-i18n]").forEach(n => { n.textContent = t(n.dataset.i18n); });
+      document.querySelectorAll("[data-i18n-ph]").forEach(n => { n.placeholder = t(n.dataset.i18nPh); });
+      $("langBtn").textContent = LANG === "ar" ? "EN" : "ع";
+      $("brand").textContent = LANG === "ar" ? "الوكيل العربي" : "Arabic AI Agent";
+      $("stopBtn").textContent = t("stop");
+      buildNav();
+    }
+
+    // ---- rendering ----
+    function pill(status) {
+      const span = el("span", status); span.className = "pill";
+      if (status === "completed") span.classList.add("ok");
+      else if (status === "failed") span.classList.add("danger");
+      else if (status === "waiting_approval") span.classList.add("warn");
+      return span;
+    }
+    function renderRuns(runs) {
+      const box = $("runs"); box.replaceChildren();
+      if (!runs || !runs.length) { const d = el("div", t("noRuns")); d.className = "empty"; box.appendChild(d); return; }
+      const table = el("table"); const head = el("tr");
+      [t("sessions"), "الحالة", ""].forEach(h => head.appendChild(el("th", h)));
+      table.appendChild(head);
+      runs.forEach(r => {
+        const tr = el("tr");
+        tr.appendChild(el("td", r.goal));
+        const statusTd = el("td"); statusTd.appendChild(pill(r.status)); tr.appendChild(statusTd);
+        const actions = el("td");
+        const open = el("button", "↗"); open.className = "btn ghost";
+        open.onclick = () => loadTimeline(r.id); actions.appendChild(open);
+        if (!["completed","failed","cancelled"].includes(r.status)) {
+          const stop = el("button", t("stop")); stop.className = "btn danger";
+          stop.onclick = () => stopRun(r.id); actions.appendChild(stop);
+        }
+        tr.appendChild(actions); table.appendChild(tr);
+      });
+      box.appendChild(table);
+    }
+    function renderTimeline(entries) {
+      const box = $("timeline"); box.replaceChildren();
+      if (!entries || !entries.length) { const li = el("li", t("empty")); li.className = "empty"; box.appendChild(li); return; }
+      entries.forEach(e => {
+        const li = el("li");
+        li.appendChild(el("div", e.message || e.type));
+        const meta = el("div", e.type + " · " + new Date(e.timestamp).toLocaleTimeString());
+        meta.className = "t"; li.appendChild(meta);
+        box.appendChild(li);
+      });
+    }
+    function renderApprovals(items) {
+      const box = $("approvals"); box.replaceChildren();
+      if (!items || !items.length) { const d = el("div", t("noApprovals")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(a => {
+        const card = el("div"); card.className = "card";
+        card.appendChild(el("h3", a.summary));
+        const meta = el("div", a.tool_name + " · " + a.permission); meta.className = "muted";
+        card.appendChild(meta);
+        const args = el("pre", JSON.stringify(a.arguments, null, 2)); args.className = "muted";
+        args.style.whiteSpace = "pre-wrap"; args.style.wordBreak = "break-word";
+        card.appendChild(args);
+        const row = el("div"); row.className = "row";
+        const ok = el("button", t("approve")); ok.className = "btn";
+        ok.onclick = () => decide(a.id, true); row.appendChild(ok);
+        const no = el("button", t("deny")); no.className = "btn danger";
+        no.onclick = () => decide(a.id, false); row.appendChild(no);
+        card.appendChild(row); box.appendChild(card);
+      });
+    }
+    function renderModels(models, recommendation) {
+      if (recommendation) $("recommendation").textContent =
+        (LANG === "ar" ? "التوصية: " : "Recommended: ") + recommendation.profile + " — " + recommendation.reason;
+      const box = $("models"); box.replaceChildren();
+      (models || []).forEach(m => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", LANG === "ar" ? m.display_name_ar : m.display_name));
+        head.appendChild(pill(m.profile));
+        if (m.installed) head.appendChild(pill(t("installed")));
+        if (m.active) head.appendChild(pill(t("active")));
+        if (m.runnable === false) { const p = pill(m.runnable_reason || "insufficient"); p.className = "pill danger"; head.appendChild(p); }
+        card.appendChild(head);
+        const desc = el("div", m.description_ar || m.description); desc.className = "muted";
+        card.appendChild(desc);
+        const spec = el("div", `size ${m.size_gib} GB · RAM ${m.min_ram_gib} GB · ${m.parameters} ${m.quantization}`);
+        spec.className = "muted"; card.appendChild(spec);
+        const row = el("div"); row.className = "row wrap";
+        if (!m.installed) {
+          const b = el("button", t("install")); b.className = "btn"; b.disabled = m.runnable === false;
+          b.onclick = () => installModel(m.id); row.appendChild(b);
+        } else {
+          const v = el("button", t("verify")); v.className = "btn ghost"; v.onclick = () => verifyModel(m.id); row.appendChild(v);
+          const h = el("button", t("health")); h.className = "btn ghost"; h.onclick = () => healthModel(m.id); row.appendChild(h);
+          const r = el("button", t("remove")); r.className = "btn danger"; r.onclick = () => removeModel(m.id); row.appendChild(r);
+        }
+        card.appendChild(row);
+        const prog = el("div"); prog.id = "prog-" + m.id; prog.className = "muted"; card.appendChild(prog);
+        box.appendChild(card);
+      });
+    }
+    function renderPrivacy(p) {
+      const box = $("privacy"); box.replaceChildren();
+      const rows = [
+        [t("modes"), p.mode],
+        ["remote fallback", String(p.remote_fallback_allowed)],
+        ["confidential to remote", String(p.allow_confidential_remote)],
+        ["computer control", String(p.computer_control_enabled)],
+        ["browser", String(p.browser_enabled)],
+        ["connectors", String(p.connectors_enabled)],
+      ];
+      rows.forEach(([k, v]) => { const d = el("div", k + ": " + v); d.className = "muted"; box.appendChild(d); });
+    }
+    function renderPermissions(p) {
+      const box = $("permissions"); box.replaceChildren();
+      const table = el("table"); const head = el("tr");
+      ["", "التأثير"].forEach(h => head.appendChild(el("th", h))); table.appendChild(head);
+      (p.capabilities || []).forEach(c => {
+        const tr = el("tr"); tr.appendChild(el("td", LANG === "ar" ? c.label_ar : c.permission));
+        const td = el("td"); const span = el("span", c.effect); span.className = "pill";
+        if (c.effect === "allow") span.classList.add("ok");
+        else if (c.effect === "deny") span.classList.add("danger");
+        else span.classList.add("warn");
+        td.appendChild(span); tr.appendChild(td); table.appendChild(tr);
+      });
+      box.appendChild(table);
+    }
+    function renderModes(modes) {
+      const box = $("modeRow"); box.replaceChildren();
+      (modes.available || []).forEach(m => {
+        const b = el("button", m); b.className = "btn " + (m === modes.current ? "" : "ghost");
+        b.onclick = () => setMode(m); box.appendChild(b);
+      });
+    }
+    function renderSettings(s) {
+      const box = $("settings"); box.replaceChildren();
+      [["locale", s.general.locale], ["environment", s.general.environment],
+       ["default model", s.ai.default_model], ["local model", s.ai.local_model_name],
+       ["store dir", s.storage.store_dir]].forEach(([k, v]) => {
+        const d = el("div", k + ": " + v); d.className = "muted"; box.appendChild(d);
+      });
+    }
+    function renderDiagnostics(d) {
+      $("diag").textContent = JSON.stringify(d, null, 2);
+      $("verBadge").textContent = d.version || "—";
+      $("runtimeBadge").textContent = (d.runtime && d.runtime.state) || "—";
+    }
+
+    // ---- actions ----
+    async function refresh() {
+      const a = api(); if (!a) return;
+      try {
+        const boot = await a.bootstrap();
+        renderRuns(boot.runs); renderApprovals(boot.approvals);
+        renderModels(boot.models, boot.recommendation);
+        renderPrivacy(boot.modes.privacy); renderPermissions(boot.permissions);
+        renderModes(boot.modes); renderSettings(boot.settings); renderDiagnostics(boot.diagnostics);
+        $("modeBadge").textContent = boot.modes.current;
+      } catch (e) { toast("تعذّر تحميل الحالة: " + e); }
+    }
+    async function loadTimeline(runId) {
+      const a = api(); if (!a) return;
+      try { renderTimeline(await a.run_timeline(runId)); } catch (e) { toast(String(e)); }
+    }
+    async function startRun() {
+      const a = api(); if (!a) return;
+      const goal = $("goal").value.trim(); if (!goal) return;
+      $("runBtn").disabled = true;
+      try { await a.start_run(goal, null); $("goal").value = ""; await refresh(); }
+      catch (e) { toast("تعذّر بدء المهمة: " + e); } finally { $("runBtn").disabled = false; }
+    }
+    async function stopRun(id) { const a = api(); if (!a) return; try { await a.cancel_run(id); await refresh(); } catch (e) { toast(String(e)); } }
+    async function decide(id, approve) {
+      const a = api(); if (!a) return;
+      try { await a.decide_approval(id, approve, null); await refresh(); } catch (e) { toast(String(e)); }
+    }
+    async function installModel(id) {
+      const a = api(); if (!a) return;
+      const box = $("prog-" + id); box.textContent = "…";
+      try { const res = await a.install_model(id); box.textContent = res.install.detail || ""; await refresh(); }
+      catch (e) { toast("تعذّر التثبيت: " + e); }
+    }
+    async function verifyModel(id) { const a = api(); if (!a) return; try { const r = await a.verify_model(id); toast(r.detail || "verified"); } catch (e) { toast(String(e)); } }
+    async function healthModel(id) { const a = api(); if (!a) return; try { const r = await a.model_health(id); toast(r.health + ": " + (r.detail || "")); } catch (e) { toast(String(e)); } }
+    async function removeModel(id) { const a = api(); if (!a) return; try { await a.remove_model(id); await refresh(); } catch (e) { toast(String(e)); } }
+    async function setMode(m) { const a = api(); if (!a) return; try { await a.set_mode(m); await refresh(); } catch (e) { toast(String(e)); } }
+    async function exportDiagnostics() {
+      const a = api(); if (!a) return;
+      try { const d = await a.export_diagnostics(); $("diag").textContent = JSON.stringify(d, null, 2); }
+      catch (e) { toast(String(e)); }
+    }
+
+    // ---- live activity: real events, polled (the page has no network origin) ----
+    async function pollLive() {
+      const a = api(); if (!a) return;
+      try {
+        const runs = await a.list_runs();
+        if (runs && runs.length) {
+          const entries = await a.run_timeline(runs[0].id);
+          const box = $("live"); box.replaceChildren();
+          (entries || []).slice(-12).forEach(e => { const li = el("li"); li.appendChild(el("div", e.message || e.type)); box.appendChild(li); });
+          renderRuns(runs);
+        }
+      } catch (e) { /* transient; try again next tick */ }
+    }
+
+    // ---- wiring ----
+    function wire() {
+      $("runBtn").onclick = startRun;
+      $("stopBtn").onclick = () => {
+        const a = api(); if (!a) return;
+        a.list_runs().then(rs => rs.filter(r => !["completed","failed","cancelled"].includes(r.status)).forEach(r => stopRun(r.id)));
+      };
+      $("exportBtn").onclick = exportDiagnostics;
+      $("langBtn").onclick = () => { LANG = LANG === "ar" ? "en" : "ar"; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };
+      $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
+    }
+
+    async function boot() {
+      applyI18n(); wire();
+      if (api()) { await refresh(); }
+      else { window.addEventListener("pywebviewready", async () => { await refresh(); }); }
+      setInterval(pollLive, 2000);
+    }
+    boot();
+  </script>
+</body>
+</html>

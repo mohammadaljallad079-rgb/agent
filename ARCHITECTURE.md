@@ -1078,6 +1078,95 @@ connector specs; secrets are named by environment variable, never inlined),
 
 ---
 
+## 13e. Desktop product surface, Local AI Manager & installer (Phase 10)
+
+Phase 10 turns the existing local runtime into an installable desktop product.
+It adds **no agent logic**: the desktop package is a client-facing facade over
+the run service, model manager, policy engine, approvals, audit and local
+runtime that already exist. Two things that were previously in-memory in the
+local runtime are made durable here, so the desktop can honour the platform's
+promises across a restart.
+
+### Durable desktop state (`local/persistence`)
+
+The local SQLite store gains two tables (migration `9faa23d73417`):
+
+- **`local_runs`** (`LocalRunStore`) — the same `RunStore` contract as the
+  Postgres store, optimistic concurrency included. A desktop session (task) now
+  survives closing the app and a crash mid-run, so a completed run can be
+  reopened and a `RUNNING` run can be recovered.
+- **`local_action_ledger`** (`LocalActionLedger`) — the same `ActionLedger`
+  contract, so an external effect (email sent, record written, webhook
+  delivered) is **not repeated after a restart**. It stores only safe metadata
+  and a canonical digest, never the raw payload or a secret, and `prune_before`
+  retains an unresolved `UNKNOWN` row so an ambiguous effect is never forgotten.
+
+The composition root (`container.py`) wires these when a local SQL database is
+present; a purely in-memory build (some tests) falls back to the in-memory
+stores. This is why the connector runtime's ledger is now durable in local mode.
+
+### The `desktop/` subsystem
+
+| Module | Responsibility |
+| --- | --- |
+| `version.py` | Single source of truth for the product version (distribution metadata, with a packaged fallback). |
+| `events.py` | `DesktopEventBroker` — an `AuditSink` that mirrors real audit events to subscribers, per-tenant and bounded (drops oldest, never blocks the emitter), with a `stream()` SSE generator and `recent()` replay. Redaction is applied by the audit event constructor. |
+| `model_catalogue.py` | The supported-model catalogue (Qwen2.5 3B/7B/14B by capability tier) with real size/SHA-256 and resource estimates. |
+| `model_manager.py` | Local AI Manager: catalogue view, hardware-gated `recommend`, real `install` (delegates to `local/model_install.py`), `health_check` (a real model call — a present file is *not* health), `verify`, `remove`, and progress tracking. |
+| `service.py` | Product-level operations: bootstrap, run list/timeline, approvals, permissions view, modes/privacy, settings, diagnostics, cancel. |
+| `http.py` | The authenticated loopback HTTP + SSE surface (`/desktop/*`). |
+| `runtime_manager.py` | Desktop lifecycle: start the runtime as a child process, inject the port/token in the environment, poll readiness, restart, stop. |
+| `shell.py` | The native-webview shell (pywebview `js_api` bridge). |
+| `ui/index.html` | Arabic-first, RTL shell. |
+| `installer.py` | Windows per-user installer (launcher, manifest, registry uninstall entry, Startup shortcut, verified uninstall). |
+
+### The shell bridge is not a generic proxy
+
+`DesktopBridge` (in `shell.py`) exposes **only** explicit product methods
+(`bootstrap`, `start_run`, `list_runs`, `run_timeline`, `list_approvals`,
+`decide_approval`, `models`, `install_model`, `set_mode`, `cancel_run`, …). It
+has no `get`/`request`/arbitrary-URL method, so a compromised page cannot use it
+to reach an arbitrary endpoint. It sends the control token as a header and never
+hands it to JavaScript.
+
+### The desktop UI is isolated
+
+`ui/index.html` is served with a strict CSP (`default-src 'none'`, `connect-src
+'none'`), so it renders data but cannot make network calls of its own; all I/O
+goes through the Python bridge. The control token is never embedded in the page.
+
+### Local AI Manager honesty rules
+
+- `recommend` is a **gate, not a benchmark**: it proposes the highest tier the
+  hardware verdict accepts, and reports why a tier is rejected. Without a
+  detected hardware profile it returns the documented default (BALANCED) with
+  that reason stated.
+- `install` refuses (via `ValidationError`) when the hardware gate rejects the
+  model, verifies size and (when known) SHA-256, and records a versioned
+  manifest. A model that fails verification is never registered.
+- `health_check` returns `UNKNOWN` when no provider factory is available —
+  "installed" is never reported as "healthy" without a real probe.
+- `remove` refuses to delete the active model (`ConflictError`), and every path
+  stays inside the approved model store.
+
+### Installer
+
+`installer.py` resolves the per-user install directory (`%LOCALAPPDATA%`),
+writes a launcher and an install manifest, registers a per-user uninstall entry
+and a Startup shortcut on Windows, and **verifies** the installed runtime by
+invoking it. On non-Windows hosts the Windows-only steps are reported as
+`skipped` with a reason, never as success. `uninstall` removes the launcher,
+manifest, registry entry and shortcut, and keeps user data unless asked
+otherwise. No step embeds a secret; nothing here requires network access.
+
+### Entry points
+
+`agent-desktop` (the runtime, `local/main.py`) and `agent-shell` (the native
+window, `desktop/shell.py`); `python -m arabic_agent.desktop.installer` installs
+and `... installer uninstall` removes.
+
+---
+
 ## 14. Security
 
 Baseline, designed in from the start:
@@ -1165,12 +1254,16 @@ These have clear insertion points and are tracked in `TODO.md`:
 - **Workflow scheduler** — cron/event/webhook triggers that start workflow runs
   are implemented; see §8b. The workflow engine itself (definitions, versions,
   runs, steps, conditions, templating, approvals, retries) is in §8a.
-- **Desktop agent** — a local runtime implementing `Transport`, registering
-  local tools and a local model.
+- **Desktop agent** — now implemented as the Phase 10 desktop product surface
+  (see §13e): a local runtime with durable sessions and action ledger, a
+  token-authenticated loopback control surface, an Arabic-first RTL shell, a
+  Local AI Manager and a Windows installer. The remaining piece is a packaged
+  binary distribution and a signed installer.
 
 None of these require rewriting the agent core; each is an implementation behind
-an existing abstraction. Durable Postgres persistence, the Redis queue and the
-recoverable worker runtime are now implemented (see §3a).
+an existing abstraction. Durable Postgres persistence, the Redis queue, the
+recoverable worker runtime (see §3a) and the desktop product surface (see §13e)
+are now implemented.
 
 ---
 
@@ -1279,6 +1372,36 @@ The foundation is verified, not assumed.
     rejected grant is classified for reauthentication (never looped), a refresh
     preserves the previous refresh token, the token set's `repr` masks the
     secret, and the declarative `ConnectorPolicy` overrides.
+  - `test_desktop_events.py` — Phase 10: the event broker mirrors real audit
+    events to subscribers, redacts secret payloads, isolates tenants, drops the
+    oldest (never blocks) on a lagging subscriber, and replays recent events.
+  - `test_desktop_model_manager.py` — the Local AI Manager: the catalogue is
+    reported without claiming anything is installed, `recommend` is hardware-
+    gated (a small machine rejects the high-quality tier with a reason, a large
+    one accepts it, and no hardware yields the documented default), install runs
+    against a **real** local HTTP server and verifies size/integrity (an
+    integrity failure leaves no model), health is `UNKNOWN` without a probe,
+    removal refuses the active model, and every path stays in the store.
+  - `test_desktop_durable.py` — the durable desktop stores against a **real
+    SQLite file**: a run and an external action both survive a store restart, an
+    `UNKNOWN` action is preserved, idempotency is unique per tenant, tenants are
+    isolated, run updates use optimistic concurrency, and `prune_before` keeps
+    the unresolved action while removing terminal ones.
+  - `test_desktop_app.py` — the desktop HTTP surface built on the **real** local
+    platform (only the LLM is faked): the control token is required, bootstrap
+    reports real state, a run is persisted and its timeline carries real audit
+    events, runs survive an app restart, approvals/models/modes/privacy/
+    permissions/settings/diagnostics are exercised, diagnostics are redacted, and
+    `with_desktop=False` omits the surface.
+  - `test_desktop_runtime.py` — the runtime manager starts and stops a **real
+    child process** (readiness, restart, immediate-exit failure), and the shell
+    bridge drives the **real** desktop app under uvicorn: it exposes no generic
+    URL method, rejects a bad token, and the UI assets are Arabic-first, RTL, CSP
+    isolated and free of the control token.
+  - `test_desktop_installer.py` — the installer writes a launcher and manifest,
+    verifies the installed runtime, reports the Windows-only steps as `skipped`
+    (not success) off Windows, never embeds a secret, and uninstalls cleanly with
+    or without user data.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.

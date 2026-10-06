@@ -75,9 +75,11 @@ from .local.model_security import ensure_within_storage, resolve_storage_dir
 from .local.persistence import LocalDatabase
 from .local.persistence.database import default_store_path
 from .local.persistence.stores import (
+    LocalActionLedger,
     LocalApprovalStore,
     LocalAuditSink,
     LocalIdempotencyGuard,
+    LocalRunStore,
     LocalSyncQueue,
     LocalWorkflowRunStore,
     LocalWorkflowStore,
@@ -604,13 +606,15 @@ class Platform:
             triggers: TriggerStore = trigger_store or PostgresTriggerStore(database)
             trigger_runs: TriggerRunStore = trigger_run_store or PostgresTriggerRunStore(database)
         elif local_database is not None:
-            # Local durable store: the workflow, approval and audit state the
-            # offline runtime needs is persisted in SQLite. Task plans, memory
-            # and triggers stay in-process locally — the cloud keeps those, and
-            # the local runtime deliberately persists only its working subset.
+            # Local durable store: the workflow, approval, audit, run and
+            # external-action state the offline/desktop runtime needs is
+            # persisted in SQLite, so it survives an application or runtime
+            # restart. Memory, triggers and the task plan cache stay in-process
+            # locally — the cloud keeps those, and the local runtime
+            # deliberately persists only its working subset.
             approvals = approval_store or LocalApprovalStore(local_database)
             memory = memory_store or InMemoryMemoryStore()
-            runs = run_store or InMemoryRunStore()
+            runs = run_store or LocalRunStore(local_database)
             selected_task_store = task_store or InMemoryTaskStore()
             workflows = workflow_store or LocalWorkflowStore(local_database)
             workflow_versions = workflow_version_store or LocalWorkflowVersionStore(local_database)
@@ -866,10 +870,19 @@ class Platform:
                 retry_max_attempts=settings.connector_retry_max_attempts,
             )
             connector_boundary = tool_metadata.get("data_boundary")
+            # The ledger is durable whenever a local SQLite store exists, so a
+            # consequential external effect is not repeated after a restart. A
+            # purely in-memory build (tests without a store) falls back to the
+            # in-memory ledger.
+            action_ledger = (
+                LocalActionLedger(local_database)
+                if local_database is not None
+                else InMemoryActionLedger()
+            )
             connector_runtime = ConnectorRuntime(
                 registry=connector_registry,
                 audit=audit,
-                ledger=InMemoryActionLedger(),
+                ledger=action_ledger,
                 boundary=(
                     connector_boundary
                     if isinstance(connector_boundary, DataBoundaryPolicy)

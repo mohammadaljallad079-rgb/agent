@@ -32,8 +32,11 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from ...audit.base import AuditEvent, AuditSink
+from ...connectors.ledger import ActionLedger, ActionRecord
 from ...core.enums import (
+    ActionState,
     ApprovalStatus,
+    RunStatus,
     StepRunStatus,
     SyncStatus,
     WorkflowRunStatus,
@@ -51,6 +54,8 @@ from ...persistence.mapping import (
     approval_to_row,
     audit_from_row,
     audit_to_row,
+    run_from_row,
+    run_to_row,
     step_run_from_row,
     step_run_to_row,
     workflow_from_row,
@@ -60,15 +65,19 @@ from ...persistence.mapping import (
     workflow_version_from_row,
     workflow_version_to_row,
 )
+from ...runs.base import RunRecord
+from ...runs.store import RunStore
 from ...workflows.models import Workflow, WorkflowVersion
 from ...workflows.run import StepRun, WorkflowRun
 from ...workflows.store import WorkflowRunStore, WorkflowStore, WorkflowVersionStore
 from ..sync import SyncAction, SyncQueue
 from .database import LocalDatabase
 from .schema import (
+    LocalActionLedgerRow,
     LocalApprovalRow,
     LocalAuditEventRow,
     LocalIdempotencyRow,
+    LocalRunRow,
     LocalSyncActionRow,
     LocalWorkflowRow,
     LocalWorkflowRunRow,
@@ -645,10 +654,256 @@ class LocalIdempotencyGuard(IdempotencyGuard):
             await session.execute(delete(LocalIdempotencyRow).where(LocalIdempotencyRow.key == key))
 
 
+# --- Durable local agent runs (desktop sessions/tasks) ----------------------
+class LocalRunStore(RunStore):
+    """Durable local run store: the desktop runtime's sessions survive a restart.
+
+    Implements the same :class:`~arabic_agent.runs.store.RunStore` contract as
+    the Postgres store (optimistic concurrency included), so the API service,
+    the worker and the recovery coordinator run unchanged on the local store.
+    """
+
+    def __init__(self, db: LocalDatabase) -> None:
+        self._db = db
+
+    async def create(self, record: RunRecord) -> RunRecord:
+        try:
+            async with self._db.transaction() as session:
+                session.add(LocalRunRow(**run_to_row(record)))
+        except IntegrityError as exc:
+            raise ConflictError(
+                "run with this idempotency key already exists",
+                details={"idempotency_key": record.idempotency_key},
+            ) from exc
+        return record
+
+    async def get(self, run_id: str, *, tenant_id: str) -> RunRecord:
+        async with self._db.transaction() as session:
+            row = await session.get(LocalRunRow, run_id)
+        if row is None or row.tenant_id != tenant_id:
+            raise NotFoundError("run not found", details={"run_id": run_id})
+        return run_from_row(cast(Any, row))
+
+    async def get_by_idempotency_key(self, *, tenant_id: str, key: str) -> RunRecord | None:
+        stmt = select(LocalRunRow).where(
+            LocalRunRow.tenant_id == tenant_id,
+            LocalRunRow.idempotency_key == key,
+        )
+        async with self._db.transaction() as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+        return run_from_row(cast(Any, row)) if row else None
+
+    async def update(self, record: RunRecord, *, expected_version: int) -> RunRecord:
+        values = run_to_row(record)
+        async with self._db.transaction() as session:
+            result = await session.execute(
+                update(LocalRunRow)
+                .where(
+                    LocalRunRow.id == record.id,
+                    LocalRunRow.tenant_id == record.tenant_id,
+                    LocalRunRow.version == expected_version,
+                )
+                .values(**values, version=expected_version + 1)
+            )
+            if cast(CursorResult[Any], result).rowcount == 0:
+                existing = await session.get(LocalRunRow, record.id)
+                if existing is None or existing.tenant_id != record.tenant_id:
+                    raise NotFoundError("run not found", details={"run_id": record.id})
+                raise ConflictError(
+                    "run was modified concurrently",
+                    details={"run_id": record.id, "expected": expected_version},
+                )
+            row = await session.get(LocalRunRow, record.id)
+        assert row is not None
+        return run_from_row(cast(Any, row))
+
+    async def list_runs(
+        self,
+        *,
+        tenant_id: str,
+        status: RunStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[RunRecord]:
+        stmt = select(LocalRunRow).where(LocalRunRow.tenant_id == tenant_id)
+        if status is not None:
+            stmt = stmt.where(LocalRunRow.status == status.value)
+        stmt = stmt.order_by(LocalRunRow.created_at.desc()).limit(limit).offset(offset)
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [run_from_row(cast(Any, r)) for r in rows]
+
+    async def list_stale(self, *, now: datetime, limit: int = 100) -> list[RunRecord]:
+        recoverable = tuple(
+            s.value for s in (RunStatus.PLANNING, RunStatus.RUNNING, RunStatus.RETRYING)
+        )
+        stmt = (
+            select(LocalRunRow)
+            .where(
+                LocalRunRow.status.in_(recoverable),
+                (LocalRunRow.lease_expires_at.is_(None)) | (LocalRunRow.lease_expires_at <= now),
+            )
+            .order_by(LocalRunRow.updated_at)
+            .limit(limit)
+        )
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [run_from_row(cast(Any, r)) for r in rows]
+
+    async def heartbeat(
+        self, run_id: str, *, tenant_id: str, worker_id: str, lease_expires_at: datetime
+    ) -> None:
+        async with self._db.transaction() as session:
+            await session.execute(
+                update(LocalRunRow)
+                .where(LocalRunRow.id == run_id, LocalRunRow.tenant_id == tenant_id)
+                .values(worker_id=worker_id, lease_expires_at=lease_expires_at)
+            )
+
+
+# --- Durable local external-action ledger -----------------------------------
+class LocalActionLedger(ActionLedger):
+    """Durable local action ledger (survives an application/runtime restart).
+
+    The in-memory ledger cannot honour the platform's core promise — that a
+    consequential external effect is never repeated after a crash — because its
+    deduplication state is lost with the process. This store persists the same
+    :class:`~arabic_agent.connectors.ledger.ActionRecord` in SQLite, so the
+    idempotency key, approval binding and ambiguous-timeout (``UNKNOWN``) state
+    all survive a restart. Only safe metadata and a canonical digest are stored;
+    never the raw payload or a secret.
+    """
+
+    def __init__(self, db: LocalDatabase) -> None:
+        self._db = db
+
+    async def add(self, record: ActionRecord) -> ActionRecord:
+        try:
+            async with self._db.transaction() as session:
+                session.add(LocalActionLedgerRow(**_action_to_row(record)))
+        except IntegrityError as exc:
+            raise ConflictError(
+                "an action with this idempotency key already exists",
+                details={"idempotency_key": record.idempotency_key},
+            ) from exc
+        return record
+
+    async def get(self, action_id: str, *, tenant_id: str) -> ActionRecord:
+        async with self._db.transaction() as session:
+            row = await session.get(LocalActionLedgerRow, action_id)
+        if row is None or row.tenant_id != tenant_id:
+            raise NotFoundError("action not found", details={"action_id": action_id})
+        return _action_from_row(row)
+
+    async def update(self, record: ActionRecord) -> ActionRecord:
+        values = _action_to_row(record)
+        async with self._db.transaction() as session:
+            result = await session.execute(
+                update(LocalActionLedgerRow)
+                .where(
+                    LocalActionLedgerRow.id == record.id,
+                    LocalActionLedgerRow.tenant_id == record.tenant_id,
+                )
+                .values(**values)
+            )
+            if cast(CursorResult[Any], result).rowcount == 0:
+                raise NotFoundError("action not found", details={"action_id": record.id})
+        return record
+
+    async def find_by_idempotency(
+        self, *, tenant_id: str, idempotency_key: str
+    ) -> ActionRecord | None:
+        stmt = select(LocalActionLedgerRow).where(
+            LocalActionLedgerRow.tenant_id == tenant_id,
+            LocalActionLedgerRow.idempotency_key == idempotency_key,
+        )
+        async with self._db.transaction() as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+        return _action_from_row(row) if row else None
+
+    async def list_for_run(self, *, tenant_id: str, run_id: str) -> list[ActionRecord]:
+        stmt = (
+            select(LocalActionLedgerRow)
+            .where(
+                LocalActionLedgerRow.tenant_id == tenant_id,
+                LocalActionLedgerRow.run_id == run_id,
+            )
+            .order_by(LocalActionLedgerRow.created_at)
+        )
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [_action_from_row(r) for r in rows]
+
+    async def prune_before(self, *, cutoff: datetime) -> int:
+        """Delete terminal ledger rows older than ``cutoff`` (bounded retention).
+
+        Only terminal records (``VERIFIED``/``CANCELLED``) are removed; an
+        unresolved ``UNKNOWN`` row is retained so its ambiguous effect is never
+        forgotten. Returns the number of rows removed.
+        """
+        terminal = (ActionState.VERIFIED.value, ActionState.CANCELLED.value)
+        async with self._db.transaction() as session:
+            result = await session.execute(
+                delete(LocalActionLedgerRow).where(
+                    LocalActionLedgerRow.state.in_(terminal),
+                    LocalActionLedgerRow.updated_at < cutoff,
+                )
+            )
+            return int(cast(CursorResult[Any], result).rowcount or 0)
+
+
+def _action_to_row(record: ActionRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "tenant_id": record.tenant_id,
+        "run_id": record.run_id,
+        "step_id": record.step_id,
+        "connector": record.connector,
+        "operation": record.operation,
+        "risk": record.risk,
+        "state": record.state.value,
+        "request_digest": record.request_digest,
+        "idempotency_key": record.idempotency_key,
+        "approval_id": record.approval_id,
+        "approved_digest": record.approved_digest,
+        "attempts": record.attempts,
+        "provider_request_id": record.provider_request_id,
+        "verification_status": record.verification_status,
+        "error": record.error,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def _action_from_row(row: LocalActionLedgerRow) -> ActionRecord:
+    return ActionRecord(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        run_id=row.run_id,
+        step_id=row.step_id,
+        connector=row.connector,
+        operation=row.operation,
+        risk=row.risk,
+        state=ActionState(row.state),
+        request_digest=row.request_digest,
+        idempotency_key=row.idempotency_key,
+        approval_id=row.approval_id,
+        approved_digest=row.approved_digest,
+        attempts=row.attempts,
+        provider_request_id=row.provider_request_id,
+        verification_status=row.verification_status,
+        error=row.error,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 __all__ = [
+    "LocalActionLedger",
     "LocalApprovalStore",
     "LocalAuditSink",
     "LocalIdempotencyGuard",
+    "LocalRunStore",
     "LocalSyncQueue",
     "LocalWorkflowRunStore",
     "LocalWorkflowStore",

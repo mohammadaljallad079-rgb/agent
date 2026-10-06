@@ -311,18 +311,27 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   passed 5/5. `tests/test_subprocess_isolation.py` covers the crash/timeout/
   malformed-frame paths against a real child process and asserts they surface as
   recoverable `ExternalServiceError`s with no cloud fallback under `OFFLINE`.
-- Not yet implemented (see `TODO.md`): desktop application/packaging, document
-  *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social connectors,
-  printing/calendar tools, and the web UI.
+- Desktop product surface (Phase 10) is implemented: `src/arabic_agent/desktop/`
+  (events broker, model catalogue/manager, service, HTTP+SSE, runtime manager,
+  pywebview shell, Arabic RTL UI, installer) plus durable local `LocalRunStore`
+  and `LocalActionLedger` (migration `9faa23d73417`). Entry points:
+  `agent-desktop` (runtime) and `agent-shell` (native window). The Windows-only
+  installer steps (registry, Startup shortcut) report `skipped` off Windows —
+  never success. The shell bridge is a closed set of named methods, not a
+  generic URL proxy; the UI is served with `default-src 'none'` / `connect-src
+  'none'`. `recommend`/`health_check` are honest gates, not benchmarks.
+- Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
+  document *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social
+  connectors, printing/calendar tools, and the web UI.
 - Connectors (Phase 9) reach *remote* systems, so unlike the local-only
   computer/browser tools they are available in a cloud runtime too; they are
   still opt-in (`AAP_CONNECTORS_ENABLED`) and every write/send is
   approval-gated. Secrets are referenced by environment variable in
   `AAP_CONNECTORS_JSON` and never stored in source, a spec, or the audit trail.
   Their tests run against real local SMTP/IMAP + HTTP servers (`tests/fake_*`),
-  not mocks. The action ledger is in-memory for the local runtime; a
-  Postgres-backed ledger is the cloud swap behind the same `ActionLedger`
-  interface.
+  not mocks. As of Phase 10 the action ledger is **durable** in local mode
+  (`LocalActionLedger`, SQLite); a Postgres-backed ledger is the cloud swap
+  behind the same `ActionLedger` interface.
 - Migrations: `migrations/versions/` is the source of truth for the durable
   schema. After changing `persistence/schema.py`, run
   `AAP_DATABASE_URL=<test url> uv run alembic revision --autogenerate -m "..."`,
