@@ -46,6 +46,13 @@ documents = [
     "python-pptx>=0.6.23,<2",
     "beautifulsoup4>=4.12,<5",
 ]
+# Autonomous browsing (Phase 8). Optional: the browser backend reports itself
+# unavailable (honestly, with a reason) when Playwright or a Chromium binary is
+# absent, and the browser tools are then simply not registered. Install with
+# `uv sync --extra browser` and `playwright install chromium`.
+browser = [
+    "playwright>=1.40,<2",
+]
 
 [project.scripts]
 agent-platform = "arabic_agent.api.app:main"
@@ -65,6 +72,7 @@ markers = [
     "postgres: integration tests requiring a reachable Postgres (AAP_TEST_DATABASE_URL)",
     "redis: integration tests requiring a reachable Redis (AAP_TEST_REDIS_URL)",
     "local_model: integration tests requiring a real GGUF model file (AAP_TEST_MODEL_PATH)",
+    "browser: end-to-end tests requiring a real Playwright/Chromium (AAP_TEST_BROWSER=1)",
 ]
 
 [tool.ruff]
@@ -116,4 +124,11 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["PIL.*", "pytesseract.*"]
 follow_imports = "skip"
+ignore_missing_imports = true
+
+# Browser automation (Phase 8) is an optional, lazily-imported dependency
+# (Playwright). It ships type information, but is not part of the platform's
+# baseline install, so mypy must not require it to be present.
+[[tool.mypy.overrides]]
+module = ["playwright.*"]
 ignore_missing_imports = true

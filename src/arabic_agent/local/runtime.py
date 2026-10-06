@@ -412,7 +412,10 @@ def build_local_runtime(
         settings=settings,
         audit=audit,
         sandbox=sandbox,
-        capabilities=LocalCapabilityRegistry(computer_control=settings.computer_control_enabled),
+        capabilities=LocalCapabilityRegistry(
+            computer_control=settings.computer_control_enabled,
+            browser=settings.browser_enabled,
+        ),
         devices=devices,
         sync=sync,
         boundary=boundary,

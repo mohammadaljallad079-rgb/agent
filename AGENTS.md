@@ -258,21 +258,47 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   multimodal encoding make the model layer vision-ready, and the context manager
   includes an observation image only when the model can see and the boundary
   allows, charging it against the token budget. Green.
-- Tests are 481 when real Postgres/Redis are reachable, a real local model is
-  provided, and a real X display is available (unit tests + 36 Postgres/Redis
-  integration tests + local model and agent-loop tests + subprocess-isolation
-  tests + 8 real-X11 computer e2e tests). Without
-  `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` the 36 integration tests skip,
-  without `AAP_TEST_MODEL_PATH` the `@local_model` inference tests skip by
-  design, and without `AAP_TEST_DISPLAY` the real-X11 computer tests skip. Run
-  the full set with:
+- Browser, web research & autonomous web interaction phase: `browser/`
+  implements a `BrowserBackend` ABC with a real Playwright/Chromium backend
+  (semantic `data-aap-ref` tagging, bounded DOM extraction, confined downloads,
+  dialogs never auto-accepted), deterministic `UrlPolicy` (refuses dangerous
+  schemes, `file://` escapes, credential-bearing URLs, and — by default —
+  loopback/private/link-local SSRF hosts incl. the cloud-metadata address, with
+  allow/deny domain lists), a `BrowserPolicy` + `ActionBudget` (bounded
+  observations, per-run caps, tab/download/upload limits, freshness, a
+  repeated-navigation loop guard), bounded `BrowserObservation`s and pure
+  `content.py` text helpers, a high-precision prompt-injection scanner, a
+  per-run `SourceLedger` recorded from observations for evidence-based citation,
+  and a `WebDataBoundary` (`never_store`/`local_only`/`cloud_allowed`) that fails
+  closed so page content never reaches a remote model by default. The
+  `BrowserRuntime` enforces observe → act → observe, validates URLs before the
+  engine is touched, refuses a consequential submit or dialog-accept unless the
+  trusted `approval_granted` flag (injected by the executor from the stored
+  approval record, never a model argument) is set, and audits every step without
+  recording page content, secrets or screenshots. The browser tools
+  (`browser_navigate`, `browser_observe`, `browser_interact`, `browser_submit`,
+  `browser_download`, `browser_upload`, `browser_dialog`, `browser_verify`,
+  `browser_research`) are ordinary tools gated by the existing
+  permission/approval/audit path and registered only for a local runtime with
+  `AAP_BROWSER_ENABLED=true`. Green.
+- Tests are 603 when real Postgres/Redis are reachable, a real local model is
+  provided, and a real X display and browser are available (unit tests + 36
+  Postgres/Redis integration tests + local model and agent-loop tests +
+  subprocess-isolation tests + 8 real-X11 computer e2e tests + real-Playwright
+  browser e2e tests). Without `AAP_TEST_DATABASE_URL` / `AAP_TEST_REDIS_URL` the
+  36 integration tests skip, without `AAP_TEST_MODEL_PATH` the `@local_model`
+  inference tests skip by design, without `AAP_TEST_DISPLAY` the real-X11
+  computer tests skip, and without `AAP_TEST_BROWSER=1` the real-browser e2e
+  tests skip. Run the full set with:
   `AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test
   AAP_TEST_REDIS_URL=redis://localhost:6379/15
   AAP_TEST_MODEL_PATH=/path/to/model.gguf
-  AAP_TEST_DISPLAY=:99 pytest` (after `docker compose up -d` and
-  `CREATE DATABASE aap_test`). The Postgres tests own the schema via
-  `create_all`/`drop_all`, so run `alembic check` on a freshly migrated DB, not
-  right after the suite.
+  AAP_TEST_DISPLAY=:99 AAP_TEST_BROWSER=1 pytest` (after `docker compose up -d`,
+  `CREATE DATABASE aap_test`, an X server *with a window manager* on `:99`
+  (`Xvfb` + `openbox` — without a WM the pointer is pinned at the screen centre
+  and two computer e2e tests fail), and `xdotool`/`xrandr` installed). The
+  Postgres tests own the schema via `create_all`/`drop_all`, so run `alembic
+  check` on a freshly migrated DB, not right after the suite.
 - Local-model deadlines: CPU-only inference of a planning + tool-schema prompt
   can take minutes on a contended or low-core host. `AAP_LOCAL_MODEL_TIMEOUT_SECONDS`
   (default 300s) bounds a *single* call and must stay comfortably below the
@@ -287,7 +313,7 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   recoverable `ExternalServiceError`s with no cloud fallback under `OFFLINE`.
 - Not yet implemented (see `TODO.md`): desktop application/packaging, document
   *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social/ERP
-  connectors, browser/printing/email/calendar tools, and the web UI.
+  connectors, printing/email/calendar tools, and the web UI.
 - Migrations: `migrations/versions/` is the source of truth for the durable
   schema. After changing `persistence/schema.py`, run
   `AAP_DATABASE_URL=<test url> uv run alembic revision --autogenerate -m "..."`,

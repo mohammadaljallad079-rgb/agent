@@ -112,8 +112,8 @@ curl -H "X-Local-Token: $AAP_LOCAL_CONTROL_TOKEN" localhost:8765/local/status
 ```
 
 Every local path goes through the filesystem sandbox and every write, move or
-delete is approval-gated. Clipboard, printing, browser and application control
-are declared but **not implemented** — the capability catalogue reports
+delete is approval-gated. Clipboard, printing and application control are
+declared but **not implemented** — the capability catalogue reports
 `implemented: false` rather than pretending.
 
 ### Computer use (opt-in)
@@ -135,6 +135,31 @@ and `WINDOW_CONTROL` are approval-gated and audited, typed text is recorded by
 length only, and a per-run action budget stops runaway loops. The real-X11
 end-to-end tests run only when `AAP_TEST_DISPLAY` names a display.
 
+### Browsing & web research (opt-in)
+
+The agent can open, read, search and operate the web — again local-only and off
+by default. The tools are ordinary tools running through the same
+permission/approval/audit path, not a separate browser agent.
+
+```bash
+export AAP_BROWSER_ENABLED=true              # default false
+export AAP_BROWSER_CONTENT_POLICY=local_only # page content never goes remote
+export AAP_BROWSER_ALLOWED_DOMAINS=example.com,example.org   # optional allow-list
+```
+
+Navigation is validated *before* the engine is touched: dangerous schemes,
+`file://` escapes, credential-bearing URLs and (by default) loopback/private/
+link-local SSRF hosts — including the cloud-metadata address — are refused, with
+optional domain allow/deny lists. Page content is treated as untrusted data: it
+is scanned for prompt-injection indicators, never treated as instructions, and
+kept behind a data boundary that fails closed so it never reaches a remote model
+by default. Observations are bounded and freshness-tracked; the model acts on a
+semantic element `ref`, never a raw selector; downloads are confined and size-
+capped; and a form submit or dialog-accept is refused unless a real approval was
+granted (the flag is injected by the executor, not read from model arguments).
+Every page the agent reads is recorded in a source ledger so answers cite real
+sources. The real-Playwright end-to-end tests run only with `AAP_TEST_BROWSER=1`.
+
 ## Development
 
 ```bash
@@ -144,12 +169,17 @@ uv run ruff check .    # lint
 uv run ruff format .   # format
 ```
 
-Run the full suite including Postgres/Redis integration tests:
+Run the full suite including Postgres/Redis integration tests, the local model,
+and the real computer/browser end-to-end tests:
 
 ```bash
 docker compose up -d
+# one-time: CREATE DATABASE aap_test; and an X server with a window manager
+# (Xvfb :99 + openbox) plus xdotool/xrandr for the computer e2e tests.
 AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test \
 AAP_TEST_REDIS_URL=redis://localhost:6379/15 \
+AAP_TEST_MODEL_PATH=/path/to/model.gguf \
+AAP_TEST_DISPLAY=:99 AAP_TEST_BROWSER=1 \
 uv run pytest
 ```
 

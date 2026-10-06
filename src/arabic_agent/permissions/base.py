@@ -67,6 +67,16 @@ class Permission(StrEnum):
     # Network / models
     NETWORK_ACCESS = "NETWORK_ACCESS"
 
+    # Web / browser (the autonomous browser surface). Split so reading a page and
+    # performing a consequential submission are not the same grant, and so a
+    # tenant can allow research without allowing interaction or upload.
+    BROWSER_NAVIGATE = "BROWSER_NAVIGATE"
+    BROWSER_READ = "BROWSER_READ"
+    BROWSER_INTERACT = "BROWSER_INTERACT"
+    BROWSER_SUBMIT = "BROWSER_SUBMIT"
+    BROWSER_DOWNLOAD = "BROWSER_DOWNLOAD"
+    BROWSER_UPLOAD = "BROWSER_UPLOAD"
+
     # Workflow administration (defining/publishing/running workflows)
     MANAGE_WORKFLOW = "MANAGE_WORKFLOW"
     RUN_WORKFLOW = "RUN_WORKFLOW"
@@ -107,6 +117,12 @@ _PERMISSION_RISK: dict[Permission, RiskLevel] = {
     Permission.DELETE_INVOICE: RiskLevel.CRITICAL,
     Permission.WRITE_ERP: RiskLevel.HIGH,
     Permission.INPUT_CONTROL: RiskLevel.CRITICAL,
+    Permission.BROWSER_NAVIGATE: RiskLevel.MEDIUM,
+    Permission.BROWSER_READ: RiskLevel.MEDIUM,
+    Permission.BROWSER_INTERACT: RiskLevel.HIGH,
+    Permission.BROWSER_SUBMIT: RiskLevel.CRITICAL,
+    Permission.BROWSER_DOWNLOAD: RiskLevel.MEDIUM,
+    Permission.BROWSER_UPLOAD: RiskLevel.HIGH,
     Permission.MANAGE_WORKFLOW: RiskLevel.MEDIUM,
     Permission.RUN_WORKFLOW: RiskLevel.MEDIUM,
 }

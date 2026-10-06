@@ -77,7 +77,9 @@ class LocalCapability(BaseModel):
         return not (self.requires_network and not online)
 
 
-def default_local_capabilities(*, computer_control: bool = False) -> tuple[LocalCapability, ...]:
+def default_local_capabilities(
+    *, computer_control: bool = False, browser: bool = False
+) -> tuple[LocalCapability, ...]:
     """The capability catalogue for this build.
 
     Only the safe foundational filesystem capabilities are marked
@@ -86,6 +88,8 @@ def default_local_capabilities(*, computer_control: bool = False) -> tuple[Local
     policy vocabulary is stable, and nothing pretends to work. When the operator
     explicitly enables computer control (a local runtime only), screen capture
     and synthetic input become implemented, since the real tools are registered.
+    Likewise, the browser capability becomes implemented only when browsing is
+    explicitly enabled and a backend is available.
     """
     return (
         LocalCapability(
@@ -402,13 +406,19 @@ def default_local_capabilities(*, computer_control: bool = False) -> tuple[Local
         LocalCapability(
             id="browser.control",
             name="Control browser",
-            description="Drive a local web browser.",
+            description="Drive a local web browser through the browser tools.",
+            tool_name="browser_navigate",
             risk=CapabilityRisk.HIGH_RISK,
-            permissions=(Permission.INPUT_CONTROL, Permission.NETWORK_ACCESS),
+            permissions=(
+                Permission.BROWSER_NAVIGATE,
+                Permission.BROWSER_READ,
+                Permission.BROWSER_INTERACT,
+            ),
             requires_network=True,
             requires_approval=True,
             data_boundary=DataBoundary.LOCAL,
-            implemented=False,
+            audit_events=("browser.navigated", "browser.observed", "browser.interacted"),
+            implemented=browser,
         ),
         LocalCapability(
             id="command.execute",
@@ -432,11 +442,12 @@ class LocalCapabilityRegistry:
         capabilities: tuple[LocalCapability, ...] | None = None,
         *,
         computer_control: bool = False,
+        browser: bool = False,
     ) -> None:
         items = (
             capabilities
             if capabilities is not None
-            else default_local_capabilities(computer_control=computer_control)
+            else default_local_capabilities(computer_control=computer_control, browser=browser)
         )
         self._by_id: dict[str, LocalCapability] = {}
         for capability in items:

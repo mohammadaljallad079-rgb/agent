@@ -114,10 +114,20 @@ class ToolExecutor:
         #: engine needing to know about them.
         self._tool_metadata = dict(tool_metadata or {})
 
-    def _merge_context(self, context: ToolContext) -> ToolContext:
-        if not self._tool_metadata:
+    def _merge_context(
+        self, context: ToolContext, *, approval_granted: bool = False
+    ) -> ToolContext:
+        if not self._tool_metadata and not approval_granted:
             return context
-        return context.model_copy(update={"metadata": {**self._tool_metadata, **context.metadata}})
+        # ``approval_granted`` is set here, by the executor, from the approval
+        # record -- never from model-supplied arguments -- so a tool that needs
+        # a trusted "the human approved this" signal can read it safely.
+        metadata = {
+            **self._tool_metadata,
+            **context.metadata,
+            "approval_granted": approval_granted,
+        }
+        return context.model_copy(update={"metadata": metadata})
 
     async def execute(
         self,
@@ -267,7 +277,10 @@ class ToolExecutor:
             tracer=self._tracer,
         ):
             result = await self._invoke(
-                tool, dict(approval.arguments), self._merge_context(context), principal
+                tool,
+                dict(approval.arguments),
+                self._merge_context(context, approval_granted=True),
+                principal,
             )
         self._record_tool_metric(approval.tool_name, "completed" if result.ok else "error", started)
         return ExecutionOutcome(

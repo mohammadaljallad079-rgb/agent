@@ -20,9 +20,16 @@ venv/
 .coverage
 htmlcov/
 
+# uv resolves from pyproject.toml (CI installs with `uv pip install -e .[dev]`),
+# so the environment lockfile is a local artifact, not tracked.
+uv.lock
+
 # Runtime data (local/offline store, workspaces, logs)
 .agent-data/
 *.log
+
+# Redis persistence artifact (created by a local redis-server run)
+dump.rdb
 
 # Local model weights — never commit (large binaries)
 *.gguf

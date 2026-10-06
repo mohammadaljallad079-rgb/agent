@@ -28,6 +28,12 @@ from .agent.runner import AgentRunner
 from .audit.base import AuditLog
 from .audit.logging_sink import LoggingAuditSink
 from .audit.memory_sink import InMemoryAuditSink
+from .browser.attachments import BrowserAttachmentProvider
+from .browser.backends import build_browser_backend
+from .browser.boundary import WebContentPolicy, WebDataBoundary
+from .browser.policy import BrowserPolicy
+from .browser.runtime import BrowserRuntime
+from .browser.url_security import UrlPolicy
 from .computer.attachments import ObservationAttachmentProvider
 from .computer.backends import build_computer_backend
 from .computer.ocr import build_ocr_engine
@@ -115,6 +121,7 @@ from .tasks.engine import TaskEngine
 from .tasks.store import InMemoryTaskStore, TaskStore
 from .tools.base import Tool
 from .tools.builtin import (
+    BROWSER_TOOLS,
     COMPUTER_TOOLS,
     DOCUMENT_TOOLS,
     EXTENDED_FILESYSTEM_TOOLS,
@@ -191,6 +198,7 @@ class Platform:
         local_runtime: LocalRuntime | None = None,
         local_model_provider: LocalBackendProvider | None = None,
         computer_runtime: ComputerRuntime | None = None,
+        browser_runtime: BrowserRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
@@ -229,6 +237,7 @@ class Platform:
         self.local_runtime = local_runtime
         self.local_model_provider = local_model_provider
         self.computer_runtime = computer_runtime
+        self.browser_runtime = browser_runtime
         self.attachment_provider = attachment_provider
         self.database = database
         self.local_database = local_database
@@ -340,6 +349,7 @@ class Platform:
         device_registry: DeviceRegistry | None = None,
         local_runtime: LocalRuntime | None = None,
         computer_runtime: ComputerRuntime | None = None,
+        browser_runtime: BrowserRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
@@ -536,6 +546,15 @@ class Platform:
             if is_local and settings.computer_control_enabled
             else []
         )
+        # Phase 8: autonomous browsing and web research. Local-only and opt-in —
+        # on a cloud build, or when browsing is disabled, the tools do not exist,
+        # so the model cannot even name them. Every action is still permission-
+        # and approval-gated once they do exist.
+        browser_tools = (
+            [tool_cls() for tool_cls in BROWSER_TOOLS]
+            if is_local and settings.browser_enabled
+            else []
+        )
         tools = ToolRegistry(
             [
                 EchoTool(),
@@ -549,6 +568,7 @@ class Platform:
                 *project_tools,
                 *local_tools,
                 *computer_tools,
+                *browser_tools,
                 *(extra_tools or []),
             ]
         )
@@ -733,6 +753,78 @@ class Platform:
                     destination_is_remote=not gateway.default_is_local(),
                 )
 
+            # --- Autonomous browsing / web research (Phase 8) ----------
+            # Only assembled for a local build with browsing enabled. The runtime
+            # carries the URL/domain policy, action budget, observation store,
+            # web-content boundary and source ledger; it is injected into every
+            # tool context by the executor, exactly like the computer runtime.
+            if browser_runtime is None and settings.browser_enabled:
+                browser_download_dir = str(
+                    (Path(settings.local_store_dir) / "browser_downloads").resolve()
+                )
+                browser_backend = build_browser_backend(
+                    backend=settings.browser_backend,
+                    platform=detect_platform(),
+                    headless=settings.browser_headless,
+                    executable_path=settings.browser_executable_path,
+                    download_dir=browser_download_dir,
+                    max_download_bytes=settings.browser_max_download_bytes,
+                    timeout_ms=settings.browser_timeout_ms,
+                )
+                try:
+                    content_policy = WebContentPolicy(settings.browser_content_policy)
+                except ValueError:
+                    content_policy = WebContentPolicy.LOCAL_ONLY
+                web_boundary = WebDataBoundary(
+                    policy=content_policy,
+                    mode=settings.local_mode,
+                    allow_confidential_remote=settings.local_allow_confidential_remote,
+                )
+                url_policy = UrlPolicy(
+                    allowed_domains=settings.browser_allowed_domains,
+                    blocked_domains=settings.browser_blocked_domains,
+                    allow_local_addresses=settings.browser_allow_local_addresses,
+                    allow_file_urls=settings.browser_allow_file_urls,
+                    allowed_file_roots=settings.browser_allowed_file_roots or (local_workspace,),
+                )
+                browser_policy = BrowserPolicy(
+                    url_policy=url_policy,
+                    max_navigations=settings.browser_max_navigations,
+                    max_interactions=settings.browser_max_interactions,
+                    max_observations=settings.browser_max_observations,
+                    max_downloads=10,
+                    max_uploads=10,
+                    max_download_bytes=settings.browser_max_download_bytes,
+                    max_tabs=settings.browser_max_tabs,
+                    require_fresh_observation=settings.browser_require_fresh_observation,
+                    max_observation_age_seconds=settings.browser_max_observation_age_seconds,
+                    default_timeout_ms=settings.browser_timeout_ms,
+                    require_approval_for_submit=settings.browser_require_approval_for_submit,
+                )
+                browser_runtime = BrowserRuntime(
+                    backend=browser_backend,
+                    policy=browser_policy,
+                    audit=audit,
+                    boundary=web_boundary,
+                )
+                logger.info(
+                    "browser backend: %s (available=%s, reason=%s)",
+                    browser_backend.name,
+                    browser_backend.available,
+                    browser_backend.unavailable_reason or "-",
+                )
+            if browser_runtime is not None:
+                tool_metadata["browser_runtime"] = browser_runtime
+                # Prefer the computer screenshot provider when both are enabled
+                # (they share the same vision path); otherwise offer the browser
+                # screenshot, subject to the web-content boundary.
+                if attachment_provider is None:
+                    attachment_provider = BrowserAttachmentProvider(
+                        runtime=browser_runtime,
+                        boundary=browser_runtime.boundary,
+                        destination_is_remote=not gateway.default_is_local(),
+                    )
+
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
@@ -801,6 +893,7 @@ class Platform:
             local_runtime=local_runtime,
             local_model_provider=local_model_provider,
             computer_runtime=computer_runtime,
+            browser_runtime=browser_runtime,
             attachment_provider=attachment_provider,
             database=database,
             local_database=local_database,

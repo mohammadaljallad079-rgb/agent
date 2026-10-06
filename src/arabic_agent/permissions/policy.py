@@ -175,6 +175,40 @@ def platform_default_policy() -> PolicySet:
                 permission=Permission.APPLICATION_CLOSE,
                 reason="closing applications can lose unsaved work",
             ),
+            # Web / browser (Phase 8). Reading and navigating are read-only and
+            # constrained by the URL/domain policy, so they are allowed. Anything
+            # that changes remote state, pulls a file down, or pushes local data
+            # out needs a human in the loop.
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.BROWSER_NAVIGATE,
+                reason="browsing is read-only and bounded by the URL policy",
+            ),
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.BROWSER_READ,
+                reason="reading a page is read-only",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.BROWSER_INTERACT,
+                reason="interacting with a page changes remote state",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.BROWSER_SUBMIT,
+                reason="submitting a form is consequential and externally visible",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.BROWSER_DOWNLOAD,
+                reason="downloading a file writes to the user's machine",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.BROWSER_UPLOAD,
+                reason="uploading sends local data to a remote site",
+            ),
             # Destructive, irreversible operations are denied by default.
             Rule(
                 effect=PermissionEffect.DENY,

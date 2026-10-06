@@ -190,6 +190,48 @@ class Settings(BaseSettings):
     computer_max_keyboard_actions: int = Field(default=60, ge=1)
     computer_max_captures: int = Field(default=40, ge=1)
 
+    # --- Browser / web (Phase 8) -------------------------------------------
+    #: Whether the agent may use the web through the browser tools. Off by
+    #: default; when on, every action is still permission- and approval-gated.
+    browser_enabled: bool = False
+    #: Which browser backend to use: ``auto`` (Playwright/Chromium when present),
+    #: ``playwright`` or ``null``. An unavailable backend is reported honestly.
+    browser_backend: str = "auto"
+    #: Whether the browser runs headless. Headed is for desktop supervision.
+    browser_headless: bool = True
+    #: Optional explicit Chromium/Chrome executable path (else auto-detected).
+    browser_executable_path: str = ""
+    #: How sensitive page content is: ``never_store``, ``local_only`` (default)
+    #: or ``cloud_allowed``.
+    browser_content_policy: str = "local_only"
+    #: When non-empty, only these domains (and subdomains) may be opened.
+    browser_allowed_domains: Annotated[tuple[str, ...], NoDecode] = ()
+    #: Domains that are always refused.
+    browser_blocked_domains: Annotated[tuple[str, ...], NoDecode] = ()
+    #: Whether private/loopback/link-local hosts may be opened. Off by default;
+    #: a controlled local test site turns it on deliberately.
+    browser_allow_local_addresses: bool = False
+    #: Whether ``file://`` URLs may be opened (local test sites), and the roots
+    #: they must resolve inside.
+    browser_allow_file_urls: bool = False
+    browser_allowed_file_roots: Annotated[tuple[str, ...], NoDecode] = ()
+    #: Longest side a page screenshot is downscaled to before vision.
+    browser_max_image_dimension: int = Field(default=1600, ge=64)
+    #: Per-run caps on browser actions (anti-runaway).
+    browser_max_navigations: int = Field(default=40, ge=1)
+    browser_max_interactions: int = Field(default=80, ge=1)
+    browser_max_observations: int = Field(default=60, ge=1)
+    browser_max_tabs: int = Field(default=8, ge=1)
+    #: Maximum size of a single downloaded file, in bytes.
+    browser_max_download_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+    #: Default navigation/action timeout, in milliseconds.
+    browser_timeout_ms: int = Field(default=15_000, ge=100, le=120_000)
+    #: Whether an action must reference a fresh observation.
+    browser_require_fresh_observation: bool = True
+    browser_max_observation_age_seconds: float = Field(default=60.0, gt=0)
+    #: Whether submitting a form is treated as consequential and needs approval.
+    browser_require_approval_for_submit: bool = True
+
     # --- Agent limits (guard rails against infinite loops) ------------------
     max_steps_per_run: int = Field(default=40, ge=1, le=500)
     max_tool_retries: int = Field(default=3, ge=0, le=10)
@@ -251,6 +293,9 @@ class Settings(BaseSettings):
         "local_network_allowlist",
         "local_command_allowlist",
         "computer_ocr_languages",
+        "browser_allowed_domains",
+        "browser_blocked_domains",
+        "browser_allowed_file_roots",
         mode="before",
     )
     @classmethod

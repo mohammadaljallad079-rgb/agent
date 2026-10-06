@@ -82,6 +82,7 @@ layer imports a higher one.
 | `runtime` | Local/Cloud profile and `Transport` boundary |
 | `local` | Local/desktop runtime: lifecycle, modes, devices, sandbox, command runner, boundary, sync, control API |
 | `computer` | Computer use: backends (X11), coordinate model, capture, OCR, perception, grounding, policy, screen-data boundary, runtime |
+| `browser` | Autonomous web: backends (Playwright), URL/domain policy, observations, injection scan, sources, web-content boundary, runtime |
 | `agent` | The loop, planner, recovery policy, tool executor, prompts |
 | `runs` | `RunRecord` lifecycle/state machine + `RunStore` ABC |
 | `persistence` | SQLAlchemy models, `Database`, Postgres store implementations |
@@ -258,9 +259,9 @@ kind + locator only (`SECRET_DETECTED`), never by value. `project/` builds a
 project summary from real filesystem evidence (languages, manifests, tests,
 entrypoints, docs).
 
-Future tools (document generation, browser, email, ERP, WhatsApp, social,
-image, video, calendar, printing) are declared in `TODO.md` and plug into the
-same interface.
+Future tools (document generation, email, ERP, WhatsApp, social, image, video,
+calendar, printing) are declared in `TODO.md` and plug into the same interface.
+Browser tools are no longer in this list — they are implemented (see §13c).
 
 ---
 
@@ -800,6 +801,138 @@ screenshot not reach the model" is answerable.
 
 ---
 
+## 13c. Autonomous browsing, web research & web interaction (Phase 8)
+
+The agent can *open, read, search and operate* the web under the same governance
+as every other tool. Like computer use, this is a local-only, opt-in capability:
+on a cloud runtime, or when browsing is disabled, the tools do not exist, so the
+model cannot even name them. It is deliberately **not** a separate "browser
+agent" — the tools are ordinary `Tool`s that run through the existing executor,
+permission/policy gate, approval flow and audit trail.
+
+### The `browser/` subsystem
+
+All web logic lives in `src/arabic_agent/browser/`, behind an interface, never
+inside the agent core or a tool handler:
+
+- **`base.py`** — `BrowserBackend` (ABC): `navigate`, `snapshot`, `screenshot`,
+  `click`, `type_text`, `press_key`, `select_option`, `set_checked`, `scroll`,
+  `wait_for`, `download`, `upload`, `list_tabs`/`open_tab`/`switch_tab`/`close_tab`,
+  `dialog`/`accept_dialog`/`dismiss_dialog`, plus `available` /
+  `unavailable_reason`. Value types: `ElementInfo`, `FormInfo`, `FormFieldInfo`,
+  `TabInfo`, `DialogInfo`, `DownloadedFile`, `Screenshot`, `PageSnapshot`.
+  A backend that cannot work reports *why* instead of pretending.
+- **`url_security.py`** — `UrlPolicy` answers, deterministically and with no
+  network probe, whether a URL may be opened. It refuses dangerous schemes
+  (`javascript:`, `data:`, `blob:` …), `file://` outside an allowed root,
+  credential-bearing URLs, and — by default — loopback/private/link-local hosts
+  (including the cloud-metadata address `169.254.169.254`), i.e. SSRF is blocked
+  before the engine is touched. Domain allow/deny lists are matched against the
+  registrable host. The result is a `UrlDecision` carrying a `UrlRisk`, so a URL
+  can be *refused* or merely *require approval*.
+- **`policy.py`** — `BrowserPolicy` and `ActionBudget`: bounded observations
+  (elements/text), per-run caps on navigations/interactions/observations, a
+  minimum interval between actions, tab limits, download count/size limits, an
+  upload allow-list, a freshness requirement, and a repeated-navigation loop
+  guard. Every refusal is a classified `PlatformError` the loop can recover from.
+- **`observations.py`** — `BrowserObservation` and `ObservationStore`: a bounded,
+  normalised view of the page (URL, title, headings, interactive elements, forms,
+  links, dialog, scroll position) with a freshness timestamp and a truncation
+  flag. Never a raw DOM dump; `build_observation` caps text.
+- **`content.py`** — pure, bounded web-text helpers: whitespace/blank-line
+  normalisation, a bounded extract that *reports* it was bounded, and a
+  term-search that returns only a bounded window of context around each match
+  with a character offset for provenance.
+- **`injection.py`** — scans page text for a small, high-precision set of
+  prompt-injection phrases. A hit is recorded as an `InjectionIndicator` on the
+  observation and on the audit trail and surfaced to the model as a *warning*,
+  never an instruction. Detection flags; the boundary/permission/sandbox layers
+  are the hard defences.
+- **`sources.py`** — `SourceLedger`: a bounded per-run ledger of pages the agent
+  actually read (recorded from observations, never from the model), with a source
+  quality heuristic, so the final answer cites real sources instead of invented
+  ones.
+- **`boundary.py`** — `WebDataBoundary`: maps a `WebContentPolicy`
+  (`never_store` | `local_only` | `cloud_allowed`) onto the existing
+  `DataBoundaryPolicy`/`DataSensitivity` and answers one question
+  deterministically: *may this page content be sent to a remote model?* The
+  mapping fails closed.
+- **`runtime.py`** — `BrowserRuntime` is the single entry point the tools call.
+  It bundles the backend, URL policy, browser policy, budget, observation store,
+  source ledger, web-data boundary and audit log, and enforces the
+  **observe → act → observe** discipline: an action must reference a fresh
+  observation, navigation is validated before the engine is touched, a `submit`
+  or an accepted dialog is treated as consequential and refused unless the tool
+  layer has cleared it, and every action is budgeted and audited. `changed_since`
+  compares a fresh observation against a prior one.
+- **`attachments.py`** — `BrowserAttachmentProvider` offers the latest
+  observation's screenshot as a `ContextAttachment`, but only when the
+  web-content boundary permits the destination and the model can see; it mirrors
+  `computer/attachments.py` rather than inventing a parallel contract.
+- **`backends/`** — `playwright.py` is a *real* backend driving Chromium through
+  Playwright's async API. Each observation tags visible interactive elements with
+  a stable `data-aap-ref`, and the model acts on that `ref`, never a CSS/XPath
+  selector. Downloads are confined to the backend's own directory with a
+  sanitised filename and a size cap. A JavaScript dialog is **never**
+  auto-accepted: a click that opens one returns promptly (the backend races the
+  click against dialog detection rather than wedging on Playwright's blocked
+  click), the dialog stays open, and the runtime returns the prior observation
+  with the dialog attached so the agent resolves it explicitly. `null.py` is the
+  honest "not available" backend; `build_browser_backend` selects per platform and
+  reports the missing dependency as the reason.
+
+### Tools (`tools/builtin/browser.py`)
+
+Ordinary `Tool`s, registered only for a local runtime with
+`AAP_BROWSER_ENABLED=true`, so the permission/policy/approval/audit path is the
+*existing* one:
+
+- `browser_navigate` (`BROWSER_NAVIGATE`, MEDIUM) — validate then navigate.
+- `browser_observe` (`BROWSER_READ`, MEDIUM) — the bounded, freshness-tracked view.
+- `browser_interact` (`BROWSER_INTERACT`, HIGH) — click/type/press/select/scroll/wait.
+- `browser_submit` (`BROWSER_SUBMIT`, CRITICAL) — consequential form submit.
+- `browser_download` (`BROWSER_DOWNLOAD`, MEDIUM) / `browser_upload`
+  (`BROWSER_UPLOAD` + `FILES_READ`, HIGH).
+- `browser_dialog` (`BROWSER_INTERACT`, HIGH) — get/accept/dismiss a dialog.
+- `browser_verify` (`BROWSER_READ`, MEDIUM) — re-observe and report change.
+- `browser_research` (`BROWSER_READ`, LOW) — the recorded source list, for
+  evidence-based citation.
+
+### The approval gate is trusted, not model-supplied
+
+Submitting a form or accepting a dialog is consequential, so the runtime refuses
+it unless the call carries an approval. The signal is **not** a tool argument the
+model (or a hostile page) could forge: the executor injects
+`context.metadata["approval_granted"]` only on the resume path, after re-checking
+policy against the stored, granted `ApprovalRecord`. `ToolExecutor._merge_context`
+threads the trusted flag through, and the submit/dialog tools read it — so a
+model that emits `"approved": true` in its own arguments still gets an approval
+request rather than an executed submit.
+
+### Audit
+
+Every step is audited: `browser.navigated`, `browser.tab_opened`/`_switched`/
+`_closed`, `browser.observed`, `browser.acted`, `browser.form_submitted`,
+`browser.dialog_resolved`, `browser.waited`, `browser.downloaded`,
+`browser.uploaded`, `browser.action_verified`, `browser.action_failed`,
+`browser.stop_requested`, `browser.boundary_decision`. Page content, typed
+secrets and screenshots are never written to the audit trail — only metadata
+(counts, refs, URLs, indicator kinds).
+
+### Settings
+
+`AAP_BROWSER_ENABLED` (default false), `AAP_BROWSER_BACKEND` (`auto`),
+`AAP_BROWSER_HEADLESS`, `AAP_BROWSER_EXECUTABLE_PATH`, `AAP_BROWSER_CONTENT_POLICY`
+(`local_only`), `AAP_BROWSER_ALLOWED_DOMAINS` / `_BLOCKED_DOMAINS`,
+`AAP_BROWSER_ALLOW_LOCAL_ADDRESSES`, `AAP_BROWSER_ALLOW_FILE_URLS` /
+`_ALLOWED_FILE_ROOTS`, `AAP_BROWSER_MAX_IMAGE_DIMENSION`,
+`AAP_BROWSER_REQUIRE_FRESH_OBSERVATION`, `AAP_BROWSER_MAX_OBSERVATION_AGE_SECONDS`,
+`AAP_BROWSER_REQUIRE_APPROVAL_FOR_SUBMIT`, `AAP_BROWSER_TIMEOUT_MS`,
+`AAP_BROWSER_MAX_DOWNLOAD_BYTES`, and the per-run caps
+`AAP_BROWSER_MAX_NAVIGATIONS` / `_INTERACTIONS` / `_OBSERVATIONS` / `_TABS`.
+
+---
+
 ## 14. Security
 
 Baseline, designed in from the start:
@@ -952,7 +1085,31 @@ The foundation is verified, not assumed.
   - `test_computer_e2e.py` — **real X11** (opt-in via `AAP_TEST_DISPLAY`): the
     actual display is captured and real input is synthesised through `xdotool`,
     driving capture → perceive → ground → act → verify. Skips when no display is
-    provided.
+    provided. The display must run a window manager (`Xvfb :99` + `openbox`),
+    otherwise the pointer is pinned at the screen centre and two cases fail.
+  - `test_browser_url_security.py` — Phase 8: dangerous schemes, `file://`
+    escapes, credential-bearing URLs, SSRF/loopback/private/link-local refusal
+    (incl. the cloud-metadata address), and domain allow/deny matching.
+  - `test_browser_policy.py` — observation bounds, per-run caps, the
+    minimum-interval and repeated-navigation loop guards, tab/download/upload
+    limits, and freshness.
+  - `test_browser_helpers.py` — bounded text extraction and search, the
+    prompt-injection scanner, and source-ledger provenance/quality.
+  - `test_browser_runtime.py` — the observe→act→observe discipline, URL
+    validation before the engine is touched, the web-content boundary, the
+    consequential-submit/dialog approval gate, `changed_since`, and the audit
+    trail (typed text by length only) — against a scripted backend.
+  - `test_browser_tools.py` — the browser tools run through the **real**
+    executor, policy engine, approval store and audit log: allow / deny /
+    requires-approval, a forged `approved` argument still raising an approval,
+    and honest failure when no runtime is present.
+  - `test_browser_container.py` — the composition root registers browser tools
+    only for a local runtime with browsing enabled, and an unknown content
+    policy fails closed.
+  - `test_browser_e2e.py` — **real Playwright/Chromium** (opt-in via
+    `AAP_TEST_BROWSER=1`): a real local site is served, navigated, observed,
+    screenshot, typed, submitted, downloaded and driven through a real
+    JavaScript dialog and a download. Skips when no browser is available.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.
@@ -963,9 +1120,13 @@ The foundation is verified, not assumed.
   ```bash
   AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test \
   AAP_TEST_REDIS_URL=redis://localhost:6379/15 \
+  AAP_TEST_MODEL_PATH=/path/to/model.gguf \
+  AAP_TEST_DISPLAY=:99 AAP_TEST_BROWSER=1 \
   uv run pytest
   ```
-  `docker compose up -d` starts the Postgres and Redis used by these tests.
+  `docker compose up -d` starts the Postgres and Redis used by these tests. The
+  computer e2e tests additionally need `xdotool`/`xrandr` and an X server with a
+  window manager on `:99`; the browser e2e tests need Playwright's Chromium.
 - **Static gates**: `ruff check`, `ruff format --check`, `mypy --strict`.
 - **CI expectation** (to add): run all four gates on every change.
 

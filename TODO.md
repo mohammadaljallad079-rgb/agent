@@ -329,6 +329,56 @@ real, not interface-only.
       `test_computer_container.py`, and real-X11 `test_computer_e2e.py`
       (opt-in via `AAP_TEST_DISPLAY`).
 
+## Phase 7b — Browser, web research & autonomous web interaction (done)
+
+- [x] Browser subsystem (`browser/`): `BrowserBackend` ABC with value types
+      (`ElementInfo`, `FormInfo`, `FormFieldInfo`, `TabInfo`, `DialogInfo`,
+      `DownloadedFile`, `Screenshot`, `PageSnapshot`), plus `available` /
+      `unavailable_reason` so an unusable backend reports why.
+- [x] Real Playwright/Chromium backend (`browser/backends/playwright.py`):
+      semantic `data-aap-ref` tagging (the model never writes a selector),
+      bounded DOM extraction, confined downloads with a size cap, and dialogs
+      that are never auto-accepted — a click that opens one returns promptly and
+      leaves it open for explicit resolution. Null backend for unsupported hosts.
+- [x] URL/domain safety (`browser/url_security.py`): refuses dangerous schemes,
+      `file://` outside an allowed root, credential-bearing URLs, and by default
+      loopback/private/link-local hosts (SSRF, incl. the cloud-metadata address),
+      with allow/deny domain lists and a `UrlRisk` so a URL can be refused or
+      require approval.
+- [x] Policy and budget (`browser/policy.py`): bounded observations, per-run
+      navigation/interaction/observation caps, a minimum interval, tab limits,
+      download count/size limits, an upload allow-list, a freshness requirement
+      and a repeated-navigation loop guard.
+- [x] Observations and content (`browser/observations.py`, `browser/content.py`):
+      bounded, freshness-tracked page views and pure, bounded text helpers —
+      never a raw DOM dump.
+- [x] Injection scan and sources (`browser/injection.py`, `browser/sources.py`):
+      high-precision prompt-injection indicators surfaced as warnings, and a
+      per-run source ledger recorded from observations for evidence-based
+      citation.
+- [x] Web-content boundary (`browser/boundary.py`): `never_store` / `local_only` /
+      `cloud_allowed` mapped onto the existing data-boundary policy; fails closed
+      so page content never reaches a remote model by default.
+- [x] Runtime (`browser/runtime.py`): single entry point enforcing
+      observe → act → observe, pre-engine URL validation, consequential-submit
+      refusal, budgets, cancellation and `changed_since` verification;
+      `BrowserAttachmentProvider` offers a page screenshot only when the boundary
+      and model capability allow.
+- [x] Tools (`tools/builtin/browser.py`): `browser_navigate`, `browser_observe`,
+      `browser_interact`, `browser_submit`, `browser_download`, `browser_upload`,
+      `browser_dialog`, `browser_verify`, `browser_research` — registered only for
+      a local runtime with browsing enabled, gated by the existing
+      permission/approval/audit path.
+- [x] Trusted approval gate: the `approval_granted` signal is injected by the
+      executor from the stored approval record, never read from model arguments,
+      so a forged `"approved": true` cannot bypass the gate.
+- [x] Audit events for every step; page content, typed secrets and screenshots are
+      never recorded.
+- [x] Tests: `test_browser_url_security.py`, `test_browser_policy.py`,
+      `test_browser_helpers.py`, `test_browser_runtime.py`, `test_browser_tools.py`,
+      `test_browser_container.py`, and real-Playwright `test_browser_e2e.py`
+      (opt-in via `AAP_TEST_BROWSER=1`).
+
 ## Phase 7 — Product surface
 
 - [ ] Web UI with full RTL/LTR support, locale switching, plan/timeline view,
@@ -407,6 +457,24 @@ real, not interface-only.
   to a remote model unless the operator explicitly sets `cloud_allowed` *and* the
   data-boundary policy permits it. The real-X11 end-to-end suite is opt-in via
   `AAP_TEST_DISPLAY`; without a display it skips rather than passing vacuously.
+- Phase 8 closeout: the full suite is green — 603 passed, 0 skipped — with real
+  Postgres + Redis, a real GGUF model, a real X11 display and a real
+  Playwright/Chromium browser. Phase 8 added autonomous browsing and web
+  research: a real Playwright backend with semantic element refs, a deterministic
+  `UrlPolicy` that blocks SSRF/`file://`/credential/dangerous-scheme URLs before
+  the engine is touched, a per-run action budget, bounded freshness-tracked
+  observations, a prompt-injection scanner, a per-run source ledger for
+  evidence-based citation, the web-content data boundary, the browser tools, and
+  the observe→act→observe runtime. Notes recorded honestly: (1) browsing is
+  opt-in (`AAP_BROWSER_ENABLED`, default false) and local-only — a cloud build
+  never registers the tools; (2) the web-content boundary defaults to
+  `local_only`, so page content and screenshots never reach a remote model unless
+  the operator explicitly sets `cloud_allowed` *and* the data-boundary policy
+  permits it; (3) a form submit or dialog-accept requires a real approval — the
+  `approval_granted` flag is injected by the executor from the stored approval
+  record and is never read from model arguments, so a forged `"approved": true`
+  cannot bypass the gate. The real-Playwright end-to-end suite is opt-in via
+  `AAP_TEST_BROWSER=1`.
 
 ## Verification commands
 
@@ -430,9 +498,14 @@ export AAP_TEST_REDIS_URL=redis://localhost:6379/15
 # @local_model tests skip; everything else still runs.
 export AAP_TEST_MODEL_PATH=/path/to/model.gguf
 # Optional: exercise the real X11 computer-use path (Phase 7). Without it the
-# computer e2e tests skip; everything else still runs.
+# computer e2e tests skip; everything else still runs. The display needs a
+# window manager (Xvfb :99 + openbox) and xdotool/xrandr installed, or the
+# pointer is pinned at the screen centre and two computer e2e tests fail.
 export AAP_TEST_DISPLAY=:99
-uv run pytest                                          # 481 passed, 0 skipped
+# Optional: exercise the real Playwright/Chromium browsing path (Phase 8).
+# Without it the browser e2e tests skip; everything else still runs.
+export AAP_TEST_BROWSER=1
+uv run pytest                                          # 603 passed, 0 skipped
 ```
 
 The 36 Postgres/Redis tests own the schema via `create_all`/`drop_all`, so run

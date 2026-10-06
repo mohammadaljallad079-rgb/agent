@@ -127,6 +127,27 @@ class AuditEventType(StrEnum):
     COMPUTER_ACTION_THROTTLED = "computer.action_throttled"
     COMPUTER_OBSERVATION_STALE = "computer.observation_stale"
     COMPUTER_BOUNDARY_DECISION = "computer.boundary_decision"
+    # Browser / web (Phase 8). These record *metadata* only — a URL, title,
+    # element counts, action kind and policy decision — never the raw page text,
+    # a typed secret value, or a screenshot.
+    BROWSER_OBSERVED = "browser.observed"
+    BROWSER_NAVIGATED = "browser.navigated"
+    BROWSER_NAVIGATION_BLOCKED = "browser.navigation_blocked"
+    BROWSER_INTERACTED = "browser.interacted"
+    BROWSER_FORM_SUBMITTED = "browser.form_submitted"
+    BROWSER_DOWNLOADED = "browser.downloaded"
+    BROWSER_UPLOADED = "browser.uploaded"
+    BROWSER_TAB_OPENED = "browser.tab_opened"
+    BROWSER_TAB_SWITCHED = "browser.tab_switched"
+    BROWSER_TAB_CLOSED = "browser.tab_closed"
+    BROWSER_DIALOG_RESOLVED = "browser.dialog_resolved"
+    BROWSER_WAITED = "browser.waited"
+    BROWSER_ACTION_VERIFIED = "browser.action_verified"
+    BROWSER_ACTION_FAILED = "browser.action_failed"
+    BROWSER_STOP_REQUESTED = "browser.stop_requested"
+    BROWSER_BOUNDARY_DECISION = "browser.boundary_decision"
+    BROWSER_INJECTION_SUSPECTED = "browser.injection_suspected"
+    BROWSER_RESEARCH_SOURCE = "browser.research_source"
 
 
 def _utcnow() -> datetime:

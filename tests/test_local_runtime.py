@@ -493,7 +493,17 @@ def test_capability_registry_marks_only_safe_caps_implemented():
     assert "input.control" not in implemented
     assert "screen.capture" not in implemented
     assert "clipboard.read" not in implemented
+    # Browser control is declared but not implemented until it is enabled.
     assert "browser.control" not in implemented
+
+
+def test_browser_capability_is_implemented_when_enabled():
+    registry = LocalCapabilityRegistry(browser=True)
+    implemented = {c.id for c in registry.implemented()}
+    assert "browser.control" in implemented
+    # Enabling browsing does not silently implement computer control.
+    assert "input.control" not in implemented
+    assert "screen.capture" not in implemented
 
 
 def test_capability_availability_respects_platform_and_network():
