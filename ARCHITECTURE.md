@@ -1302,7 +1302,10 @@ and therefore cannot pass Windows acceptance as written:
   not implemented.
 
 Consequently the Phase 10W verdict is **PARTIALLY VERIFIED — WINDOWS BLOCKERS
-REMAIN**. See `TODO.md` for the Phase 10W follow-up items.
+REMAIN**. See `TODO.md` for the Phase 10W follow-up items. The exact,
+reproducible Windows build and acceptance procedure (and the list of gates that
+require an interactive Windows machine) is in
+[`docs/WINDOWS_ACCEPTANCE.md`](docs/WINDOWS_ACCEPTANCE.md).
 
 ---
 
