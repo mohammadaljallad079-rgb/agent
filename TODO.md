@@ -512,13 +512,23 @@ host-independent and were fixed with regression tests):
 Still required before Phase 10W can pass (needs real Windows + a packaged
 binary; not implementable in this environment):
 
-- [ ] A real Windows computer backend (`computer/backends/`): screen capture,
-      mouse, keyboard, DPI, multi-monitor. Today `PlatformKind.WINDOWS` returns
-      an unavailable backend ("design only"). Without it, screen/mouse/keyboard/
-      visual E2E cannot be accepted.
-- [ ] A binary Windows installer (MSI/MSIX/EXE) with a bundled runtime, so a
-      normal user needs no Python tooling. Today the installer is a real script
-      installer whose launcher depends on the interpreter that ran it.
+- [x] A real Windows computer backend (`computer/backends/windows.py`): Win32
+      screen capture, mouse, keyboard (Unicode/Arabic), DPI and multi-monitor,
+      behind an injectable `Win32Adapter` so it is unit-tested on any OS
+      (`tests/test_windows_backend.py`). `build_computer_backend` now selects it
+      for `PlatformKind.WINDOWS`. Real screen/mouse/keyboard/visual E2E still
+      need an interactive Windows desktop to *accept*.
+- [x] Packaging inputs for a binary Windows installer: `desktop/packaging.py`
+      generates a PyInstaller spec (frozen `ArabicAIAgent.exe`, bundling the UI
+      and packaged migrations) and an Inno Setup script (per-user
+      `{localappdata}`, no UAC, opt-in startup), and
+      `.github/workflows/windows.yml` freezes + compiles + uploads
+      `ArabicAIAgent-Setup-*.exe`. The artifact, its SHA-256 and an
+      upgrade-over-prior test still require a real Windows build.
+- [x] Browser runtime provisioning surface: `browser/provisioning.py` +
+      `/desktop/browser{,/provision,/progress,/cancel}` and the desktop UI
+      section let the product install/verify the Chromium runtime with real
+      progress and audit, instead of telling the user to run `playwright install`.
 - [ ] Code signing certificate and signing.
 - [ ] Tray/background runtime and Windows notifications (not implemented).
 - [ ] Run the full acceptance matrix on real Windows (install, first run, real

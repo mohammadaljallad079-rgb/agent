@@ -108,6 +108,7 @@ def create_desktop_app(
             "approvals": await service.list_approvals(),
             "permissions": service.permissions_view(),
             "settings": service.settings_view(),
+            "browser": service.browser_view(),
             "diagnostics": service.diagnostics(),
         }
 
@@ -208,6 +209,23 @@ def create_desktop_app(
     @app.post("/desktop/modes")
     async def set_mode(payload: ModeRequest, _: None = Depends(authorize)) -> dict[str, object]:
         return await service.set_mode(payload.mode)
+
+    # -- Browser provisioning --------------------------------------------
+    @app.get("/desktop/browser")
+    async def browser_status(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.browser_view()
+
+    @app.post("/desktop/browser/provision", status_code=status.HTTP_202_ACCEPTED)
+    async def provision_browser(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.provision_browser()
+
+    @app.get("/desktop/browser/progress")
+    async def browser_progress(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.browser_provision_status()
+
+    @app.post("/desktop/browser/cancel")
+    async def cancel_browser(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.cancel_browser_provision()
 
     @app.get("/desktop/settings")
     async def get_settings(_: None = Depends(authorize)) -> dict[str, object]:

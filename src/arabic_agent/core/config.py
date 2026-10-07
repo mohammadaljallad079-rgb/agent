@@ -273,6 +273,12 @@ class Settings(BaseSettings):
     # for a human-readable local console.
     log_json: bool = True
     log_level: str = "INFO"
+    # Optional directory for durable, rotating log files. Empty (the default)
+    # keeps logs on the console only. The packaged desktop product sets this to
+    # its per-user logs directory so a support bundle can include real logs.
+    log_dir: str = ""
+    log_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)
+    log_backup_count: int = Field(default=5, ge=0, le=100)
     # In-process metrics exposed at /metrics (Prometheus text format).
     metrics_enabled: bool = True
     # Tracing is recorded in-process; the OpenTelemetry exporter is used only

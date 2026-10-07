@@ -101,18 +101,25 @@ def configure_logging(
     level: int = logging.INFO,
     service: str = "arabic-agent",
     environment: str = "dev",
+    log_dir: str = "",
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 5,
     force: bool = False,
 ) -> logging.Handler:
     """Install the JSON formatter on the root logger.
 
-    Idempotent: repeated calls replace the previously installed handler rather
-    than stacking handlers (which would duplicate every log line). Returns the
-    installed handler so callers and tests can inspect it.
+    Idempotent: repeated calls replace the previously installed handlers rather
+    than stacking them (which would duplicate every log line). When ``log_dir``
+    is set a size-bounded rotating file handler is added alongside the console
+    handler, so a packaged desktop install keeps real logs for support without
+    them growing without limit. Returns the console handler so callers and tests
+    can inspect it.
     """
     global _configured
     root = logging.getLogger()
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonLogFormatter(service=service, environment=environment))
+    formatter = JsonLogFormatter(service=service, environment=environment)
+    handler.setFormatter(formatter)
 
     if not _configured or force:
         for existing in list(root.handlers):
@@ -120,6 +127,25 @@ def configure_logging(
                 root.removeHandler(existing)
         handler._arabic_agent_json = True  # type: ignore[attr-defined]
         root.addHandler(handler)
+        if log_dir:
+            try:
+                from logging.handlers import RotatingFileHandler
+                from pathlib import Path
+
+                Path(log_dir).mkdir(parents=True, exist_ok=True)
+                file_handler = RotatingFileHandler(
+                    Path(log_dir) / "arabic-agent.log",
+                    maxBytes=max_bytes,
+                    backupCount=backup_count,
+                    encoding="utf-8",
+                )
+                file_handler.setFormatter(formatter)
+                file_handler._arabic_agent_json = True  # type: ignore[attr-defined]
+                root.addHandler(file_handler)
+            except OSError:
+                # A log directory that cannot be created must not stop startup;
+                # the console handler already carries the same records.
+                root.warning("could not open the log directory; logging to console only")
         root.setLevel(level)
         _configured = True
     return handler

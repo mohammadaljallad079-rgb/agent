@@ -34,6 +34,9 @@ from dataclasses import dataclass
 
 import httpx
 
+from ..core.process import process_group_kwargs, terminate_process
+from .product_paths import resolve_product_paths
+
 logger = logging.getLogger(__name__)
 
 #: How long to wait for the runtime to become ready before giving up (seconds).
@@ -64,7 +67,14 @@ def _free_loopback_port() -> int:
 
 
 def runtime_command() -> list[str]:
-    """The command that starts the runtime as a module (portable, no console script)."""
+    """The command that starts the runtime as a module (portable, no console script).
+
+    In a frozen (PyInstaller) build there is no separate interpreter to run
+    ``-m`` with, so the product executable re-invokes itself with a ``runtime``
+    subcommand; the packaged entry point dispatches on it.
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "runtime"]
     return [sys.executable, "-m", "arabic_agent.local.main"]
 
 
@@ -77,10 +87,12 @@ class DesktopRuntimeManager:
         ready_timeout: float = DEFAULT_READY_TIMEOUT,
         extra_env: dict[str, str] | None = None,
         command: list[str] | None = None,
+        use_product_paths: bool = True,
     ) -> None:
         self._ready_timeout = ready_timeout
         self._extra_env = dict(extra_env or {})
         self._command = command or runtime_command()
+        self._use_product_paths = use_product_paths
         self._handle: RuntimeHandle | None = None
 
     @property
@@ -113,6 +125,10 @@ class DesktopRuntimeManager:
                 "AAP_LOCAL_CONTROL_TOKEN": token,
             }
         )
+        # Point the child at the per-user product directories unless the caller
+        # (a test, or an operator who set them explicitly) already decided.
+        if self._use_product_paths:
+            env.update(resolve_product_paths().ensure().env_overrides())
         env.update(self._extra_env)
         return env
 
@@ -124,17 +140,13 @@ class DesktopRuntimeManager:
         chosen_port = port or _free_loopback_port()
         chosen_token = token or secrets.token_urlsafe(32)
         env = self._env(port=chosen_port, token=chosen_token)
-        creationflags = 0
-        if sys.platform.startswith("win"):  # pragma: no cover - Windows only
-            # Do not flash a console window for the background runtime.
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             process = subprocess.Popen(  # noqa: S603, ASYNC220 - fixed module invocation, no shell
                 self._command,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                creationflags=creationflags,
+                **process_group_kwargs(),
             )
         except OSError as exc:
             raise RuntimeStartError(f"could not start the runtime: {exc}") from exc
@@ -178,14 +190,7 @@ class DesktopRuntimeManager:
         handle = self._handle
         if handle is None:
             return
-        process = handle.process
-        if process.poll() is None:
-            process.terminate()
-            try:
-                await asyncio.to_thread(process.wait, grace_seconds)
-            except subprocess.TimeoutExpired:  # pragma: no cover - stubborn child
-                process.kill()
-                await asyncio.to_thread(process.wait, 5)
+        await terminate_process(handle.process, grace_seconds=grace_seconds)
         self._handle = None
 
     async def restart(self) -> RuntimeHandle:

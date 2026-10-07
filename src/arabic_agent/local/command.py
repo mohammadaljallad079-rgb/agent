@@ -30,6 +30,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from ..core.errors import PermissionDeniedError, TimeoutError_, ValidationError
+from ..core.process import is_windows, process_group_kwargs, terminate_process
 
 #: Environment variables allowed through to a child process. Everything else
 #: (credentials, tokens, cloud config) is stripped.
@@ -116,11 +117,18 @@ class ControlledCommandRunner:
         return {key: os.environ[key] for key in SAFE_ENV_KEYS if key in os.environ}
 
     def parse(self, command: str) -> list[str]:
-        """Parse a command line into argv *without* shell interpretation."""
+        """Parse a command line into argv *without* shell interpretation.
+
+        The splitter is POSIX on POSIX and Windows-aware on Windows, so a path
+        such as ``C:\\Program Files\\app.exe`` is kept as one token rather than
+        being split at the backslashes. No shell is ever involved, so shell
+        metacharacters (``&``, ``|``, ``;``, ``>``, ``%``, ``!``) remain literal
+        data and cannot inject a second command on either platform.
+        """
         if not isinstance(command, str) or not command.strip():
             raise ValidationError("command must be a non-empty string")
         try:
-            argv = shlex.split(command)
+            argv = shlex.split(command, posix=not is_windows())
         except ValueError as exc:
             raise ValidationError(f"could not parse command: {exc}") from exc
         if not argv:
@@ -149,12 +157,12 @@ class ControlledCommandRunner:
             env=self._safe_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **process_group_kwargs(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except TimeoutError as exc:
-            process.kill()
-            await process.wait()
+            await terminate_process(process)
             raise TimeoutError_(
                 f"command exceeded {timeout}s", details={"program": program}
             ) from exc

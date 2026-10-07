@@ -45,6 +45,9 @@ def configure_observability(settings: object) -> None:
             level=getattr(_logging, level_name, _logging.INFO),
             service=str(getattr(settings, "otel_service_name", "arabic-agent")),
             environment=str(getattr(settings, "environment", "development")),
+            log_dir=str(getattr(settings, "log_dir", "") or ""),
+            max_bytes=int(getattr(settings, "log_max_bytes", 5 * 1024 * 1024)),
+            backup_count=int(getattr(settings, "log_backup_count", 5)),
         )
     exporter: Exporter | None = None
     if bool(getattr(settings, "otel_enabled", False)):

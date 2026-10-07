@@ -215,6 +215,19 @@ async def test_bridge_rejects_bad_token(live_desktop: str):
         await bridge.aclose()
 
 
+async def test_bridge_browser_surface_over_real_http(live_desktop: str):
+    bridge = DesktopBridge(base_url=live_desktop, token=TOKEN)
+    try:
+        view = await bridge.browser()
+        assert "state" in view
+        progress = await bridge.browser_progress()
+        assert "state" in progress
+        cancelled = await bridge.cancel_browser_provision()
+        assert cancelled["cancelled"] is False
+    finally:
+        await bridge.aclose()
+
+
 def test_ui_assets_are_arabic_first_and_isolated():
     html = _load_index_html()
     assert 'dir="rtl"' in html
@@ -224,6 +237,22 @@ def test_ui_assets_are_arabic_first_and_isolated():
     assert "الوكيل العربي" in html
     # The control token must never be baked into the page.
     assert TOKEN not in html
+
+
+def test_ui_has_a_real_browser_provisioning_surface():
+    """The browser section is wired to the bridge, not a placeholder button."""
+    html = _load_index_html()
+    assert 'id="s-browser"' in html
+    assert 'id="provisionBtn"' in html
+    assert 'id="cancelProvisionBtn"' in html
+    # The section is reachable from the navigation.
+    assert '"browser"' in html
+    # The handlers call the real bridge methods.
+    assert "a.provision_browser()" in html
+    assert "a.cancel_browser_provision()" in html
+    # Arabic strings are present for the surface.
+    assert "متصفح الويب" in html
+    assert "تجهيز المتصفح" in html
 
 
 def test_ui_dir_exists():

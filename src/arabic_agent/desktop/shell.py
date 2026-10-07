@@ -136,6 +136,19 @@ class DesktopBridge:
     async def set_mode(self, mode: str) -> Any:
         return await self._post("/desktop/modes", {"mode": mode})
 
+    # -- Browser provisioning -------------------------------------------
+    async def browser(self) -> Any:
+        return await self._get("/desktop/browser")
+
+    async def provision_browser(self) -> Any:
+        return await self._post("/desktop/browser/provision")
+
+    async def browser_progress(self) -> Any:
+        return await self._get("/desktop/browser/progress")
+
+    async def cancel_browser_provision(self) -> Any:
+        return await self._post("/desktop/browser/cancel")
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

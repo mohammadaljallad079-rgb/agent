@@ -59,12 +59,19 @@ browser = [
 desktop = [
     "pywebview>=5,<7",
 ]
+# Windows binary packaging (Phase 10W). Optional and Windows-oriented: used by
+# the packaging job to freeze the product into a single executable. The generated
+# Inno Setup script is compiled with Inno Setup's ISCC.exe (not a Python package).
+packaging = [
+    "pyinstaller>=6,<7",
+]
 
 [project.scripts]
 agent-platform = "arabic_agent.api.app:main"
 agent-worker = "arabic_agent.worker.main:main"
 agent-desktop = "arabic_agent.local.main:main"
 agent-shell = "arabic_agent.desktop.shell:main"
+agent = "arabic_agent.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arabic_agent"]

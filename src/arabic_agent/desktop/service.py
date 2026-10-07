@@ -27,6 +27,7 @@ from typing import Any
 
 from ..api.service import RunService
 from ..audit.base import AuditEventType
+from ..browser.provisioning import BrowserProvisioner
 from ..container import Platform
 from ..core.enums import (
     Locale,
@@ -89,6 +90,7 @@ class DesktopService:
         self._principal = (principal or DesktopPrincipal()).to_principal()
         self._runs = RunService(platform)
         self._locale = locale
+        self._browser = BrowserProvisioner()
 
     @property
     def events(self) -> DesktopEventBroker:
@@ -208,6 +210,68 @@ class DesktopService:
     def remove_model(self, model_id: str) -> dict[str, object]:
         return self._models.remove(model_id)
 
+    # -- Browser provisioning -------------------------------------------
+    def browser_view(self) -> dict[str, object]:
+        """Browser readiness plus the browser config, from real state."""
+        status = self._browser.status()
+        settings = self._platform.settings
+        return {
+            "state": status.state.value,
+            "ready": status.ready,
+            "package_available": status.package_available,
+            "chromium_path": status.chromium_path,
+            "detail": status.detail,
+            "enabled": settings.browser_enabled,
+            "headless": settings.browser_headless,
+            "allowed_domains": list(settings.browser_allowed_domains),
+            "blocked_domains": list(settings.browser_blocked_domains),
+        }
+
+    async def provision_browser(self) -> dict[str, object]:
+        """Install the missing browser runtime (real install), then report."""
+        await self._platform.audit.record(
+            AuditEventType.BROWSER_PROVISION_REQUESTED,
+            tenant_id=self._principal.tenant_id,
+            user_id=self._principal.user_id,
+            run_id="local",
+            message="browser runtime provisioning requested",
+        )
+        status = await self._browser.provision()
+        outcome = (
+            AuditEventType.BROWSER_PROVISION_COMPLETED
+            if status.ready
+            else AuditEventType.BROWSER_PROVISION_FAILED
+        )
+        await self._platform.audit.record(
+            outcome,
+            tenant_id=self._principal.tenant_id,
+            user_id=self._principal.user_id,
+            run_id="local",
+            message=f"browser runtime provisioning {status.state.value}",
+            data={"state": status.state.value, "ready": status.ready},
+        )
+        return {
+            "state": status.state.value,
+            "ready": status.ready,
+            "chromium_path": status.chromium_path,
+            "detail": status.detail,
+            "log_tail": status.log_tail,
+        }
+
+    def browser_provision_status(self) -> dict[str, object]:
+        status = self._browser.status()
+        return {
+            "state": status.state.value,
+            "ready": status.ready,
+            "chromium_path": status.chromium_path,
+            "detail": status.detail,
+            "log_tail": status.log_tail,
+        }
+
+    async def cancel_browser_provision(self) -> dict[str, object]:
+        cancelled = await self._browser.cancel()
+        return {"cancelled": cancelled, **self.browser_provision_status()}
+
     def _provider_factory(self, model_id: str) -> Any:
         """Build a real provider for an installed model, or ``None``."""
         descriptor = self._models.descriptor_for(model_id)
@@ -322,6 +386,7 @@ class DesktopService:
             "storage": {
                 "store_dir": settings.local_store_dir,
                 "model_storage_dir": settings.local_model_storage_dir or None,
+                "log_dir": settings.log_dir or None,
             },
             "workspace": {
                 "roots": list(runtime.status().allowed_roots) if runtime is not None else [],
@@ -357,6 +422,7 @@ class DesktopService:
             },
             "computer_control_enabled": settings.computer_control_enabled,
             "browser_enabled": settings.browser_enabled,
+            "browser": self.browser_view(),
             "connectors_enabled": settings.connectors_enabled,
             "tools": self._platform.tools.names(),
             "disk_free_bytes": disk_free,

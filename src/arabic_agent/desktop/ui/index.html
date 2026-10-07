@@ -120,6 +120,20 @@
       <div id="models"></div>
     </section>
 
+    <section id="s-browser">
+      <h2 data-i18n="browser">متصفح الويب</h2>
+      <div class="card">
+        <div class="row wrap">
+          <span class="pill" id="browserState">—</span>
+          <button class="btn" id="provisionBtn" data-i18n="provision">تجهيز المتصفح</button>
+          <button class="btn ghost" id="cancelProvisionBtn" data-i18n="cancel">إلغاء</button>
+        </div>
+        <div class="muted" id="browserDetail"></div>
+        <pre class="muted" id="browserLog" style="white-space:pre-wrap; word-break:break-word;"></pre>
+      </div>
+      <div class="card"><h3 data-i18n="privacy">الخصوصية</h3><div id="browserPrivacy" class="muted"></div></div>
+    </section>
+
     <section id="s-settings">
       <h2 data-i18n="settings">الإعدادات</h2>
       <div class="grid2">
@@ -152,7 +166,9 @@
         permissions:"الصلاحيات", modes:"وضع التشغيل", general:"عام", export:"تصدير التشخيص (منقّح)",
         stop:"إيقاف", approve:"موافقة", deny:"رفض", install:"تثبيت", verify:"تحقّق", health:"فحص",
         remove:"إزالة", installed:"مثبّت", notInstalled:"غير مثبّت", active:"نشط", empty:"لا يوجد",
-        noRuns:"لا توجد مهام بعد", noApprovals:"لا توجد موافقات معلّقة", free:"متاح" },
+        noRuns:"لا توجد مهام بعد", noApprovals:"لا توجد موافقات معلّقة", free:"متاح",
+        browser:"متصفح الويب", provision:"تجهيز المتصفح", cancel:"إلغاء",
+        ready:"جاهز", installing:"قيد التجهيز", broken:"فشل التجهيز" },
       en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
@@ -160,7 +176,9 @@
         permissions:"Permissions", modes:"Operating mode", general:"General", export:"Export diagnostics (redacted)",
         stop:"Stop", approve:"Approve", deny:"Deny", install:"Install", verify:"Verify", health:"Health check",
         remove:"Remove", installed:"installed", notInstalled:"not installed", active:"active", empty:"none",
-        noRuns:"No tasks yet", noApprovals:"No pending approvals", free:"free" }
+        noRuns:"No tasks yet", noApprovals:"No pending approvals", free:"free",
+        browser:"Web browser", provision:"Provision browser", cancel:"Cancel",
+        ready:"ready", installing:"provisioning", broken:"provisioning failed" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
     const t = (k) => (I18N[LANG][k] || k);
@@ -182,7 +200,7 @@
     }
 
     // ---- navigation ----
-    const SECTIONS = ["workspace","approvals","models","settings","diagnostics"];
+    const SECTIONS = ["workspace","approvals","models","browser","settings","diagnostics"];
     function buildNav() {
       const nav = $("nav"); nav.replaceChildren();
       SECTIONS.forEach(s => {
@@ -325,6 +343,29 @@
         b.onclick = () => setMode(m); box.appendChild(b);
       });
     }
+    function renderBrowser(b) {
+      const pillBox = $("browserState");
+      const state = (b && b.state) || "unknown";
+      const labels = { ready: t("ready"), installing: t("installing"), broken: t("broken") };
+      pillBox.textContent = labels[state] || state;
+      pillBox.className = "pill";
+      if (state === "ready") pillBox.classList.add("ok");
+      else if (state === "broken") pillBox.classList.add("danger");
+      else pillBox.classList.add("warn");
+      $("browserDetail").textContent = (b && b.detail) || "";
+      $("browserLog").textContent = (b && b.log_tail) || "";
+      const p = [];
+      if (b) {
+        p.push("enabled: " + b.enabled, "headless: " + b.headless);
+        if (b.chromium_path) p.push("chromium: " + b.chromium_path);
+        if (b.allowed_domains && b.allowed_domains.length) p.push("allowed: " + b.allowed_domains.join(", "));
+        if (b.blocked_domains && b.blocked_domains.length) p.push("blocked: " + b.blocked_domains.join(", "));
+      }
+      $("browserPrivacy").textContent = p.join("  ·  ");
+      const busy = state === "installing";
+      $("provisionBtn").disabled = busy;
+      $("cancelProvisionBtn").disabled = !busy;
+    }
     function renderSettings(s) {
       const box = $("settings"); box.replaceChildren();
       [["locale", s.general.locale], ["environment", s.general.environment],
@@ -348,6 +389,7 @@
         renderModels(boot.models, boot.recommendation);
         renderPrivacy(boot.modes.privacy); renderPermissions(boot.permissions);
         renderModes(boot.modes); renderSettings(boot.settings); renderDiagnostics(boot.diagnostics);
+        renderBrowser(boot.browser);
         $("modeBadge").textContent = boot.modes.current;
       } catch (e) { toast("تعذّر تحميل الحالة: " + e); }
     }
@@ -377,6 +419,20 @@
     async function healthModel(id) { const a = api(); if (!a) return; try { const r = await a.model_health(id); toast(r.health + ": " + (r.detail || "")); } catch (e) { toast(String(e)); } }
     async function removeModel(id) { const a = api(); if (!a) return; try { await a.remove_model(id); await refresh(); } catch (e) { toast(String(e)); } }
     async function setMode(m) { const a = api(); if (!a) return; try { await a.set_mode(m); await refresh(); } catch (e) { toast(String(e)); } }
+    async function provisionBrowser() {
+      const a = api(); if (!a) return;
+      renderBrowser({ state: "installing", detail: "", log_tail: "" });
+      try {
+        const r = await a.provision_browser();
+        renderBrowser({ ...r, enabled: true, headless: true });
+        toast(r.ready ? t("ready") : (r.detail || t("broken")));
+      } catch (e) { toast(String(e)); await refresh(); }
+    }
+    async function cancelBrowserProvision() {
+      const a = api(); if (!a) return;
+      try { const r = await a.cancel_browser_provision(); renderBrowser({ ...r, enabled: true, headless: true }); }
+      catch (e) { toast(String(e)); }
+    }
     async function exportDiagnostics() {
       const a = api(); if (!a) return;
       try { const d = await a.export_diagnostics(); $("diag").textContent = JSON.stringify(d, null, 2); }
@@ -405,6 +461,8 @@
         a.list_runs().then(rs => rs.filter(r => !["completed","failed","cancelled"].includes(r.status)).forEach(r => stopRun(r.id)));
       };
       $("exportBtn").onclick = exportDiagnostics;
+      $("provisionBtn").onclick = provisionBrowser;
+      $("cancelProvisionBtn").onclick = cancelBrowserProvision;
       $("langBtn").onclick = () => { LANG = LANG === "ar" ? "en" : "ar"; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };
       $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
     }

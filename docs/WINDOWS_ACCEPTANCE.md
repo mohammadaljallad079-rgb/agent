@@ -32,30 +32,52 @@ evidence that *is* real (wheel build, clean-venv install, migration creation,
 
 ## 2. Product blockers independent of the host OS
 
-These cannot pass on any Windows machine until the product implements them.
-They are tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
+These are the product gaps that stood between the code and a real Windows
+acceptance. The implementation-side work is now in the repository; the
+*acceptance* still has to run on real Windows (which is what this handoff is
+for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
 
-1. **Windows computer backend is design-only.** `src/arabic_agent/computer/backends/`
-   implements only Linux/X11. `build_computer_backend()` returns a
-   `NullComputerBackend` for `PlatformKind.WINDOWS` with the reason
-   *"the Windows computer backend is not implemented yet (design only)"*.
-   → Gates 30–37 (screen capture, DPI, multi-monitor, mouse, keyboard, Arabic
-   typing, visual Agent E2E, stale-observation) have **no implementation**.
+1. **Windows computer backend — implemented, not yet accepted.**
+   `computer/backends/windows.py` implements the `ComputerBackend` contract over
+   Win32 (`ctypes`): `EnumDisplayMonitors` + `GetDpiForMonitor` for monitors and
+   scale, Pillow's native grab for capture (optionally per-monitor), `SendInput`
+   for absolute pointer and Unicode keyboard injection (Arabic types regardless
+   of the active layout), and `EnumWindows`/`GetForegroundWindow`/
+   `SetForegroundWindow` for windows. `build_computer_backend()` selects it for
+   `PlatformKind.WINDOWS`; off Windows it reports itself unavailable with a clear
+   reason. The Win32 calls sit behind an injectable `Win32Adapter`, so the whole
+   backend is unit-tested on any OS with a fake adapter
+   (`tests/test_windows_backend.py`). Gates 30–37 (screen capture, DPI,
+   multi-monitor, mouse, keyboard, Arabic typing, visual Agent E2E,
+   stale-observation) now have an implementation to exercise, but still need a
+   real interactive Windows desktop to be marked PASS.
 
-2. **No binary Windows installer.** `src/arabic_agent/desktop/installer.py` is a
-   real per-user *script* installer (launcher `.cmd`, manifest, per-user
-   registry uninstall entry, Startup-folder shortcut). There is **no MSI/MSIX/EXE**,
-   no bundled Python runtime, and the launcher depends on the interpreter that
-   ran the installer. → Gates 8/73 (installer build, installer SHA-256) cannot
-   produce an artifact until packaging is added.
+2. **Binary Windows installer — build inputs implemented, artifact not yet
+   built.** `desktop/packaging.py` generates the two inputs a binary build needs:
+   a PyInstaller spec (a frozen `ArabicAIAgent.exe` that bundles the desktop UI
+   and the packaged migration chain `arabic_agent/_migrations_local`) and an Inno
+   Setup script (per-user `{localappdata}` install, `PrivilegesRequired=lowest`
+   so there is no UAC, Start-menu/desktop icons, opt-in startup entry). Write
+   both with `python -m arabic_agent.desktop.packaging dist`, then freeze with
+   PyInstaller and compile with ISCC. `.github/workflows/windows.yml` runs that
+   full sequence on `windows-latest` and uploads `ArabicAIAgent-Setup-*.exe`.
+   Gates 3/4/73 (installer build, SHA-256) still need a real Windows build to
+   produce the artifact and its hash. The script installer in
+   `desktop/installer.py` remains as the developer install path.
 
-3. **Browser runtime is an optional extra.** `playwright` is in
-   `[project.optional-dependencies].browser`; a normal user must run
-   `playwright install chromium` themselves. → Gate 27 (browser packaging) is a
-   FAIL until the installer manages the download.
+3. **Browser runtime — provisioning implemented.** `browser/provisioning.py` is
+   a real provisioner (probe → install → verify → state machine with cancel),
+   exposed at `/desktop/browser`, `/desktop/browser/provision`,
+   `/desktop/browser/progress`, `/desktop/browser/cancel`, surfaced in the
+   desktop UI's "Web browser" section and audited
+   (`BROWSER_PROVISION_REQUESTED/COMPLETED/FAILED`). `playwright` remains an
+   optional extra so the core install stays light; the product can now provision
+   Chromium with real progress instead of telling the user to run
+   `playwright install chromium`. Gate 27 (browser packaging) can be exercised;
+   it still needs a real Windows run to be marked PASS.
 
 4. **Code signing, tray/background runtime, Windows notifications** are not
-   implemented.
+   implemented (unchanged).
 
 ---
 
@@ -90,7 +112,7 @@ uv pip install -e ".[dev]"
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
-uv run pytest                      # expect: 702 passed, 55 skipped, 0 failed
+uv run pytest                      # expect: 764 passed, 55 skipped, 0 failed
 
 # 2. Build the wheel (contains the desktop UI asset and the packaged
 #    migration chain arabic_agent/_migrations_local)
@@ -113,17 +135,32 @@ C:\tmp\aap-verify\Scripts\python -m arabic_agent.desktop.installer install
 & "$env:LOCALAPPDATA\ArabicAIAgent\Arabic AI Agent.cmd"
 ```
 
-### Producing a real binary installer (not yet implemented)
+### Producing a real binary installer (inputs implemented; build on Windows)
 
-To satisfy gates 8/73 a packaging step must be added. The intended options:
+The build inputs are generated by the product, not written by hand:
 
-- **PyInstaller** → a one-folder/one-file `agent-shell.exe` plus an Inno Setup
-  or NSIS script that wraps it into `ArabicAIAgent-Setup-0.1.0.exe`; or
-- **MSIX** via `MakeAppx`/`msixpackaging`; or
-- **WiX Toolset** → an MSI.
+```powershell
+python -m arabic_agent.desktop.packaging dist   # writes ArabicAIAgent.spec + ArabicAIAgent.iss
+pyinstaller --clean --noconfirm dist\ArabicAIAgent.spec
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\ArabicAIAgent.iss
+Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256
+```
 
-Until one of these exists and is committed, there is no installer artifact and
-no installer SHA-256 to report.
+`desktop/packaging.py` produces:
+
+- **`ArabicAIAgent.spec`** — a one-folder PyInstaller spec for a windowed
+  (`console=False`) `ArabicAIAgent.exe` that runs `arabic_agent.__main__:main`,
+  bundling the desktop UI asset (`arabic_agent/desktop/ui`) and the packaged
+  migration chain (`arabic_agent/_migrations_local`); and
+- **`ArabicAIAgent.iss`** — an Inno Setup script installing per-user into
+  `{localappdata}\ArabicAIAgent` with `PrivilegesRequired=lowest` (no UAC),
+  Start-menu/desktop icons, an opt-in Startup entry, and an uninstall that
+  preserves or removes user data as a choice.
+
+`.github/workflows/windows.yml` runs exactly this sequence on `windows-latest`
+and uploads the resulting `ArabicAIAgent-Setup-*.exe`. The artifact itself, its
+SHA-256, and the upgrade-over-prior-install gate still require a real Windows
+build. (MSIX/WiX remain alternatives if a signed MSI is preferred later.)
 
 ---
 
@@ -136,8 +173,8 @@ real logged-in Windows desktop; **[credential]** requires external credentials.
 |---|---|---|---|
 | 1 | Actual Windows env | Record OS build, arch, CPU/RAM/GPU/VRAM, free disk, admin? | — |
 | 2 | Production build | `uv build --wheel` | — |
-| 3 | Installer build | PyInstaller/MSIX/WiX (see §4) | packaging (missing) |
-| 4 | Installer SHA-256 | `Get-FileHash` on the artifact | packaging (missing) |
+| 3 | Installer build | PyInstaller/MSIX/WiX (see §4) | packaging (inputs ready; artifact needs Windows build) |
+| 4 | Installer SHA-256 | `Get-FileHash` on the artifact | packaging (inputs ready; artifact needs Windows build) |
 | 5 | Clean install | §4 step 5 on a clean user | — |
 | 6 | Launch from installed app | §4 step 6 | — |
 | 7 | No terminal required | Confirm the launcher starts the UI without a console | — |
@@ -160,19 +197,19 @@ real logged-in Windows desktop; **[credential]** requires external credentials.
 | 24 | Arabic filename/content | UTF-8 file name and contents round-trip | — |
 | 25 | Workspace escape test | `..\..\Windows\System32` traversal denied | — |
 | 26 | Arabic Agent E2E | Arabic goal, Arabic answer | model |
-| 27 | Browser packaging | Installer provides chromium, or explicit progress | packaging (missing) |
+| 27 | Browser packaging | Installer provides chromium, or explicit progress | packaging (inputs ready; artifact needs Windows build) |
 | 28 | Browser Agent E2E | Local test site: find Settings, change pref, verify | model + browser |
 | 29 | Public web research | ≥2 sources, provenance, synthesis | network |
-| 30 | Screen capture **[interactive]** | Backend captures the real desktop | Windows backend (missing) |
-| 31 | DPI **[interactive]** | Test at 100/125/150% (only claim what is tested) | Windows backend (missing) |
-| 32 | Multi-monitor **[interactive]** | Test only if ≥2 monitors physically present | Windows backend (missing) |
-| 33 | Real mouse **[interactive]** | Observe→locate→click→verify | Windows backend (missing) |
-| 34 | Real keyboard **[interactive]** | Type / Enter / Tab / safe hotkey | Windows backend (missing) |
-| 35 | Arabic typing **[interactive]** | Arabic text into a controlled field | Windows backend (missing) |
-| 36 | Visual Agent E2E **[interactive]** | Observe→understand→act→verify | Windows backend (missing) |
-| 37 | Stale observation **[interactive]** | Change screen between observe and act → act refused | Windows backend (missing) |
+| 30 | Screen capture **[interactive]** | Backend captures the real desktop | Windows backend (implemented; needs interactive Windows) |
+| 31 | DPI **[interactive]** | Test at 100/125/150% (only claim what is tested) | Windows backend (implemented; needs interactive Windows) |
+| 32 | Multi-monitor **[interactive]** | Test only if ≥2 monitors physically present | Windows backend (implemented; needs interactive Windows) |
+| 33 | Real mouse **[interactive]** | Observe→locate→click→verify | Windows backend (implemented; needs interactive Windows) |
+| 34 | Real keyboard **[interactive]** | Type / Enter / Tab / safe hotkey | Windows backend (implemented; needs interactive Windows) |
+| 35 | Arabic typing **[interactive]** | Arabic text into a controlled field | Windows backend (implemented; needs interactive Windows) |
+| 36 | Visual Agent E2E **[interactive]** | Observe→understand→act→verify | Windows backend (implemented; needs interactive Windows) |
+| 37 | Stale observation **[interactive]** | Change screen between observe and act → act refused | Windows backend (implemented; needs interactive Windows) |
 | 38 | Emergency stop | Stop a multi-step run; tools/input cease | model |
-| 39 | Human takeover **[interactive]** | Pause → change state → resume re-observes | Windows backend (missing) |
+| 39 | Human takeover **[interactive]** | Pause → change state → resume re-observes | Windows backend (implemented; needs interactive Windows) |
 | 40 | Approval UI | Consequential action shows action/target/risk | connector |
 | 41 | Approval binding | Approve; digest matches; executes once | connector |
 | 42 | Approval mutation | Change recipient → old approval invalid | connector |
@@ -206,7 +243,7 @@ real logged-in Windows desktop; **[credential]** requires external credentials.
 | 70 | Reinstall | Clean startup after reinstall | — |
 | 71 | No dev dependency | Installed app runs without repo/uv/pytest | — |
 | 72 | Clean-machine prereqs | Record every prerequisite required | — |
-| 73 | Installer hash | `Get-FileHash` (see §4) | packaging (missing) |
+| 73 | Installer hash | `Get-FileHash` (see §4) | packaging (inputs ready; artifact needs Windows build) |
 | 74 | Code signing | `Get-AuthenticodeSignature` | cert (missing) |
 | 75–76 | Performance / resource release | Measure launch, readiness, idle RAM, model load, shutdown | — |
 | 77–79 | Arabic RTL / LTR / accessibility | Inspect the real UI; keyboard nav | — |
@@ -238,8 +275,9 @@ real logged-in Windows desktop; **[credential]** requires external credentials.
 
 ## 7. What still requires an interactive Windows machine
 
-Even once the two product blockers above are implemented, these gates need a
-real interactive desktop and cannot be run headlessly:
+The implementation-side blockers are closed (Windows backend, packaging inputs,
+browser provisioning), but these gates still need a real interactive desktop and
+cannot be run headlessly:
 
 - 30–37 (screen capture, DPI, multi-monitor, mouse, keyboard, Arabic typing,
   visual Agent E2E, stale-observation protection)
@@ -257,4 +295,4 @@ After running on real Windows, report the Phase 10W matrix with a real
 `PASS`/`FAIL`/`NOT VERIFIED` per gate, the installer SHA-256, the exact model
 used, and exact test counts. Until then the verdict is:
 
-**PHASE 10W PARTIALLY VERIFIED — WINDOWS BLOCKERS REMAIN.**
+**PHASE 10W PARTIALLY VERIFIED — IMPLEMENTATION COMPLETE, WINDOWS RUN PENDING.**

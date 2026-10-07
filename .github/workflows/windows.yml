@@ -1,0 +1,68 @@
+name: Windows
+
+# Windows is a first-class product target. This workflow proves the suite runs
+# on real Windows and produces the binary installer artifacts. It is the
+# automation half of docs/WINDOWS_ACCEPTANCE.md; the interactive gates still
+# require a real logged-in desktop and are not covered here.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Tests on Windows (${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Format check
+        run: ruff format --check .
+      - name: Type check
+        run: mypy
+      - name: Tests
+        run: pytest
+
+  package:
+    name: Build the Windows installer
+    runs-on: windows-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: Install (with the packaging and desktop extras)
+        run: uv pip install --system -e ".[dev,desktop,packaging]"
+      - name: Generate the packaging inputs
+        run: python -m arabic_agent.desktop.packaging dist
+      - name: Freeze the product with PyInstaller
+        run: pyinstaller --clean --noconfirm dist\ArabicAIAgent.spec
+      - name: Smoke-test the frozen executable
+        run: |
+          dist\ArabicAIAgent\ArabicAIAgent.exe version
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Compile the installer
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\ArabicAIAgent.iss
+      - name: Hash the installer
+        run: Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256 | Format-List
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArabicAIAgent-Setup
+          path: dist\ArabicAIAgent-Setup-*.exe
+          if-no-files-found: error

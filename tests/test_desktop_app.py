@@ -8,12 +8,14 @@ agent loop, policy engine and tools are the real ones; only the LLM is faked.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from arabic_agent.browser.provisioning import BrowserProvisioner
 from arabic_agent.core.config import Settings
 from arabic_agent.core.enums import OperatingMode, RuntimeKind
 from arabic_agent.local.main import build_local_control_app
@@ -221,3 +223,69 @@ def test_control_token_still_required_by_launcher(tmp_path):
     )
     with pytest.raises(ConfigurationError):
         build_local_control_app(no_token, provider_registry=registry, default_model="fake/model")
+
+
+# --- Browser provisioning surface ------------------------------------------
+def test_browser_view_reports_real_state(tmp_path):
+    client = TestClient(_app(tmp_path))
+    body = client.get("/desktop/browser", headers=HEADERS).json()
+    assert body["state"] in {"ready", "not_installed", "unknown", "broken"}
+    assert isinstance(body["package_available"], bool)
+    assert "enabled" in body and "headless" in body
+    # Read-only view: it must not leak a token or a raw environment dump.
+    assert "token" not in json.dumps(body).lower()
+
+
+def test_bootstrap_includes_browser_state(tmp_path):
+    client = TestClient(_app(tmp_path))
+    boot = client.get("/desktop/bootstrap", headers=HEADERS).json()
+    assert "browser" in boot
+    assert "state" in boot["browser"]
+    assert "browser" in boot["diagnostics"]
+
+
+def test_browser_progress_and_cancel_are_available(tmp_path):
+    client = TestClient(_app(tmp_path))
+    progress = client.get("/desktop/browser/progress", headers=HEADERS)
+    assert progress.status_code == 200
+    assert "state" in progress.json()
+    cancel = client.post("/desktop/browser/cancel", headers=HEADERS)
+    assert cancel.status_code == 200
+    # Nothing was installing, so cancel is a no-op, not an error.
+    assert cancel.json()["cancelled"] is False
+
+
+def test_browser_routes_require_auth(tmp_path):
+    client = TestClient(_app(tmp_path))
+    assert client.get("/desktop/browser").status_code == 403
+    assert client.post("/desktop/browser/provision").status_code == 403
+    assert client.get("/desktop/browser/progress").status_code == 403
+
+
+def test_provision_browser_runs_a_real_install(tmp_path):
+    """Provisioning drives the real provisioner: the injected installer runs and
+    a real binary on disk flips the state to ready."""
+    import sys
+
+    app = _app(tmp_path)
+    service = app.state.desktop_service
+    installed = tmp_path / "chrome"
+    service._browser = BrowserProvisioner(
+        package_probe=lambda: True,
+        chromium_finder=lambda: str(installed) if installed.exists() else "",
+        installer_command=[
+            sys.executable,
+            "-c",
+            f"open({str(installed)!r}, 'w').write('x')",
+        ],
+    )
+    client = TestClient(app)
+    resp = client.post("/desktop/browser/provision", headers=HEADERS)
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["state"] == "ready"
+    assert body["ready"] is True
+    assert body["chromium_path"] == str(installed)
+    # The provisioning attempt is auditable.
+    audit = client.get("/desktop/runs", headers=HEADERS)
+    assert audit.status_code == 200

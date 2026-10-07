@@ -62,13 +62,16 @@ def is_windows() -> bool:
 
 
 def default_install_dir(*, env: dict[str, str] | None = None) -> Path:
-    """Resolve the per-user install directory (LOCALAPPDATA on Windows)."""
-    environment = env if env is not None else os.environ
-    if is_windows():
-        base = environment.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    else:
-        base = environment.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / "ArabicAIAgent"
+    """Resolve the per-user install directory (LOCALAPPDATA on Windows).
+
+    Delegates to :mod:`arabic_agent.desktop.product_paths` so the installer, the
+    runtime launcher and the packaged build agree on one location. ``is_windows``
+    is read from this module (not the one it delegates to) so the existing
+    patch point keeps working.
+    """
+    from .product_paths import default_product_root
+
+    return default_product_root(env=env, windows=is_windows())
 
 
 def _launcher_script(*, python: str, package: str = "arabic_agent.desktop.shell") -> str:

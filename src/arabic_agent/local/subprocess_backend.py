@@ -31,6 +31,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ..core.errors import ExternalServiceError
+from ..core.process import process_group_kwargs, terminate_process
 from ..models.base import ModelRequest, ModelResponse, ModelStreamDelta
 from .model_security import verify_model_file
 
@@ -128,6 +129,7 @@ class SubprocessInferenceBackend:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **process_group_kwargs(),
         )
         self._process = process
         self._stderr_tail_lines = deque(maxlen=40)
@@ -195,13 +197,7 @@ class SubprocessInferenceBackend:
         return process
 
     async def _terminate(self, process: asyncio.subprocess.Process) -> None:
-        if process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5.0)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
+        await terminate_process(process)
         if self._stderr_task is not None:
             self._stderr_task.cancel()
             self._stderr_task = None

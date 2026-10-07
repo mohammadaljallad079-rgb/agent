@@ -179,6 +179,15 @@ class AuditEventType(StrEnum):
     EXTERNAL_ACTION_RETRY = "external_action.retry"
     EXTERNAL_ACTION_RATE_LIMITED = "external_action.rate_limited"
     EXTERNAL_ACTION_BOUNDARY_DECISION = "external_action.boundary_decision"
+    # Desktop product (Phase 10). Install, runtime lifecycle and browser
+    # provisioning metadata only — never a secret, a token or a payload.
+    DESKTOP_INSTALLED = "desktop.installed"
+    DESKTOP_UNINSTALLED = "desktop.uninstalled"
+    DESKTOP_RUNTIME_STARTED = "desktop.runtime.started"
+    DESKTOP_RUNTIME_STOPPED = "desktop.runtime.stopped"
+    BROWSER_PROVISION_REQUESTED = "desktop.browser.provision_requested"
+    BROWSER_PROVISION_COMPLETED = "desktop.browser.provision_completed"
+    BROWSER_PROVISION_FAILED = "desktop.browser.provision_failed"
 
 
 def _utcnow() -> datetime:

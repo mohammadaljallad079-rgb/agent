@@ -741,13 +741,22 @@ inside the agent core or a tool handler:
   `DataSensitivity`. A screenshot is treated as `SECRET` under `never_store` and
   `CONFIDENTIAL` under `local_only`, so a remote model never receives one; the
   mapping fails closed.
-- **`backends/`** — `linux_x11.py` is a *real* backend: capture through Pillow's
-  `ImageGrab`, monitors via `xrandr`, input and windows via `xdotool`, all with
-  `shell=False` and an explicit argv (no model value can become a second
-  command). It probes the display socket at construction and reports itself
-  unavailable with a reason when `DISPLAY`, `xdotool`, `xrandr` or Pillow are
-  missing. `null.py` is the honest "not available" backend; `build_computer_backend`
-  selects per platform (Windows/macOS return a Null backend with a clear reason —
+- **`backends/`** — `linux_x11.py` and `windows.py` are *real* backends. The
+  X11 backend captures through Pillow's `ImageGrab`, monitors via `xrandr`, and
+  input/windows via `xdotool`, all with `shell=False` and an explicit argv (no
+  model value can become a second command); it probes the display socket at
+  construction and reports itself unavailable with a reason when `DISPLAY`,
+  `xdotool`, `xrandr` or Pillow are missing. The Windows backend (`windows.py`)
+  implements the same `ComputerBackend` contract over Win32 (`ctypes`): monitors
+  and scale from `EnumDisplayMonitors` + `GetDpiForMonitor`, capture through
+  Pillow's native grab (optionally per-monitor), input through `SendInput`
+  (absolute pointer and Unicode keyboard injection, so Arabic types regardless of
+  layout), and window enumeration/focus from `EnumWindows`/`GetForegroundWindow`.
+  Its Win32 calls sit behind an injectable `Win32Adapter`, so the backend is
+  unit-tested on any OS with a fake adapter; off Windows it reports itself
+  unavailable with a clear reason rather than failing on first use.
+  `null.py` is the honest "not available" backend; `build_computer_backend`
+  selects per platform (macOS returns a Null backend with a clear reason —
   design only, no pretence).
 
 ### Tools (`tools/builtin/computer.py`)
@@ -1285,24 +1294,39 @@ What was verified on Linux (reproducible, but Linux-only):
   `local_action_ledger`, …) and the installer install/uninstall cycle runs with
   `verify: ok` by really invoking the installed entry point.
 
+What is **not verified on Windows** (a real Windows run is still required, and
+is the whole point of the Phase 10W handoff), but is now implemented in the
+product:
+
+- **Windows computer backend** — `computer/backends/windows.py` implements the
+  same `ComputerBackend` contract as Linux/X11, over Win32 (`ctypes`): monitors
+  and DPI scale, screen capture (optionally per-monitor), pointer/keyboard input
+  through `SendInput` (Unicode injection so Arabic types regardless of layout),
+  and window enumeration/focus. `PlatformKind.WINDOWS` selects it; off Windows it
+  reports itself unavailable with a clear reason. Its Win32 calls sit behind an
+  injectable `Win32Adapter`, so it is unit-tested on any OS with a fake adapter
+  (`tests/test_windows_backend.py`). Real screen capture, mouse, keyboard and the
+  visual/computer-control E2E still require an interactive Windows desktop.
+- **Binary Windows installer** — `desktop/packaging.py` generates the two
+  build inputs: a PyInstaller spec (frozen `ArabicAIAgent.exe`, bundling the
+  desktop UI and the packaged migration chain) and an Inno Setup script
+  (per-user `{localappdata}` install, no UAC, Start-menu/desktop icons, opt-in
+  startup). `python -m arabic_agent.desktop.packaging <out>` writes both, and
+  `.github/workflows/windows.yml` freezes the payload, compiles the installer and
+  uploads `ArabicAIAgent-Setup-*.exe`. The artifact, its SHA-256 and an upgrade
+  test still require a real Windows build.
+
 What is **not implemented in the product at all** (independent of the host OS),
 and therefore cannot pass Windows acceptance as written:
 
-- **Windows computer backend** — `computer/backends/` implements only Linux/X11;
-  `PlatformKind.WINDOWS` returns an unavailable backend whose reason is "the
-  Windows computer backend is not implemented yet (design only)". Windows
-  screen capture, mouse, keyboard and the visual/computer-control E2E therefore
-  have no implementation to accept.
-- **Binary Windows installer** — `desktop/installer.py` is a real per-user
-  *script* installer (launcher, manifest, registry uninstall entry, Startup
-  shortcut). There is no MSI/MSIX/EXE packaging, no bundled Python runtime, and
-  the launcher depends on the interpreter that ran the installer. No installer
-  artifact or SHA-256 can be produced from this repository today.
-- **Code signing**, **tray/background runtime** and **Windows notifications** —
-  not implemented.
+- **Code signing** (no certificate), **tray/background runtime** and **Windows
+  notifications** are not implemented.
 
-Consequently the Phase 10W verdict is **PARTIALLY VERIFIED — WINDOWS BLOCKERS
-REMAIN**. See `TODO.md` for the Phase 10W follow-up items. The exact,
+Consequently the Phase 10W verdict is **PARTIALLY VERIFIED — IMPLEMENTATION
+COMPLETE, WINDOWS RUN PENDING**: the product-side blockers (Windows computer
+backend, binary-installer packaging inputs, browser provisioning) are now
+implemented and unit-tested on this host, but no Windows acceptance gate has been
+executed, so none is claimed. See `TODO.md` for the Phase 10W follow-up items. The exact,
 reproducible Windows build and acceptance procedure (and the list of gates that
 require an interactive Windows machine) is in
 [`docs/WINDOWS_ACCEPTANCE.md`](docs/WINDOWS_ACCEPTANCE.md).
