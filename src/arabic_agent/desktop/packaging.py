@@ -5,21 +5,38 @@ This module turns the Python product into a Windows *binary* product. It does tw
 things, both real and both testable off Windows:
 
 * :func:`build_pyinstaller_spec` writes a PyInstaller spec that bundles the
-  product into a one-folder ``ArabicAIAgent.exe``. The spec collects the package's
-  data files (the desktop UI HTML and the packaged Alembic migration chain),
-  which a naive build would miss, and it names the frozen executable so the
-  product entry point (:mod:`arabic_agent.__main__`) is the thing that runs.
+  product into a one-folder ``ArabicAIAgent.exe``. The spec names the **real
+  entry script** (``src/arabic_agent/__main__.py``) and lists **existing**
+  data sources — the desktop UI, the local migration chain and the cloud
+  migration chain — resolved from this file's location, never from the current
+  working directory.
 * :func:`build_installer_script` writes a real Inno Setup script that installs
   that payload **per user** (``PrivilegesRequired=lowest`` — no UAC), with a
-  Start-menu entry, an optional sign-in task and a working uninstaller.
+  Start-menu entry, an optional sign-in task and a working uninstaller. Its
+  ``SourceDir`` is the absolute directory PyInstaller produces, so the two tools
+  cannot disagree about where the payload lives.
 
 Neither function runs the external compiler (PyInstaller / ``ISCC.exe``): those
 require Windows and are the responsibility of the CI packaging job. What this
 module guarantees is that the *inputs* to those tools are generated from the
-product's real layout, so the packaging step is reproducible and does not drift
-from the code. The frozen executable dispatches its subcommands through
-``arabic_agent.__main__``; the installer's uninstall path calls the same
-executable, so there is one binary, not a binary plus a hidden interpreter.
+product's real layout and that every path they reference exists, so the packaging
+step is reproducible and does not drift from the code.
+
+Migration sources
+-----------------
+Both chains are packaged, from the **tracked** directories, straight to the
+destinations the frozen runtime expects:
+
+* ``migrations_local/`` → ``arabic_agent/_migrations_local`` (the local SQLite
+  chain; exactly what the wheel's ``force-include`` ships, and what
+  :func:`arabic_agent.local.persistence.database._default_migrations_dir`
+  resolves).
+* ``migrations/`` → ``arabic_agent/_migrations_cloud`` (the cloud Postgres
+  chain, so a frozen install can also operate against a remote database).
+
+Nothing is copied into the source tree first: PyInstaller reads the tracked
+directories directly, so there is no artificial pre-freeze mutation and no second
+migration chain.
 """
 
 from __future__ import annotations
@@ -32,16 +49,75 @@ from .version import PRODUCT_VERSION
 #: The product executable name produced by the Windows build.
 PRODUCT_EXE_NAME = "ArabicAIAgent.exe"
 
+#: The importable package name.
+PACKAGE_NAME = "arabic_agent"
+
+
+def _repo_root() -> Path:
+    """Repository root, derived from this file's location (never the cwd)."""
+    return Path(__file__).resolve().parents[3]
+
+
+def entry_script() -> Path:
+    """The real entry script PyInstaller must freeze.
+
+    PyInstaller's ``Analysis`` takes *script file paths*, not module names, so
+    the spec points at ``src/arabic_agent/__main__.py`` on disk.
+    """
+    return _repo_root() / "src" / PACKAGE_NAME / "__main__.py"
+
+
+def package_source_dir() -> Path:
+    """The ``arabic_agent`` package directory in the source tree."""
+    return _repo_root() / "src" / PACKAGE_NAME
+
+
+def bundle_datas() -> list[tuple[Path, str]]:
+    """The (source, destination) data pairs the frozen product needs.
+
+    Sources are the tracked directories; destinations are where the frozen
+    runtime resolves them (relative to the bundled ``arabic_agent`` package).
+    """
+    root = _repo_root()
+    pkg = package_source_dir()
+    return [
+        (pkg / "desktop" / "ui", f"{PACKAGE_NAME}/desktop/ui"),
+        (root / "migrations_local", f"{PACKAGE_NAME}/_migrations_local"),
+        (root / "migrations", f"{PACKAGE_NAME}/_migrations_cloud"),
+    ]
+
+
+def missing_datas() -> list[Path]:
+    """Data sources that do not exist on disk (empty means the manifest is valid).
+
+    A missing source makes PyInstaller fail with *"Unable to find …"*; callers
+    (and the spec generator) use this to fail early and clearly instead.
+    """
+    return [source for source, _dest in bundle_datas() if not source.exists()]
+
 
 def _default_source_dir(output: Path) -> Path:
-    """The directory holding the frozen payload (the PyInstaller output)."""
-    return output.parent / "ArabicAIAgent"
+    """The absolute directory holding the frozen payload (PyInstaller output).
+
+    Absolute on purpose: the Inno Setup script is compiled by ``ISCC.exe`` from
+    an arbitrary working directory, so a relative path would be resolved against
+    the wrong base and the installer would not find the payload.
+    """
+    return (output.parent / "ArabicAIAgent").resolve()
+
+
+def _default_installer_output_dir(output: Path) -> Path:
+    """The directory the compiled ``ArabicAIAgent-Setup-*.exe`` is written to.
+
+    The parent of the payload folder (the same ``dist`` directory the CI hashes
+    and uploads), so the installer never lands *inside* the payload it packages.
+    """
+    return output.parent.resolve()
 
 
 def build_pyinstaller_spec(
     *,
     output: Path,
-    entry_module: str = "arabic_agent.__main__",
     name: str = "ArabicAIAgent",
     one_file: bool = False,
 ) -> Path:
@@ -49,41 +125,44 @@ def build_pyinstaller_spec(
 
     ``one_file=False`` (the default) produces a one-folder build, which starts
     faster and makes the payload inspectable; the Inno Setup script installs that
-    folder. The spec collects the desktop UI assets and the packaged migration
-    chain explicitly, so a frozen install can open its window and create its
-    local database without a repository checkout.
+    folder. The spec freezes the real entry script and bundles the desktop UI and
+    both migration chains, so a frozen install can open its window and create (or
+    upgrade) its database without a repository checkout.
     """
-    datas = [
-        ("src/arabic_agent/desktop/ui", "arabic_agent/desktop/ui"),
-        ("src/arabic_agent/_migrations_local", "arabic_agent/_migrations_local"),
+    script = entry_script()
+    if not script.is_file():
+        raise FileNotFoundError(f"packaging entry script not found: {script}")
+    missing = missing_datas()
+    if missing:
+        joined = ", ".join(str(p) for p in missing)
+        raise FileNotFoundError(f"packaging data sources not found: {joined}")
+
+    datas = bundle_datas()
+    data_lines = ",\n        ".join(f"({str(src)!r}, {dest!r})" for src, dest in datas)
+    pathex = str(_repo_root() / "src")
+    # Modules loaded dynamically at run time are invisible to PyInstaller's static
+    # analysis and must be named explicitly:
+    #  * the product subcommands are imported lazily inside __main__.main;
+    #  * SQLAlchemy loads its SQLite async driver (aiosqlite) by name;
+    #  * Alembic loads the migration ``env.py`` from disk, so the modules that
+    #    env.py imports (logging.config, the alembic runtime) are also dynamic.
+    # ``collect_submodules`` pulls the whole alembic runtime so an upgrade run
+    # from the frozen product cannot hit a missing alembic module.
+    hiddenimports = [
+        f"{PACKAGE_NAME}.local.main",
+        f"{PACKAGE_NAME}.desktop.shell",
+        f"{PACKAGE_NAME}.desktop.installer",
+        f"{PACKAGE_NAME}.api.app",
+        f"{PACKAGE_NAME}.worker.main",
+        f"{PACKAGE_NAME}.local.persistence.schema",
+        "aiosqlite",
+        "sqlalchemy.dialects.sqlite.aiosqlite",
+        "logging.config",
     ]
-    data_lines = ",\n        ".join(f"({src!r}, {dst!r})" for src, dst in datas)
-    spec = f"""# Arabic AI Agent Platform — PyInstaller spec (generated)
-# Build: pyinstaller --clean --noconfirm {name}.spec
-# The frozen executable dispatches subcommands via {entry_module}.
+    hidden_lines = ",\n        ".join(repr(module) for module in hiddenimports)
 
-block_cipher = None
-
-a = Analysis(
-    [{entry_module!r}],
-    pathex=["src"],
-    binaries=[],
-    datas=[
-        {data_lines},
-    ],
-    hiddenimports=[
-        "arabic_agent.local.main",
-        "arabic_agent.desktop.shell",
-        "arabic_agent.desktop.installer",
-    ],
-    hookspath=[],
-    runtime_hooks=[],
-    excludes=["tkinter"],
-    cipher=block_cipher,
-)
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
+    if one_file:
+        build_body = f"""exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
@@ -98,6 +177,71 @@ exe = EXE(
     disable_windowed_traceback=False,
 )
 """
+    else:
+        # One-folder build: the EXE holds only the bootloader/scripts and
+        # COLLECT gathers the binaries and bundled data into <name>/ beside it.
+        # This is the layout the Inno Setup script installs.
+        build_body = f"""exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name={name!r},
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name={name!r},
+)
+"""
+
+    spec = f"""# Arabic AI Agent Platform — PyInstaller spec (generated)
+# Build: pyinstaller --clean --noconfirm {name}.spec
+# The frozen executable is {script.name} and dispatches subcommands via the
+# {PACKAGE_NAME} package.
+
+from PyInstaller.utils.hooks import collect_submodules
+
+block_cipher = None
+
+# Dynamically imported modules PyInstaller cannot see statically.
+hidden = [
+    {hidden_lines},
+]
+# The Alembic runtime is loaded from disk by the migration ``env.py``; collect
+# it wholesale so a frozen database upgrade cannot miss a submodule. Alembic's
+# own test suite cannot be imported here (on_error="ignore") and is excluded.
+hidden += [
+    m
+    for m in collect_submodules("alembic", on_error="ignore")
+    if not m.startswith("alembic.testing")
+]
+
+a = Analysis(
+    [{str(script)!r}],
+    pathex=[{pathex!r}],
+    binaries=[],
+    datas=[
+        {data_lines},
+    ],
+    hiddenimports=hidden,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=["tkinter"],
+    cipher=block_cipher,
+)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+{build_body}"""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(spec, encoding="utf-8", newline="\n")
     return output
@@ -110,16 +254,22 @@ def build_installer_script(
     app_version: str = PRODUCT_VERSION,
     exe_name: str = PRODUCT_EXE_NAME,
     source_dir: Path | None = None,
+    output_dir: Path | None = None,
 ) -> Path:
     """Write a real Inno Setup script for the packaged product.
 
     The script installs per-user (no UAC), places the frozen executable and its
     runtime payload, and registers a Start-menu entry, an optional sign-in task
     and an uninstaller that calls the executable's own ``uninstall`` subcommand.
-    It is only meaningful when Inno Setup's ``ISCC.exe`` and the frozen payload
-    exist; this function writes the script, it does not run the compiler.
+    ``source_dir`` defaults to the absolute directory PyInstaller produces and
+    ``output_dir`` to its parent, so the installer reads the payload the freezer
+    wrote and writes the setup ``.exe`` beside it — the exact directory the CI
+    hashes and uploads. It is only meaningful when Inno Setup's ``ISCC.exe`` and
+    the frozen payload exist; this function writes the script, it does not run
+    the compiler.
     """
     source = source_dir if source_dir is not None else _default_source_dir(output)
+    installer_out = output_dir if output_dir is not None else _default_installer_output_dir(output)
     script = f"""; Arabic AI Agent Platform — Inno Setup script (generated)
 ; Build the payload first (PyInstaller spec), then compile with ISCC.exe.
 
@@ -137,7 +287,7 @@ DefaultDirName={{localappdata}}\\ArabicAIAgent
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputBaseFilename=ArabicAIAgent-Setup-{{#AppVersion}}
-OutputDir={{#SourceDir}}
+OutputDir="{installer_out}"
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -184,7 +334,11 @@ __all__ = [
     "PRODUCT_EXE_NAME",
     "build_installer_script",
     "build_pyinstaller_spec",
+    "bundle_datas",
+    "entry_script",
     "main",
+    "missing_datas",
+    "package_source_dir",
 ]
 
 

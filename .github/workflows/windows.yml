@@ -44,22 +44,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.13"
-      - name: Install (with the packaging and desktop extras)
-        run: uv pip install --system -e ".[dev,desktop,packaging]"
-      - name: Generate the packaging inputs
-        run: python -m arabic_agent.desktop.packaging dist
-      - name: Freeze the product with PyInstaller
-        run: pyinstaller --clean --noconfirm dist\ArabicAIAgent.spec
-      - name: Smoke-test the frozen executable
-        run: |
-          dist\ArabicAIAgent\ArabicAIAgent.exe version
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
-      - name: Compile the installer
-        run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\ArabicAIAgent.iss
-      - name: Hash the installer
-        run: Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256 | Format-List
+      # One script drives the whole documented flow so local builds and CI cannot
+      # drift: install -> generate packaging inputs -> PyInstaller freeze ->
+      # smoke-test -> Inno Setup -> SHA-256 checksum. It regenerates the spec on
+      # every run, so a stale generated spec can never be used.
+      - name: Build the installer
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -OutputDir dist
       - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:

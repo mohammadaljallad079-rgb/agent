@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from ...core.errors import ConfigurationError
+from ...core.resources import PACKAGE_DIR, packaged_migrations_dir, source_migrations_dir
 
 #: Directory (relative to the repository root) holding the local migrations.
 LOCAL_MIGRATIONS_DIR = "migrations_local"
@@ -64,14 +65,18 @@ def _default_migrations_dir() -> Path:
     """Locate the local migration chain for the current install.
 
     Prefers the copy shipped inside the installed package
-    (``arabic_agent/_migrations_local``), which is the only copy present in a
-    real desktop install. Falls back to the repository-root ``migrations_local``
-    for a source checkout that has not been packaged.
+    (``arabic_agent/_migrations_local``), which is what a wheel or a frozen
+    desktop build carries. Falls back to the repository-root ``migrations_local``
+    for a source checkout that has not been packaged. If neither exists the
+    packaged path is returned, so the raised error names the expected location.
     """
-    packaged = Path(__file__).resolve().parent.parent.parent / "_migrations_local"
-    if packaged.is_dir():
+    packaged = packaged_migrations_dir(LOCAL_MIGRATIONS_DIR)
+    if packaged is not None:
         return packaged
-    return Path(__file__).resolve().parents[4] / LOCAL_MIGRATIONS_DIR
+    source = source_migrations_dir(LOCAL_MIGRATIONS_DIR)
+    if source is not None:
+        return source
+    return PACKAGE_DIR / "_migrations_local"
 
 
 def local_database_url(db_path: str | Path) -> str:

@@ -327,11 +327,22 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   A static audit + clean-venv install fixed two host-independent defects: the
   local Alembic chain is now shipped in the wheel
   (`arabic_agent/_migrations_local`, resolved by `_default_migrations_dir()`),
-  and the installer module entry point now runs (`__main__` guard). Still
-  blocked on real Windows: the Windows computer backend (`computer/backends/`
-  is Linux/X11 only — `PlatformKind.WINDOWS` is "design only"), a binary
-  MSI/MSIX/EXE installer with a bundled runtime, code signing, tray/background
-  runtime and notifications. See ARCHITECTURE.md §18a and TODO.md.
+  and the installer module entry point now runs (`__main__` guard). Phase 10W-C
+  then fixed the two Windows production-build blockers, verified with a real
+  Linux-side PyInstaller freeze: the generated spec now uses the real **script
+  path** (`src/arabic_agent/__main__.py`) as `Analysis`'s entry and packages the
+  **tracked** migration chains (`migrations_local/` → `_migrations_local`,
+  `migrations/` → `_migrations_cloud`), and the frozen `__main__.py` uses
+  absolute imports with asset resolution moved to `core/resources.py` (package-
+  relative, never cwd). The spec is one-folder (`COLLECT`) with the runtime-loaded
+  hidden imports (`aiosqlite`, `logging.config`, the Alembic runtime). Still
+  blocked on real Windows: a Windows computer backend
+  (`computer/backends/windows.py` is implemented and unit-tested behind an
+  injectable `Win32Adapter`, but the real capture/mouse/keyboard gates need an
+  interactive desktop), building/signing the binary installer, code signing,
+  tray/background runtime and notifications. Build with
+  `scripts/build_windows.ps1` (same flow as `.github/workflows/windows.yml`). See
+  ARCHITECTURE.md §18a, `docs/WINDOWS_ACCEPTANCE.md` and TODO.md.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   document *generation* (PDF/DOCX/XLSX/PPTX/CSV), image/video tools, social
   connectors, printing/calendar tools, and the web UI.

@@ -1308,13 +1308,20 @@ product:
   (`tests/test_windows_backend.py`). Real screen capture, mouse, keyboard and the
   visual/computer-control E2E still require an interactive Windows desktop.
 - **Binary Windows installer** — `desktop/packaging.py` generates the two
-  build inputs: a PyInstaller spec (frozen `ArabicAIAgent.exe`, bundling the
-  desktop UI and the packaged migration chain) and an Inno Setup script
-  (per-user `{localappdata}` install, no UAC, Start-menu/desktop icons, opt-in
-  startup). `python -m arabic_agent.desktop.packaging <out>` writes both, and
-  `.github/workflows/windows.yml` freezes the payload, compiles the installer and
-  uploads `ArabicAIAgent-Setup-*.exe`. The artifact, its SHA-256 and an upgrade
-  test still require a real Windows build.
+  build inputs: a **one-folder** PyInstaller spec whose `Analysis` entry is the
+  real script path `src/arabic_agent/__main__.py` (PyInstaller takes script
+  paths, not module names), bundling the desktop UI and **both** migration chains
+  (`migrations_local/` → `arabic_agent/_migrations_local`, `migrations/` →
+  `arabic_agent/_migrations_cloud`), and an Inno Setup script (per-user
+  `{localappdata}` install, no UAC, Start-menu/desktop icons, opt-in startup)
+  whose `SourceDir`/`OutputDir` match PyInstaller's output. Because the frozen
+  entry runs as top-level `__main__`, it uses absolute imports, and the frozen
+  runtime resolves its assets through `core/resources.py` (relative to the
+  package, never the cwd). One script, `scripts/build_windows.ps1`, drives the
+  whole flow (`python -m arabic_agent.desktop.packaging dist` → `pyinstaller` →
+  `ISCC`) and is what `.github/workflows/windows.yml` runs on `windows-latest`
+  before uploading `ArabicAIAgent-Setup-*.exe`. The artifact, its SHA-256 and an
+  upgrade test still require a real Windows build.
 
 What is **not implemented in the product at all** (independent of the host OS),
 and therefore cannot pass Windows acceptance as written:

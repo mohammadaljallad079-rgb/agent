@@ -18,6 +18,13 @@ with the ``runtime`` subcommand (see ``runtime_manager.runtime_command``).
 
 Dispatch is deliberately explicit — an unknown subcommand is an error, never a
 silent fallback — so a mistyped installer action cannot quietly open a window.
+
+Frozen-build note: a PyInstaller executable runs its entry script as the
+top-level ``__main__``, where a *relative* import (``from .desktop …``) fails
+with "attempted relative import with no known parent package". The lazy imports
+below therefore use the absolute ``arabic_agent.`` package path, which works
+both when this module is frozen directly and when it is run as
+``python -m arabic_agent``.
 """
 
 from __future__ import annotations
@@ -36,19 +43,19 @@ _USAGE = (
 
 
 def _run_shell() -> int:
-    from .desktop.shell import launch_shell
+    from arabic_agent.desktop.shell import launch_shell
 
     return launch_shell()
 
 
 def _run_runtime() -> None:
-    from .local.main import main as runtime_main
+    from arabic_agent.local.main import main as runtime_main
 
     runtime_main()
 
 
 def _run_install() -> int:
-    from .desktop.installer import install
+    from arabic_agent.desktop.installer import install
 
     report = install()
     print(report.as_dict())
@@ -56,7 +63,7 @@ def _run_install() -> int:
 
 
 def _run_uninstall() -> int:
-    from .desktop.installer import uninstall
+    from arabic_agent.desktop.installer import uninstall
 
     report = uninstall()
     print(report.as_dict())
@@ -64,7 +71,7 @@ def _run_uninstall() -> int:
 
 
 def _print_version() -> int:
-    from .desktop.version import PRODUCT_VERSION
+    from arabic_agent.desktop.version import PRODUCT_VERSION
 
     print(PRODUCT_VERSION)
     return 0

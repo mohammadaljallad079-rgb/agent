@@ -22,17 +22,19 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import Any
 
 import httpx
 
+from ..core.resources import PACKAGE_DIR
 from .runtime_manager import DesktopRuntimeManager, RuntimeStartError
 
 logger = logging.getLogger(__name__)
 
-#: Directory holding the bundled UI (HTML/CSS/JS).
-UI_DIR = Path(__file__).resolve().parent / "ui"
+#: Directory holding the bundled UI (HTML/CSS/JS). Resolved relative to the
+#: importable package so it is found in a source tree, an installed wheel and a
+#: PyInstaller freeze alike (see :mod:`arabic_agent.core.resources`).
+UI_DIR = PACKAGE_DIR / "desktop" / "ui"
 
 
 class DesktopBridge:

@@ -519,12 +519,32 @@ binary; not implementable in this environment):
       for `PlatformKind.WINDOWS`. Real screen/mouse/keyboard/visual E2E still
       need an interactive Windows desktop to *accept*.
 - [x] Packaging inputs for a binary Windows installer: `desktop/packaging.py`
-      generates a PyInstaller spec (frozen `ArabicAIAgent.exe`, bundling the UI
-      and packaged migrations) and an Inno Setup script (per-user
+      generates a one-folder PyInstaller spec and an Inno Setup script (per-user
       `{localappdata}`, no UAC, opt-in startup), and
-      `.github/workflows/windows.yml` freezes + compiles + uploads
-      `ArabicAIAgent-Setup-*.exe`. The artifact, its SHA-256 and an
-      upgrade-over-prior test still require a real Windows build.
+      `.github/workflows/windows.yml` runs `scripts/build_windows.ps1` to freeze,
+      smoke-test, compile and upload `ArabicAIAgent-Setup-*.exe`. The artifact,
+      its SHA-256 and an upgrade-over-prior test still require a real Windows
+      build.
+- [x] Phase 10W-C transfer-readiness: fixed the two build blockers that would
+      have failed the Windows production build. (1) The generated PyInstaller
+      spec used a **module name** (`arabic_agent.__main__`) as `Analysis`'s entry,
+      which PyInstaller resolves as a *file path* and rejects with
+      "Unable to find …", and it referenced a `_migrations_local` copy that no
+      build step ever created. The spec now names the real script path
+      (`src/arabic_agent/__main__.py`) and packages the **tracked** chains
+      (`migrations_local/` → `arabic_agent/_migrations_local`, `migrations/` →
+      `_migrations_cloud`), verifying every `datas` source exists before writing.
+      (2) Freezing the package `__main__.py` and running it crashed with
+      "attempted relative import with no known parent package"; the entry now uses
+      absolute imports and asset resolution moved to `core/resources.py`
+      (relative to the package, not the cwd). The spec also (3) became one-folder
+      (`COLLECT`) to match the Inno `SourceDir`/CI expectations and (4) declares
+      the runtime-loaded hidden imports (`aiosqlite`, `logging.config`, the Alembic
+      runtime) that a frozen migration run needs. Verified as far as Linux allows:
+      a real PyInstaller freeze of the generated spec succeeds, the frozen
+      `ArabicAIAgent.exe version` runs, and a frozen app migrates a fresh SQLite
+      store to head using only the bundled chain. Regressions:
+      `tests/test_desktop_packaging.py`, `tests/test_core_resources.py`.
 - [x] Browser runtime provisioning surface: `browser/provisioning.py` +
       `/desktop/browser{,/provision,/progress,/cancel}` and the desktop UI
       section let the product install/verify the Chromium runtime with real
