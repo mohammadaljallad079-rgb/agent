@@ -66,6 +66,9 @@ _SEMANTIC_AUDIT_EVENTS: dict[str, AuditEventType] = {
     "list_documents": AuditEventType.DOCUMENT_RETRIEVED,
     "inspect_archive": AuditEventType.DOCUMENT_PARSED,
     "inspect_project": AuditEventType.PROJECT_INSPECTED,
+    "generate_document": AuditEventType.DOCUMENT_GENERATED,
+    "create_presentation": AuditEventType.DOCUMENT_GENERATED,
+    "create_spreadsheet": AuditEventType.DOCUMENT_GENERATED,
 }
 
 

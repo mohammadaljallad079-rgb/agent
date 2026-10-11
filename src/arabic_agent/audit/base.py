@@ -86,7 +86,9 @@ class AuditEventType(StrEnum):
     LOOP_DETECTED = "agent.loop.detected"
     DOCUMENT_PARSED = "document.parsed"
     DOCUMENT_RETRIEVED = "document.retrieved"
+    DOCUMENT_GENERATED = "document.generated"
     PROJECT_INSPECTED = "project.inspected"
+    ARTIFACT_OPENED = "artifact.opened"
     SECRET_DETECTED = "security.secret_detected"  # noqa: S105 - event name, not a credential
     # Local / desktop runtime
     LOCAL_RUNTIME_STARTED = "local.runtime.started"

@@ -255,6 +255,28 @@ def test_ui_has_a_real_browser_provisioning_surface():
     assert "تجهيز المتصفح" in html
 
 
+def test_ui_has_a_real_artifacts_surface():
+    """The artifacts section is wired to the bridge, not a placeholder button."""
+    html = _load_index_html()
+    assert 'id="s-artifacts"' in html
+    assert 'id="artifacts"' in html
+    # Reachable from the navigation and backed by the bridge.
+    assert '"artifacts"' in html
+    assert "a.artifacts()" in html
+    assert "a.open_artifact(" in html
+    # Arabic strings are present for the surface.
+    assert "المستندات الناتجة" in html
+    assert "فتح" in html
+
+
+def test_ui_has_a_real_first_run_setup_surface():
+    """First-run setup calls the real one-step bridge method."""
+    html = _load_index_html()
+    assert 'id="setupBtn"' in html
+    assert "a.setup_model(" in html
+    assert "إعداد النموذج" in html
+
+
 def test_ui_dir_exists():
     assert UI_DIR.is_dir()
     assert (UI_DIR / "index.html").is_file()

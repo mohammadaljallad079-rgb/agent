@@ -147,8 +147,20 @@ class DesktopBridge:
     async def deactivate_model(self) -> Any:
         return await self._post("/desktop/models/active/deactivate")
 
+    async def setup_model(self, model_id: str | None = None) -> Any:
+        return await self._post("/desktop/models/setup", {"model_id": model_id})
+
     async def tools(self) -> Any:
         return await self._get("/desktop/tools")
+
+    async def artifacts(self) -> Any:
+        return await self._get("/desktop/artifacts")
+
+    async def run_artifacts(self, run_id: str) -> Any:
+        return await self._get(f"/desktop/runs/{run_id}/artifacts")
+
+    async def open_artifact(self, run_id: str, path: str) -> Any:
+        return await self._post(f"/desktop/runs/{run_id}/artifacts/open", {"path": path})
 
     async def workflows(self) -> Any:
         return await self._get("/desktop/workflows")

@@ -50,6 +50,7 @@ BlockType = Literal["heading", "paragraph", "bullet", "table", "page_break"]
 _FORMAT_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "pdf": (".pdf",),
     "docx": (".docx",),
+    "pptx": (".pptx",),
     "xlsx": (".xlsx",),
     "csv": (".csv",),
     "markdown": (".md", ".markdown"),
@@ -78,9 +79,11 @@ def generation_capabilities() -> dict[str, bool]:
     has_reportlab = _module_available("reportlab")
     has_docx = _module_available("docx")
     has_xlsx = _module_available("openpyxl")
+    has_pptx = _module_available("pptx")
     return {
         "pdf": has_reportlab,
         "docx": has_docx,
+        "pptx": has_pptx,
         "xlsx": has_xlsx,
         "csv": True,
         "markdown": True,
@@ -432,6 +435,156 @@ def _write_docx(path: Path, spec: DocumentSpec) -> int:
     return path.stat().st_size
 
 
+#: Title-and-content layout, the classic "title + bullet body" slide.
+_PPTX_TITLE_CONTENT_LAYOUT = 1
+#: Blank layout, used when a slide has no title.
+_PPTX_BLANK_LAYOUT = 6
+
+
+def _write_pptx(path: Path, spec: DocumentSpec) -> int:
+    """Write a real ``.pptx`` deck from a title and content blocks.
+
+    A document maps onto a deck the way a reader expects:
+
+    * the document title becomes the deck's title on the first slide;
+    * each heading starts a new slide, its text becoming that slide's title;
+    * paragraphs, bullets and tables become the body of the current slide (a
+      slide is opened automatically if none is active yet);
+    * ``page_break`` starts a new (blank) slide, matching its "new page" meaning.
+
+    Arabic is first-class: every paragraph is marked right-to-left (the OOXML
+    ``rtl`` paragraph attribute) and right-aligned, so a renderer lays Arabic out
+    naturally. The logical text is stored as-is — python-pptx applies no shaping
+    and PowerPoint does its own, so pre-shaping would corrupt the stored text
+    (breaking copy/paste, search and re-parsing). The file is a real OOXML
+    package and re-parses with python-pptx.
+    """
+    try:
+        from pptx import Presentation
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Pt
+    except ImportError as exc:
+        raise ConfigurationError(
+            "PPTX generation requires python-pptx (install the 'documents' extra)"
+        ) from exc
+
+    has_arabic = _contains_arabic(_spec_text(spec))
+
+    def set_rtl(frame: object) -> None:
+        # Right-to-left paragraph direction for every paragraph in the frame.
+        paragraphs = getattr(frame, "paragraphs", None)
+        if paragraphs is None:
+            return
+        for paragraph in paragraphs:
+            ppr = paragraph._p.get_or_add_pPr()
+            ppr.set("rtl", "1")
+
+    def add_body_frame(slide: object, items: tuple[str, ...]) -> None:
+        if not items:
+            return
+        body = None
+        for placeholder in slide.placeholders:  # type: ignore[attr-defined]
+            if placeholder.placeholder_format.idx == 1:
+                body = placeholder
+                break
+        if body is None:
+            body = slide.shapes.add_textbox(  # type: ignore[attr-defined]
+                Pt(48), Pt(120), Pt(864), Pt(360)
+            )
+        frame = body.text_frame
+        for item in items:
+            # Reuse the placeholder's initial empty paragraph on first use, then
+            # append — never clear, so successive body blocks accumulate rather
+            # than overwrite each other.
+            first = frame.paragraphs[0]
+            if len(frame.paragraphs) == 1 and not first.runs:
+                paragraph = first
+            else:
+                paragraph = frame.add_paragraph()
+            paragraph.text = item
+            if has_arabic:
+                paragraph.alignment = PP_ALIGN.RIGHT
+            for run in paragraph.runs:
+                run.font.size = Pt(20)
+        if has_arabic:
+            set_rtl(frame)
+
+    presentation = Presentation()
+    layout = presentation.slide_layouts[_PPTX_TITLE_CONTENT_LAYOUT]
+    blank_layout = presentation.slide_layouts[_PPTX_BLANK_LAYOUT]
+    current: Any = None
+    body_lines = 0
+
+    def start_slide(slide: Any) -> Any:
+        nonlocal current, body_lines
+        current = slide
+        body_lines = 0
+        return slide
+
+    def ensure_slide() -> Any:
+        if current is None:
+            start_slide(presentation.slides.add_slide(layout))
+        assert current is not None
+        return current
+
+    if spec.title:
+        title_slide = presentation.slides.add_slide(presentation.slide_layouts[0])
+        title_frame = title_slide.shapes.title
+        if title_frame is not None:
+            title_frame.text = spec.title
+            if has_arabic:
+                for paragraph in title_frame.text_frame.paragraphs:
+                    paragraph.alignment = PP_ALIGN.RIGHT
+                set_rtl(title_frame.text_frame)
+
+    for block in spec.blocks:
+        if block.type == "heading":
+            slide = start_slide(presentation.slides.add_slide(layout))
+            title_frame = slide.shapes.title
+            if title_frame is not None:
+                title_frame.text = block.text
+                if has_arabic:
+                    for paragraph in title_frame.text_frame.paragraphs:
+                        paragraph.alignment = PP_ALIGN.RIGHT
+                    set_rtl(title_frame.text_frame)
+        elif block.type == "paragraph":
+            add_body_frame(ensure_slide(), (block.text,))
+            body_lines += 1
+        elif block.type == "bullet":
+            add_body_frame(ensure_slide(), tuple(f"• {item}" for item in block.items))
+            body_lines += len(block.items)
+        elif block.type == "table":
+            slide = ensure_slide()
+            columns = max(len(block.headers), max((len(r) for r in block.rows), default=0))
+            if columns:
+                rows_total = len(block.rows) + (1 if block.headers else 0)
+                top = Pt(160 + min(body_lines, 8) * 26)
+                table = slide.shapes.add_table(
+                    rows_total, columns, Pt(48), top, Pt(864), Pt(24) * max(1, rows_total)
+                ).table
+                if block.headers:
+                    for index, header in enumerate(block.headers):
+                        table.cell(0, index).text = header
+                    data_start = 1
+                else:
+                    data_start = 0
+                for row_index, values in enumerate(block.rows):
+                    for col_index, value in enumerate(values):
+                        table.cell(data_start + row_index, col_index).text = value
+                body_lines += rows_total
+        elif block.type == "page_break":
+            start_slide(presentation.slides.add_slide(blank_layout))
+
+    if not spec.title and not spec.blocks:
+        # A deck with no slides is a broken artifact; refuse rather than write it.
+        raise ValidationError("a presentation needs at least a title or one block")
+    if len(presentation.slides) == 0:
+        presentation.slides.add_slide(blank_layout)
+
+    presentation.save(str(path))
+    return path.stat().st_size
+
+
 #: Excel forbids these characters in a sheet name, and caps it at 31 chars.
 _INVALID_SHEET_CHARS = set("[]:*?/\\")
 
@@ -594,8 +747,8 @@ def generate_document(path: Path, spec: DocumentSpec) -> GenerationResult:
         # guessing. Refuse rather than write a near-empty workbook.
         raise ValidationError(
             "use create_spreadsheet for .xlsx/.csv output; generate_document "
-            "handles .pdf, .docx, .md, .txt, .html and .json",
-            details={"supported": [".pdf", ".docx", ".md", ".txt", ".html", ".json"]},
+            "handles .pdf, .docx, .pptx, .md, .txt, .html and .json",
+            details={"supported": [".pdf", ".docx", ".pptx", ".md", ".txt", ".html", ".json"]},
         )
     if not generation_capabilities().get(fmt, False):
         raise ConfigurationError(
@@ -608,6 +761,8 @@ def generate_document(path: Path, spec: DocumentSpec) -> GenerationResult:
         size = _write_pdf(path, spec)
     elif fmt == "docx":
         size = _write_docx(path, spec)
+    elif fmt == "pptx":
+        size = _write_pptx(path, spec)
     elif fmt == "csv":
         size = _write_csv(path, spec)
     elif fmt == "html":

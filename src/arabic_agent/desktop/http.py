@@ -24,6 +24,8 @@ Endpoints (all under ``/desktop``):
 * ``POST /desktop/models/{id}/verify`` / ``POST .../health`` / ``DELETE /desktop/models/{id}``
 * ``GET  /desktop/modes`` / ``POST /desktop/modes``
 * ``GET  /desktop/tools``          — the live tool registry with permissions
+* ``GET  /desktop/artifacts`` / ``GET /desktop/runs/{id}/artifacts``
+* ``POST /desktop/runs/{id}/artifacts/open`` — open a generated document
 * ``GET  /desktop/workflows`` / ``GET /desktop/workflows/{id}/runs``
 * ``GET  /desktop/connectors`` / ``GET /desktop/computer`` / ``GET /desktop/memory``
 * ``GET  /desktop/settings`` / ``GET /desktop/permissions``
@@ -66,6 +68,15 @@ class ApprovalDecision(BaseModel):
 
 class ModeRequest(BaseModel):
     mode: OperatingMode
+
+
+class OpenArtifactRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class SetupModelRequest(BaseModel):
+    #: Optional explicit catalogue id; omitted means "use the recommendation".
+    model_id: str | None = Field(default=None, max_length=200)
 
 
 def create_desktop_app(
@@ -118,6 +129,7 @@ def create_desktop_app(
             "browser": service.browser_view(),
             "providers": service.providers_view(),
             "tools": service.tools_view(),
+            "artifacts": await service.list_artifacts(),
             "connectors": service.connectors_view(),
             "computer": service.computer_view(),
             "workflows": await service.list_workflows(),
@@ -207,6 +219,12 @@ def create_desktop_app(
     async def deactivate_model(_: None = Depends(authorize)) -> dict[str, object]:
         return await service.deactivate_model()
 
+    @app.post("/desktop/models/setup")
+    async def setup_local_model(
+        payload: SetupModelRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.setup_local_model(model_id=payload.model_id)
+
     @app.get("/desktop/models/{model_id}/progress")
     async def model_progress(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
         progress = service.model_progress(model_id)
@@ -276,6 +294,21 @@ def create_desktop_app(
     @app.get("/desktop/tools")
     async def get_tools(_: None = Depends(authorize)) -> dict[str, object]:
         return service.tools_view()
+
+    # -- Generated artifacts ---------------------------------------------
+    @app.get("/desktop/artifacts")
+    async def list_artifacts(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.list_artifacts()
+
+    @app.get("/desktop/runs/{run_id}/artifacts")
+    async def run_artifacts(run_id: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return await service.run_artifacts(run_id)
+
+    @app.post("/desktop/runs/{run_id}/artifacts/open")
+    async def open_artifact(
+        run_id: str, payload: OpenArtifactRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.open_artifact(run_id, payload.path)
 
     # -- Workflows -------------------------------------------------------
     @app.get("/desktop/workflows")

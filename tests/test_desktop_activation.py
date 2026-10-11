@@ -28,6 +28,7 @@ from arabic_agent.local.main import build_local_control_app
 from arabic_agent.models.base import ChatMessage, ModelRequest, ModelResponse, Usage
 from arabic_agent.models.registry import ProviderRegistry
 
+from .fake_http import http_server
 from .helpers import FakeProvider, text_response
 
 TOKEN = "control-secret"
@@ -286,3 +287,99 @@ def test_providers_never_leak_secrets(tmp_path):
     for provider in body["providers"]:
         assert "api_key" not in provider
         assert "configured" in provider
+
+
+# --------------------------------------------------------------------------
+# First-run setup: one action makes a model installed *and* active
+# --------------------------------------------------------------------------
+def _app_with_real_install(tmp_path: Path, server):  # type: ignore[no-untyped-def]
+    """A desktop app whose catalogue model is served by a real local HTTP server.
+
+    Installation therefore exercises the real downloader/verifier; only the
+    inference backend is faked.
+    """
+    from arabic_agent.core.enums import ModelProfile
+    from arabic_agent.desktop.model_catalogue import (
+        Catalogue,
+        CatalogueModel,
+        ResourceRequirement,
+    )
+    from arabic_agent.desktop.model_manager import ModelManager
+    from arabic_agent.local.hardware import HardwareProfile, PlatformKind
+
+    payload = b"GGUF" + b"\x00" * 4096
+    server.route("/m.gguf", body=payload)
+    model = CatalogueModel(
+        id=MODEL_ID,
+        display_name="Test",
+        profile=ModelProfile.LIGHTWEIGHT,
+        url=f"{server.base_url}/m.gguf",
+        filename=MODEL_FILENAME,
+        size_bytes=len(payload),
+        resources=ResourceRequirement(min_ram_bytes=1024**3, disk_bytes=len(payload)),
+    )
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(lambda req, n: text_response("تم")))
+    app = build_local_control_app(
+        _settings(tmp_path), provider_registry=registry, default_model="fake/model"
+    )
+    service = app.state.desktop_service
+    service._models = ModelManager(  # type: ignore[assignment]
+        storage_dir=str(tmp_path / "data" / "models"),
+        catalogue=Catalogue((model,)),
+        hardware=HardwareProfile(
+            platform=PlatformKind.LINUX,
+            architecture="x86_64",
+            cpu_count=8,
+            total_ram_bytes=16 * 1024**3,
+            disk_free_bytes=100 * 1024**3,
+            gpu_available=False,
+        ),
+    )
+
+    def _factory(model_id: str):  # type: ignore[no-untyped-def]
+        import arabic_agent.local.model as local_model
+
+        def _build():  # type: ignore[no-untyped-def]
+            backend = FakeBackend()
+            with patch.object(local_model, "build_backend", lambda descriptor, **kw: backend):
+                return local_model.LocalBackendProvider(
+                    descriptor=service.model_manager.descriptor_for(model_id), backend=backend
+                )
+
+        return _build
+
+    service._provider_factory = _factory  # type: ignore[assignment]
+    return app
+
+
+def test_setup_installs_and_activates_in_one_step(tmp_path):
+    with http_server() as server:
+        app = _app_with_real_install(tmp_path, server)
+        client = TestClient(app)
+        resp = client.post("/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["installed"] is True
+        assert body["installed_now"] is True
+        assert body["active"] is True
+        assert body["model_id"] == MODEL_ID
+
+        # The file really landed on disk and the model is really active.
+        assert (tmp_path / "data" / "models" / MODEL_FILENAME).exists()
+        active = client.get("/desktop/models", headers=HEADERS).json()["active"]
+        assert active["selected"] is True
+        assert active["ready"] is True
+
+
+def test_setup_is_idempotent_when_already_installed(tmp_path):
+    with http_server() as server:
+        app = _app_with_real_install(tmp_path, server)
+        client = TestClient(app)
+        client.post("/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS)
+        second = client.post(
+            "/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS
+        ).json()
+        # Already installed: no re-download, but still active.
+        assert second["installed_now"] is False
+        assert second["active"] is True

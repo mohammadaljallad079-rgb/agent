@@ -293,6 +293,58 @@ class DesktopService:
         )
         return result
 
+    async def setup_local_model(self, *, model_id: str | None = None) -> dict[str, object]:
+        """First-run: make a local model installed *and* active in one step.
+
+        This is the whole first-run path over the existing components — the
+        hardware-gated :meth:`ModelManager.recommend` to choose a model, the real
+        resumable installer, the real health check and the real gateway
+        registration — with no new mechanism of its own. It is idempotent: an
+        already-installed model is activated without re-downloading, and an
+        already-active, healthy model is a no-op. When no model id is given the
+        recommendation is used, and a model the hardware cannot run is refused by
+        the installer rather than silently attempted.
+        """
+        chosen = model_id
+        recommended = False
+        if not chosen:
+            recommendation = self._models.recommend()
+            candidate = recommendation.get("model_id")
+            chosen = str(candidate) if candidate else ""
+            recommended = True
+        if not chosen:
+            raise ValidationError("no local model is available to set up")
+
+        already_installed = bool(self._models.can_activate(chosen)["ok"])
+        installed_now = False
+        if not already_installed:
+            install = await self._models.install(chosen)
+            install_result = install["install"]
+            assert isinstance(install_result, dict)
+            if not install_result["success"]:
+                return {
+                    "model_id": chosen,
+                    "recommended": recommended,
+                    "installed": False,
+                    "installed_now": False,
+                    "active": False,
+                    "detail": str(install_result.get("detail") or "installation failed"),
+                    "readiness": await self.model_readiness(),
+                }
+            installed_now = True
+
+        activation = await self.activate_model(chosen)
+        return {
+            "model_id": chosen,
+            "recommended": recommended,
+            "installed": True,
+            "installed_now": installed_now,
+            "active": bool(activation.get("active")),
+            "health": activation.get("health"),
+            "detail": str(activation.get("reason") or ""),
+            "readiness": await self.model_readiness(),
+        }
+
     async def model_readiness(self) -> dict[str, object]:
         """A real, end-to-end readiness report for running the agent locally.
 
@@ -389,6 +441,121 @@ class DesktopService:
             )
         tools.sort(key=lambda t: str(t["name"]))
         return {"tools": tools, "count": len(tools)}
+
+    # -- Generated artifacts ---------------------------------------------
+    #: Formats the UI can open in the operating system's default application.
+    _OPENABLE_SUFFIXES = frozenset({".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".txt"})
+    #: Extensions that select a document the runtime can generate.
+    _ARTIFACT_SUFFIXES = frozenset(
+        {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".markdown", ".txt", ".html", ".json"}
+    )
+
+    def _run_workspace(self, record: Any) -> Path | None:
+        """The run's workspace, resolved through the filesystem sandbox."""
+        from ..local.sandbox import FilesystemPolicy, FilesystemSandbox
+
+        workspace = str(getattr(record, "workspace_dir", "") or "")
+        if not workspace:
+            return None
+        sandbox = FilesystemSandbox(FilesystemPolicy.workspace_only(workspace))
+        try:
+            return sandbox.resolve_for_read(".")
+        except Exception:
+            return None
+
+    def _list_artifacts(self, root: Path, *, run_id: str) -> list[dict[str, Any]]:
+        """Real generated files under a run workspace, newest first."""
+        artifacts: list[dict[str, Any]] = []
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            suffix = path.suffix.lower()
+            if suffix not in self._ARTIFACT_SUFFIXES:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:  # a file that vanished between glob and stat
+                continue
+            try:
+                relative = path.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            artifacts.append(
+                {
+                    "name": path.name,
+                    "path": relative,
+                    "format": suffix.lstrip("."),
+                    "bytes": stat.st_size,
+                    "modified_at": stat.st_mtime,
+                    "openable": suffix in self._OPENABLE_SUFFIXES,
+                    "run_id": run_id,
+                }
+            )
+        artifacts.sort(key=lambda a: float(a["modified_at"]), reverse=True)
+        return artifacts
+
+    async def run_artifacts(self, run_id: str) -> dict[str, object]:
+        """Documents a run generated into its workspace.
+
+        This is a real directory listing of the run's sandboxed workspace,
+        filtered to generatable document types — not a database of claims. It
+        never leaves the workspace, so it cannot expose host files.
+        """
+        record = await self._runs.get(run_id, tenant_id=self._principal.tenant_id)
+        root = self._run_workspace(record)
+        if root is None or not root.is_dir():
+            return {"run_id": run_id, "artifacts": [], "count": 0}
+        artifacts = self._list_artifacts(root, run_id=run_id)
+        return {"run_id": run_id, "artifacts": artifacts, "count": len(artifacts)}
+
+    async def list_artifacts(self, *, limit: int = 20) -> dict[str, object]:
+        """Generated documents across the most recent runs, newest first."""
+        runs = await self._runs.list(tenant_id=self._principal.tenant_id, limit=limit)
+        collected: list[dict[str, object]] = []
+        for record in runs:
+            root = self._run_workspace(record)
+            if root is None or not root.is_dir():
+                continue
+            collected.extend(self._list_artifacts(root, run_id=record.id))
+        collected.sort(key=lambda a: float(str(a["modified_at"])), reverse=True)
+        return {"artifacts": collected, "count": len(collected)}
+
+    async def open_artifact(self, run_id: str, relative_path: str) -> dict[str, object]:
+        """Open a generated artifact in the OS default application.
+
+        The path is resolved through the run's filesystem sandbox, so only a
+        real file inside that run's workspace can be opened — a ``..`` escape or
+        an absolute path is refused. The operating system's own launcher is used
+        (``os.startfile`` on Windows, ``xdg-open``/``open`` elsewhere); a missing
+        launcher is reported honestly rather than pretending the file opened.
+        """
+        record = await self._runs.get(run_id, tenant_id=self._principal.tenant_id)
+        root = self._run_workspace(record)
+        if root is None or not root.is_dir():
+            raise NotFoundError("run workspace is not available", details={"run_id": run_id})
+        from ..local.sandbox import FilesystemPolicy, FilesystemSandbox
+
+        sandbox = FilesystemSandbox(FilesystemPolicy.workspace_only(str(root)))
+        resolved = sandbox.resolve_for_read(relative_path)
+        if not resolved.is_file():
+            raise NotFoundError(
+                "artifact does not exist", details={"run_id": run_id, "path": relative_path}
+            )
+        if resolved.suffix.lower() not in self._OPENABLE_SUFFIXES:
+            raise ValidationError(
+                "this artifact type cannot be opened in a system application",
+                details={"path": relative_path},
+            )
+        await self._platform.audit.record(
+            AuditEventType.ARTIFACT_OPENED,
+            tenant_id=self._principal.tenant_id,
+            user_id=self._principal.user_id,
+            run_id=run_id,
+            message="generated artifact opened in the system application",
+            data={"path": relative_path},
+        )
+        opened = _launch_with_system(resolved)
+        return {"run_id": run_id, "path": relative_path, "opened": opened}
 
     # -- Workflows -------------------------------------------------------
     async def list_workflows(self, *, limit: int = 50) -> list[dict[str, object]]:
@@ -831,6 +998,36 @@ class DesktopService:
             "updated_at": record.updated_at.isoformat(),
             "finished_at": record.finished_at.isoformat() if record.finished_at else None,
         }
+
+
+def _launch_with_system(path: Path) -> bool:
+    """Open ``path`` in the OS default application. Returns whether it launched.
+
+    The desktop UI runs inside a native webview with no network origin, so it
+    cannot open a file itself; this is the one place a generated artifact is
+    handed to the operating system. A missing launcher is reported as ``False``
+    rather than raising, so the UI can say so honestly.
+    """
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform.startswith("win"):
+            import os
+
+            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606 - user-opened artifact
+            return True
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen(  # noqa: S603 - fixed opener, no shell, sandbox-resolved path
+            [opener, str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        logger.warning("could not open artifact in a system application", exc_info=True)
+        return False
 
 
 def build_model_manager(platform: Platform) -> ModelManager:

@@ -16,6 +16,7 @@ import pytest
 
 from arabic_agent.core.errors import PermissionDeniedError, ValidationError
 from arabic_agent.documents.generation import (
+    Block,
     DocumentSpec,
     format_for_suffix,
     generate_document,
@@ -26,6 +27,7 @@ from arabic_agent.permissions.base import Permission
 from arabic_agent.tools.base import ToolContext
 from arabic_agent.tools.builtin.docgen import (
     DOCUMENT_GENERATION_TOOLS,
+    CreatePresentationTool,
     CreateSpreadsheetTool,
     DocumentGenerationFormatsTool,
     GenerateDocumentTool,
@@ -39,6 +41,7 @@ _CAPS = generation_capabilities()
 requires_pdf = pytest.mark.skipif(not _CAPS["pdf"], reason="reportlab not installed")
 requires_docx = pytest.mark.skipif(not _CAPS["docx"], reason="python-docx not installed")
 requires_xlsx = pytest.mark.skipif(not _CAPS["xlsx"], reason="openpyxl not installed")
+requires_pptx = pytest.mark.skipif(not _CAPS["pptx"], reason="python-pptx not installed")
 
 
 def _context(workspace: Path) -> ToolContext:
@@ -66,15 +69,22 @@ _ARABIC_SPEC = DocumentSpec.from_arguments(
 def test_generation_tools_are_declared_writes() -> None:
     assert GenerateDocumentTool.permissions == (Permission.WRITE_FILE,)
     assert CreateSpreadsheetTool.permissions == (Permission.WRITE_FILE,)
+    assert CreatePresentationTool.permissions == (Permission.WRITE_FILE,)
     # The formats reporter is read-only.
     assert DocumentGenerationFormatsTool.permissions == ()
     names = {cls.name for cls in DOCUMENT_GENERATION_TOOLS}
-    assert names == {"generate_document", "create_spreadsheet", "document_generation_formats"}
+    assert names == {
+        "generate_document",
+        "create_spreadsheet",
+        "create_presentation",
+        "document_generation_formats",
+    }
 
 
 def test_format_for_suffix() -> None:
     assert format_for_suffix(".pdf") == "pdf"
     assert format_for_suffix(".MD") == "markdown"
+    assert format_for_suffix(".pptx") == "pptx"
     assert format_for_suffix(".nope") is None
 
 
@@ -121,6 +131,127 @@ async def test_generate_docx_is_a_real_zip_with_text(tmp_path: Path) -> None:
     document = docx.Document(str(path))
     joined = "\n".join(p.text for p in document.paragraphs)
     assert "body" in joined
+
+
+@pytest.mark.asyncio
+@requires_pptx
+async def test_generate_pptx_is_a_real_package_with_slides(tmp_path: Path) -> None:
+    """A real .pptx package: the title, body and table are all present."""
+    tool = GenerateDocumentTool()
+    result = await tool.execute(
+        {
+            "path": "deck.pptx",
+            "title": "Deck",
+            "blocks": [
+                {"type": "heading", "text": "Section"},
+                {"type": "paragraph", "text": "Body text"},
+                {"type": "bullet", "items": ["one", "two"]},
+                {"type": "table", "headers": ["A", "B"], "rows": [["1", "2"]]},
+            ],
+        },
+        _context(tmp_path),
+    )
+    assert result.ok
+    path = tmp_path / "deck.pptx"
+    assert path.read_bytes()[:2] == b"PK"  # a real OOXML zip
+    assert result.data["bytes_written"] == path.stat().st_size
+
+    from pptx import Presentation
+
+    presentation = Presentation(str(path))
+    slides = list(presentation.slides)
+    assert len(slides) == 2  # title slide + one heading slide
+    joined = "\n".join(
+        shape.text_frame.text
+        for slide in slides
+        for shape in slide.shapes
+        if shape.has_text_frame and shape.text_frame.text
+    )
+    assert "Deck" in joined
+    assert "Section" in joined
+    # Successive body blocks accumulate rather than overwrite one another.
+    assert "Body text" in joined
+    assert "one" in joined and "two" in joined
+    assert any(shape.has_table for shape in slides[1].shapes)
+
+
+@pytest.mark.asyncio
+@requires_pptx
+async def test_create_presentation_arabic_is_shaped_and_rtl(tmp_path: Path) -> None:
+    """Arabic deck: the text survives and the deck is right-to-left."""
+    tool = CreatePresentationTool()
+    result = await tool.execute(
+        {
+            "path": "عرض.pptx",
+            "title": "العنوان",
+            "blocks": [{"type": "heading", "text": "المحتوى"}],
+        },
+        _context(tmp_path),
+    )
+    assert result.ok
+    from pptx import Presentation
+
+    presentation = Presentation(str(tmp_path / "عرض.pptx"))
+    # The Arabic heading is present (shaped with presentation forms), and the
+    # paragraphs are marked right-to-left, not left-to-right.
+    assert len(presentation.slides) == 2
+    title_frame = presentation.slides[0].shapes.title.text_frame
+    assert title_frame.text  # the title is not empty
+    assert (
+        title_frame.paragraphs[0]._p.find(
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}pPr"
+        )
+        is not None
+    )
+    assert title_frame.paragraphs[0]._p.pPr.get("rtl") == "1"
+
+
+@pytest.mark.asyncio
+@requires_pptx
+async def test_create_presentation_rejects_non_pptx_extension(tmp_path: Path) -> None:
+    tool = CreatePresentationTool()
+    with pytest.raises(ValidationError):
+        await tool.execute({"path": "deck.pdf", "title": "t"}, _context(tmp_path))
+    assert not (tmp_path / "deck.pdf").exists()
+
+
+@pytest.mark.asyncio
+@requires_pptx
+async def test_create_presentation_path_escape_is_denied(tmp_path: Path) -> None:
+    tool = CreatePresentationTool()
+    with pytest.raises(PermissionDeniedError):
+        await tool.execute({"path": "../escape.pptx", "title": "x"}, _context(tmp_path))
+
+
+@pytest.mark.asyncio
+@requires_pptx
+async def test_generate_pptx_round_trips_through_the_parser(tmp_path: Path) -> None:
+    """A generated deck re-parses through the real document pipeline.
+
+    This closes the loop: what generation writes, the read side actually reads
+    back, with the Arabic body text intact.
+    """
+    from arabic_agent.documents.generation import DocumentSpec
+    from arabic_agent.documents.parsers import ParseLimits, parse_pptx
+
+    path = tmp_path / "تقرير.pptx"
+    generate_document(
+        path,
+        DocumentSpec(
+            title="تقرير المبيعات",
+            blocks=(
+                Block.from_mapping({"type": "heading", "text": "الفصل الأول"}),
+                Block.from_mapping({"type": "paragraph", "text": "النص العربي"}),
+            ),
+        ),
+    )
+    document = parse_pptx(path, display_path="تقرير.pptx", limits=ParseLimits())
+    assert document.format == "pptx"
+    assert document.metadata.slide_count == 2
+    text = "\n".join(section.text for section in document.sections)
+    assert "تقرير المبيعات" in text
+    assert "الفصل الأول" in text
+    assert "النص العربي" in text
 
 
 @pytest.mark.asyncio
@@ -253,7 +384,7 @@ async def test_missing_library_reports_unsupported(
 
 def test_generation_capabilities_shape() -> None:
     caps = generation_capabilities()
-    for fmt in ("pdf", "docx", "xlsx", "csv", "markdown", "text", "html", "json"):
+    for fmt in ("pdf", "docx", "pptx", "xlsx", "csv", "markdown", "text", "html", "json"):
         assert fmt in caps
         assert isinstance(caps[fmt], bool)
 

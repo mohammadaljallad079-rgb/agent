@@ -121,6 +121,7 @@
           <strong data-i18n="readiness">الجاهزية</strong>
           <span class="pill" id="readyPill">—</span>
           <span class="muted" id="activeModelLine"></span>
+          <button class="btn" id="setupBtn" data-i18n="runSetup" style="display:none">إعداد النموذج</button>
         </div>
         <div class="muted" id="readinessDetail"></div>
       </div>
@@ -132,6 +133,12 @@
       <h2 data-i18n="tools">الأدوات</h2>
       <div class="card"><div class="muted" id="toolsCount"></div></div>
       <div id="tools"></div>
+    </section>
+
+    <section id="s-artifacts">
+      <h2 data-i18n="artifacts">المستندات الناتجة</h2>
+      <div class="card"><div class="muted" id="artifactsCount"></div></div>
+      <div id="artifacts"></div>
     </section>
 
     <section id="s-workflows">
@@ -222,7 +229,9 @@
         noTools:"لا توجد أدوات", noWorkflows:"لا يوجد سير عمل", noConnectors:"لا توجد موصّلات",
         noMemory:"لا توجد ذاكرة", kind:"النوع", status:"الحالة", published:"منشور", draft:"مسودة",
         writeCapable:"قابل للكتابة", authenticated:"موثّق", screenPolicy:"سياسة الشاشة",
-        enabled:"مفعّل", disabled:"معطّل", detail:"التفاصيل", importance:"الأهمية" },
+        enabled:"مفعّل", disabled:"معطّل", detail:"التفاصيل", importance:"الأهمية",
+        artifacts:"المستندات الناتجة", noArtifacts:"لا توجد مستندات بعد", open:"فتح",
+        size:"الحجم", format:"الصيغة", openFailed:"تعذّر الفتح" },
       en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
@@ -243,7 +252,9 @@
         noTools:"No tools", noWorkflows:"No workflows", noConnectors:"No connectors",
         noMemory:"No memory", kind:"Kind", status:"Status", published:"published", draft:"draft",
         writeCapable:"write-capable", authenticated:"authenticated", screenPolicy:"Screen policy",
-        enabled:"enabled", disabled:"disabled", detail:"Detail", importance:"Importance" }
+        enabled:"enabled", disabled:"disabled", detail:"Detail", importance:"Importance",
+        artifacts:"Generated documents", noArtifacts:"No documents yet", open:"Open",
+        size:"Size", format:"Format", openFailed:"Could not open" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
     const t = (k) => (I18N[LANG][k] || k);
@@ -262,10 +273,11 @@
       document.querySelectorAll("main section").forEach(s => s.classList.remove("active"));
       $("s-" + section).classList.add("active");
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.section === section));
+      if (section === "artifacts") refreshArtifacts();
     }
 
     // ---- navigation ----
-    const SECTIONS = ["workspace","approvals","models","providers","tools","workflows","connectors","computer","memory","browser","settings","diagnostics"];
+    const SECTIONS = ["workspace","approvals","models","providers","tools","artifacts","workflows","connectors","computer","memory","browser","settings","diagnostics"];
     function buildNav() {
       const nav = $("nav"); nav.replaceChildren();
       SECTIONS.forEach(s => {
@@ -354,6 +366,8 @@
       $("activeModelLine").textContent = (am && am.model_id)
         ? (t("activeModel") + ": " + am.model_id) : "";
       $("readinessDetail").textContent = (r && r.detail) ? r.detail : "";
+      // First-run setup is offered only when there is no active local model.
+      $("setupBtn").style.display = selected ? "none" : "";
     }
     function renderModels(models, recommendation) {
       if (recommendation) $("recommendation").textContent =
@@ -404,6 +418,27 @@
         if (tool.side_effecting) { const s = el("span", t("sideEffecting")); s.className = "pill warn"; head.appendChild(s); }
         card.appendChild(head);
         const desc = el("div", tool.description); desc.className = "muted"; card.appendChild(desc);
+        box.appendChild(card);
+      });
+    }
+    function renderArtifacts(data) {
+      const box = $("artifacts"); box.replaceChildren();
+      const items = (data && data.artifacts) || [];
+      $("artifactsCount").textContent = (data && data.count != null ? data.count : items.length) + "";
+      if (!items.length) { const d = el("div", t("noArtifacts")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(a => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", a.name));
+        const f = el("span", a.format); f.className = "pill"; head.appendChild(f);
+        if (a.openable) {
+          const open = el("button", t("open")); open.className = "btn ghost";
+          open.onclick = () => openArtifact(a.run_id, a.path);
+          head.appendChild(open);
+        }
+        card.appendChild(head);
+        const meta = el("div", `${t("size")}: ${a.bytes} B · ${a.run_id}`); meta.className = "muted";
+        card.appendChild(meta);
         box.appendChild(card);
       });
     }
@@ -575,6 +610,7 @@
         renderModels(boot.models, boot.recommendation);
         renderReadiness(boot.readiness, boot.active_model);
         renderTools(boot.tools); renderWorkflows(boot.workflows);
+        renderArtifacts(boot.artifacts);
         renderConnectors(boot.connectors); renderComputer(boot.computer);
         renderMemory(boot.memory);
         renderPrivacy(boot.modes.privacy); renderPermissions(boot.permissions);
@@ -623,6 +659,29 @@
     }
     async function healthModel(id) { const a = api(); if (!a) return; try { const r = await a.model_health(id); toast(r.health + ": " + (r.detail || "")); } catch (e) { toast(String(e)); } }
     async function removeModel(id) { const a = api(); if (!a) return; try { await a.remove_model(id); await refresh(); } catch (e) { toast(String(e)); } }
+    async function openArtifact(runId, path) {
+      const a = api(); if (!a) return;
+      try {
+        const r = await a.open_artifact(runId, path);
+        if (!r || r.opened === false) toast(t("openFailed"));
+      } catch (e) { toast(t("openFailed") + ": " + e); }
+    }
+    // The artifacts listing is refreshed on demand from the bridge, so it
+    // reflects files written since the page loaded, not just at bootstrap.
+    async function refreshArtifacts() {
+      const a = api(); if (!a) return;
+      try { renderArtifacts(await a.artifacts()); } catch (e) { toast(String(e)); }
+    }
+    async function setupModel() {
+      const a = api(); if (!a) return;
+      const btn = $("setupBtn"); btn.disabled = true;
+      $("readinessDetail").textContent = t("installing") + "…";
+      try {
+        const r = await a.setup_model(null);
+        toast(r.active ? (t("activeModel") + ": " + r.model_id) : (r.detail || t("notReady")));
+        await refresh();
+      } catch (e) { toast(String(e)); } finally { btn.disabled = false; }
+    }
     async function setMode(m) { const a = api(); if (!a) return; try { await a.set_mode(m); await refresh(); } catch (e) { toast(String(e)); } }
     async function provisionBrowser() {
       const a = api(); if (!a) return;
@@ -666,6 +725,7 @@
         a.list_runs().then(rs => rs.filter(r => !["completed","failed","cancelled"].includes(r.status)).forEach(r => stopRun(r.id)));
       };
       $("exportBtn").onclick = exportDiagnostics;
+      $("setupBtn").onclick = setupModel;
       $("provisionBtn").onclick = provisionBrowser;
       $("cancelProvisionBtn").onclick = cancelBrowserProvision;
       $("langBtn").onclick = () => { LANG = LANG === "ar" ? "en" : "ar"; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };

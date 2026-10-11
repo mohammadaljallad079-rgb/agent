@@ -1,4 +1,4 @@
-"""Document generation tools: write real PDF/DOCX/XLSX/CSV/Markdown/HTML/JSON.
+"""Document generation tools: write real PDF/DOCX/PPTX/XLSX/CSV/Markdown/HTML/JSON.
 
 These are the write-side counterparts to :mod:`arabic_agent.tools.builtin.documents`.
 They are ordinary :class:`~arabic_agent.tools.base.Tool` instances, so the same
@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
+from ...core.errors import ValidationError
 from ...documents.generation import (
     DocumentSpec,
     format_for_suffix,
@@ -42,11 +43,13 @@ class GenerateDocumentTool(Tool):
     name = "generate_document"
     description = (
         "Create a real document file on disk from a title and content blocks, "
-        "in the format implied by the destination extension: .pdf, .docx, .md, "
-        ".txt, .html or .json. Arabic text is supported (PDF shapes it with a "
-        "Unicode font; DOCX/HTML/etc. are written UTF-8). Returns the real byte "
-        "size of the file written. For tabular data use create_spreadsheet. The "
-        "file is written inside the workspace and this is an approval-gated write."
+        "in the format implied by the destination extension: .pdf, .docx, .pptx, "
+        ".md, .txt, .html or .json. Arabic text is supported (PDF shapes it with "
+        "a Unicode font/shaper; PPTX marks paragraphs right-to-left for the "
+        "renderer; DOCX/HTML/etc. are written UTF-8). Returns "
+        "the real byte size of the file written. For tabular data use "
+        "create_spreadsheet; for slides prefer create_presentation. The file is "
+        "written inside the workspace and this is an approval-gated write."
     )
     parameters: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -141,6 +144,70 @@ class CreateSpreadsheetTool(Tool):
         )
 
 
+class CreatePresentationTool(Tool):
+    name = "create_presentation"
+    description = (
+        "Create a real PowerPoint presentation (.pptx) from a title and content "
+        "blocks. Each heading starts a new slide; paragraphs, bullets and tables "
+        "become the current slide's body. Arabic is supported: paragraphs are "
+        "marked right-to-left so PowerPoint renders Arabic correctly, and the "
+        "logical text is preserved for copy/paste and search. Returns "
+        "the real byte size of the file written. The file is written inside the "
+        "workspace and this is an approval-gated write."
+    )
+    parameters: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Destination .pptx path in the workspace",
+            },
+            "title": {"type": "string", "description": "Optional deck title (first slide)"},
+            "blocks": {
+                "type": "array",
+                "description": "Ordered content blocks",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "description": "heading | paragraph | bullet | table | page_break",
+                        },
+                        "text": {"type": "string"},
+                        "level": {"type": "integer"},
+                        "items": {"type": "array", "items": {"type": "string"}},
+                        "headers": {"type": "array", "items": {"type": "string"}},
+                        "rows": {
+                            "type": "array",
+                            "items": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
+            },
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+    permissions = (Permission.WRITE_FILE,)
+
+    async def run(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+        path = _resolve_write(context, arguments["path"])
+        if format_for_suffix(path.suffix) != "pptx":
+            raise ValidationError(f"create_presentation writes .pptx only, not {path.suffix!r}")
+        spec = DocumentSpec.from_arguments(arguments)
+        result = generate_document(path, spec)
+        return ToolResult.success(
+            f"wrote {result.format} presentation ({result.bytes_written} bytes) "
+            f"to {arguments['path']}",
+            data={
+                "path": arguments["path"],
+                "format": result.format,
+                "bytes_written": result.bytes_written,
+                "blocks": result.blocks,
+            },
+        )
+
+
 class DocumentGenerationFormatsTool(Tool):
     name = "document_generation_formats"
     description = (
@@ -170,12 +237,14 @@ class DocumentGenerationFormatsTool(Tool):
 DOCUMENT_GENERATION_TOOLS: tuple[type[Tool], ...] = (
     GenerateDocumentTool,
     CreateSpreadsheetTool,
+    CreatePresentationTool,
     DocumentGenerationFormatsTool,
 )
 
 
 __all__ = [
     "DOCUMENT_GENERATION_TOOLS",
+    "CreatePresentationTool",
     "CreateSpreadsheetTool",
     "DocumentGenerationFormatsTool",
     "GenerateDocumentTool",
