@@ -280,6 +280,31 @@ def default_local_capabilities(
             audit_events=("document.parsed",),
         ),
         LocalCapability(
+            id="documents.generate",
+            name="Generate document",
+            description=(
+                "Create a real PDF/DOCX/XLSX/CSV/Markdown/HTML/JSON file from content "
+                "blocks. Arabic is supported."
+            ),
+            tool_name="generate_document",
+            risk=CapabilityRisk.MODERATE_RISK,
+            permissions=(Permission.WRITE_FILE,),
+            requires_approval=True,
+            data_boundary=DataBoundary.LOCAL,
+            audit_events=("document.generated", "local.file.modified"),
+        ),
+        LocalCapability(
+            id="spreadsheets.generate",
+            name="Generate spreadsheet",
+            description="Create a real XLSX or CSV file from tabular data.",
+            tool_name="create_spreadsheet",
+            risk=CapabilityRisk.MODERATE_RISK,
+            permissions=(Permission.WRITE_FILE,),
+            requires_approval=True,
+            data_boundary=DataBoundary.LOCAL,
+            audit_events=("document.generated", "local.file.modified"),
+        ),
+        LocalCapability(
             id="project.inspect",
             name="Inspect project",
             description="Detect languages, manifests, tests, entrypoints and docs of a project.",

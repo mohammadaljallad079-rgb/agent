@@ -320,3 +320,79 @@ def test_verify_installed_model(tmp_path):
     manager = ModelManager(storage_dir=str(storage), catalogue=Catalogue((model,)))
     result = manager.verify("m")
     assert result["success"] is True
+
+
+# --------------------------------------------------------------------------
+# Activation: install -> select -> run
+# --------------------------------------------------------------------------
+def test_activate_requires_installed_model(tmp_path):
+    """A model that is not installed cannot be activated."""
+    manager = _manager(tmp_path)
+    verdict = manager.can_activate("qwen2.5-0.5b-instruct-q4_k_m")
+    assert verdict["ok"] is False
+    assert "not installed" in str(verdict["reason"])
+    with pytest.raises(NotFoundError):
+        manager.activate("qwen2.5-0.5b-instruct-q4_k_m")
+
+
+def test_activate_unknown_model_is_refused(tmp_path):
+    manager = _manager(tmp_path)
+    assert manager.can_activate("no-such-model")["ok"] is False
+
+
+def test_activate_installed_model_sets_and_persists(tmp_path):
+    storage = tmp_path / "models"
+    storage.mkdir(parents=True)
+    (storage / "m.gguf").write_bytes(b"x")
+    _write_manifest(storage, {"m": {"path": "m.gguf", "size_bytes": 1, "sha256": None}})
+    model = CatalogueModel(
+        id="m",
+        display_name="M",
+        profile=ModelProfile.LIGHTWEIGHT,
+        url="https://example.invalid/m.gguf",
+        filename="m.gguf",
+    )
+    persisted: list[str] = []
+    manager = ModelManager(storage_dir=str(storage), catalogue=Catalogue((model,)))
+    result = manager.activate("m", persist=persisted.append)
+    assert result["active"] is True
+    assert manager.active_model_id() == "m"
+    assert persisted == ["m"]
+    assert next(m for m in manager.list_models() if m["active"])["id"] == "m"
+
+
+def test_active_model_persists_across_rebuild(tmp_path):
+    """read/write_active_model round-trips so a restart keeps the selection."""
+    from arabic_agent.desktop.model_manager import read_active_model, write_active_model
+
+    storage = tmp_path / "models"
+    assert read_active_model(storage) is None
+    write_active_model(storage, "m")
+    assert read_active_model(storage) == "m"
+    write_active_model(storage, None)
+    assert read_active_model(storage) is None
+
+
+def test_deactivate_clears_active(tmp_path):
+    storage = tmp_path / "models"
+    storage.mkdir(parents=True)
+    (storage / "m.gguf").write_bytes(b"x")
+    _write_manifest(storage, {"m": {"path": "m.gguf", "size_bytes": 1, "sha256": None}})
+    model = CatalogueModel(
+        id="m",
+        display_name="M",
+        profile=ModelProfile.LIGHTWEIGHT,
+        url="https://example.invalid/m.gguf",
+        filename="m.gguf",
+    )
+    manager = ModelManager(
+        storage_dir=str(storage), catalogue=Catalogue((model,)), active_model_id="m"
+    )
+    assert manager.deactivate()["previous_model_id"] == "m"
+    assert manager.active_model_id() is None
+
+
+def test_active_descriptor_is_none_without_selection(tmp_path):
+    manager = _manager(tmp_path)
+    assert manager.active_model_id() is None
+    assert manager.active_descriptor() is None

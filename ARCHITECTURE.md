@@ -243,23 +243,38 @@ Built-in today (real, sandboxed, tested):
 | `inspect_archive` | `FILES_READ` |
 | `list_documents` | `FILES_SEARCH` |
 | `inspect_project` | `FILES_READ`, `FILES_SEARCH` |
+| `generate_document` (PDF/DOCX/MD/TXT/HTML/JSON) | `WRITE_FILE` |
+| `create_spreadsheet` (XLSX/CSV) | `WRITE_FILE` |
+| `document_generation_formats` | none |
 
 Filesystem tools resolve every path against the run workspace and refuse
 escapes (`tools/builtin/_paths.py`); the heavy lifting is shared in
 `tools/builtin/_fileops.py` so the workspace and local-runtime tools behave
 identically. `run_command` runs with the workspace as its working directory.
 
-`documents/` is a real ingestion layer: parsers read the actual bytes for
-text/Markdown/JSON/CSV/HTML/PDF/DOCX/XLSX/PPTX and inspect ZIP/TAR archives
-without extracting. Each section carries provenance (page/slide/sheet/line) and
-parse limits are conservative. Optional parser dependencies degrade honestly —
-an absent parser reports the format as unsupported rather than fabricating a
-result. Ingested content is scanned for likely secrets; a finding is reported by
-kind + locator only (`SECRET_DETECTED`), never by value. `project/` builds a
-project summary from real filesystem evidence (languages, manifests, tests,
-entrypoints, docs).
+`documents/` is a real ingestion *and generation* layer: parsers read the actual
+bytes for text/Markdown/JSON/CSV/HTML/PDF/DOCX/XLSX/PPTX and inspect ZIP/TAR
+archives without extracting. Each section carries provenance
+(page/slide/sheet/line) and parse limits are conservative. Optional parser
+dependencies degrade honestly — an absent parser reports the format as
+unsupported rather than fabricating a result. Ingested content is scanned for
+likely secrets; a finding is reported by kind + locator only
+(`SECRET_DETECTED`), never by value. `project/` builds a project summary from
+real filesystem evidence (languages, manifests, tests, entrypoints, docs).
 
-Future tools (document generation, email, ERP, WhatsApp, social, image, video,
+`documents/generation.py` is the write-side counterpart: `generate_document`
+writes a real PDF/DOCX/Markdown/TXT/HTML/JSON file from a title plus ordered
+content blocks, and `create_spreadsheet` writes a real XLSX/CSV from tabular
+data. Arabic is first-class — PDF shapes Arabic with a resolved Unicode font
+(failing loudly when none is present rather than emitting missing glyphs), DOCX
+is written RTL-aware, HTML is emitted `dir="rtl"`, and CSV carries a BOM so
+Excel opens Arabic correctly. A format whose library is absent is reported
+unsupported, and a block type that is not understood is an error, never a silent
+drop. The tools are ordinary `Tool`s (`WRITE_FILE` gated, approval-aware), so
+generation runs through the same executor, policy and audit path as any other
+write.
+
+Future tools (PPTX generation, email, ERP, WhatsApp, social, image, video,
 calendar, printing) are declared in `TODO.md` and plug into the same interface.
 Browser tools are no longer in this list — they are implemented (see §13c).
 
@@ -459,9 +474,16 @@ restricted to `AAP_ALLOWED_EVENT_TYPES`).
   `Usage` are provider-neutral.
 
 `OpenAICompatibleProvider` serves both cloud OpenAI and any local
-OpenAI-compatible server (Ollama, vLLM, llama.cpp) — the offline path. Adding a
-provider (Anthropic, Gemini, a local vision or speech model) means implementing
-`ModelProvider` and registering it; the agent core is untouched.
+OpenAI-compatible server (Ollama, vLLM, llama.cpp) — the offline path.
+`AnthropicCompatibleProvider` serves the Anthropic Messages API (it bridges the
+schema differences: top-level `system`, typed content blocks, `tool_use` /
+`tool_result`). Both are registered in `container.py` only when a key is
+configured, and each is a remote candidate the router can fall back to. Adding a
+provider (Gemini, a local vision or speech model) means implementing
+`ModelProvider` and registering it; the agent core is untouched. The desktop
+surfaces the configured providers and can run a real, bounded connection test
+against one (`GET /desktop/providers`, `POST /desktop/providers/{name}/test`)
+without ever returning a key.
 
 Switching model = changing configuration (`AAP_DEFAULT_MODEL`, fallbacks), not
 code.
@@ -1262,7 +1284,8 @@ The UI layer (future) must render RTL/LTR from the same locale signal.
 
 These have clear insertion points and are tracked in `TODO.md`:
 
-- **Document generation** — PDF/DOCX/XLSX/PPTX/CSV as independent tools.
+- **PPTX generation** — the remaining generation format (PDF/DOCX/XLSX/CSV/
+  Markdown/TXT/HTML/JSON are implemented in `documents/generation.py`).
 - **Video understanding** — frames → OCR → speech-to-text → timeline → visual
   events, behind a video tool interface.
 - **Workflow scheduler** — cron/event/webhook triggers that start workflow runs
@@ -1476,6 +1499,30 @@ The foundation is verified, not assumed.
     a green state, when the interpreter is broken), reports the Windows-only
     steps as `skipped` (not success) off Windows, never embeds a secret, and
     uninstalls cleanly with or without user data.
+  - `test_document_generation.py` — real generation: a PDF and DOCX are written
+    and re-parsed with real libraries to prove the text is inside, XLSX/CSV
+    round-trip Arabic through `openpyxl`/`csv`, a requested sheet name is
+    honoured, an unsupported extension or block type is refused, a path escape
+    is denied, and an absent library is reported unsupported rather than faked.
+  - `test_cloud_providers.py` — the OpenAI- and Anthropic-compatible providers
+    against a **real** local HTTP server: request shaping (top-level `system`,
+    typed content blocks, `tool_use`/`tool_result`), header construction, tool
+    parsing, and transient-vs-permanent error classification; the container
+    registers Anthropic only when a key is present.
+  - `test_local_platform.py` — includes a `generate_document` round-trip through
+    the **real** executor, policy engine, approval store and sandbox: a PDF is
+    approval-gated and written into the workspace.
+  - `test_desktop_activation.py` — activating a local model end to end: the
+    gateway default switches to the activated model (and the previous default is
+    kept as a fallback), readiness is computed from a **real** health probe
+    rather than from a present file, activation is written to the audit trail,
+    the selection persists across a rebuild, and a failed probe never reports
+    ready. This is the regression suite for the activation audit-call defect.
+  - `test_setup_provider.py` — the first-run setup provider: a fresh install
+    with no key and no local weights still assembles, the setup provider is
+    routed and refuses inference with an actionable `ConfigurationError` (a task
+    cannot silently succeed against it), and the gateway switches its default
+    model at runtime without a rebuild (an unroutable switch is refused).
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic — real components are wired through `Platform.build()`.

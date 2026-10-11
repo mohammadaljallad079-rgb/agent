@@ -116,8 +116,51 @@
 
     <section id="s-models">
       <h2 data-i18n="models">مدير الذكاء المحلي</h2>
+      <div class="card">
+        <div class="row wrap">
+          <strong data-i18n="readiness">الجاهزية</strong>
+          <span class="pill" id="readyPill">—</span>
+          <span class="muted" id="activeModelLine"></span>
+        </div>
+        <div class="muted" id="readinessDetail"></div>
+      </div>
       <div class="card"><div id="recommendation" class="muted"></div></div>
       <div id="models"></div>
+    </section>
+
+    <section id="s-tools">
+      <h2 data-i18n="tools">الأدوات</h2>
+      <div class="card"><div class="muted" id="toolsCount"></div></div>
+      <div id="tools"></div>
+    </section>
+
+    <section id="s-workflows">
+      <h2 data-i18n="workflows">سير العمل</h2>
+      <div id="workflows"></div>
+    </section>
+
+    <section id="s-connectors">
+      <h2 data-i18n="connectors">الموصّلات</h2>
+      <div class="card"><div class="muted" id="connectorsState"></div></div>
+      <div id="connectors"></div>
+    </section>
+
+    <section id="s-computer">
+      <h2 data-i18n="computer">التحكم بالحاسوب</h2>
+      <div class="card"><div id="computer" class="muted"></div></div>
+    </section>
+
+    <section id="s-memory">
+      <h2 data-i18n="memory">الذاكرة</h2>
+      <div id="memory"></div>
+    </section>
+
+    <section id="s-providers">
+      <h2 data-i18n="providers">مزوّدو الذكاء السحابي</h2>
+      <div class="card">
+        <div class="muted" id="providersDefault"></div>
+      </div>
+      <div id="providers"></div>
     </section>
 
     <section id="s-browser">
@@ -168,7 +211,18 @@
         remove:"إزالة", installed:"مثبّت", notInstalled:"غير مثبّت", active:"نشط", empty:"لا يوجد",
         noRuns:"لا توجد مهام بعد", noApprovals:"لا توجد موافقات معلّقة", free:"متاح",
         browser:"متصفح الويب", provision:"تجهيز المتصفح", cancel:"إلغاء",
-        ready:"جاهز", installing:"قيد التجهيز", broken:"فشل التجهيز" },
+        ready:"جاهز", installing:"قيد التجهيز", broken:"فشل التجهيز",
+        providers:"مزوّدو الذكاء السحابي", testConnection:"اختبار الاتصال", defaultProvider:"المزوّد الافتراضي",
+        noProviders:"لا يوجد مزوّد مهيّأ",
+        tools:"الأدوات", workflows:"سير العمل", connectors:"الموصّلات", computer:"التحكم بالحاسوب",
+        memory:"الذاكرة", readyState:"جاهز للتشغيل", notReady:"غير جاهز", activate:"تنشيط",
+        activeModel:"النموذج النشط", noActiveModel:"لا يوجد نموذج نشط", readiness:"الجاهزية",
+        setupNeeded:"يلزم الإعداد", firstRun:"الإعداد الأولي", runSetup:"إعداد النموذج",
+        permissionsCol:"الصلاحيات", sideEffecting:"ذو أثر جانبي", yes:"نعم", no:"لا",
+        noTools:"لا توجد أدوات", noWorkflows:"لا يوجد سير عمل", noConnectors:"لا توجد موصّلات",
+        noMemory:"لا توجد ذاكرة", kind:"النوع", status:"الحالة", published:"منشور", draft:"مسودة",
+        writeCapable:"قابل للكتابة", authenticated:"موثّق", screenPolicy:"سياسة الشاشة",
+        enabled:"مفعّل", disabled:"معطّل", detail:"التفاصيل", importance:"الأهمية" },
       en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
@@ -178,7 +232,18 @@
         remove:"Remove", installed:"installed", notInstalled:"not installed", active:"active", empty:"none",
         noRuns:"No tasks yet", noApprovals:"No pending approvals", free:"free",
         browser:"Web browser", provision:"Provision browser", cancel:"Cancel",
-        ready:"ready", installing:"provisioning", broken:"provisioning failed" }
+        ready:"ready", installing:"provisioning", broken:"provisioning failed",
+        providers:"Cloud providers", testConnection:"Test connection", defaultProvider:"Default provider",
+        noProviders:"No provider configured",
+        tools:"Tools", workflows:"Workflows", connectors:"Connectors", computer:"Computer control",
+        memory:"Memory", readyState:"Ready to run", notReady:"Not ready", activate:"Activate",
+        activeModel:"Active model", noActiveModel:"No active model", readiness:"Readiness",
+        setupNeeded:"Setup required", firstRun:"First-run setup", runSetup:"Set up a model",
+        permissionsCol:"Permissions", sideEffecting:"Side-effecting", yes:"yes", no:"no",
+        noTools:"No tools", noWorkflows:"No workflows", noConnectors:"No connectors",
+        noMemory:"No memory", kind:"Kind", status:"Status", published:"published", draft:"draft",
+        writeCapable:"write-capable", authenticated:"authenticated", screenPolicy:"Screen policy",
+        enabled:"enabled", disabled:"disabled", detail:"Detail", importance:"Importance" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
     const t = (k) => (I18N[LANG][k] || k);
@@ -200,7 +265,7 @@
     }
 
     // ---- navigation ----
-    const SECTIONS = ["workspace","approvals","models","browser","settings","diagnostics"];
+    const SECTIONS = ["workspace","approvals","models","providers","tools","workflows","connectors","computer","memory","browser","settings","diagnostics"];
     function buildNav() {
       const nav = $("nav"); nav.replaceChildren();
       SECTIONS.forEach(s => {
@@ -279,6 +344,17 @@
         card.appendChild(row); box.appendChild(card);
       });
     }
+    function renderReadiness(r, active) {
+      const pill = $("readyPill");
+      const ready = !!(r && r.ready);
+      const selected = !!(r && r.selected);
+      pill.textContent = ready ? t("readyState") : (selected ? t("notReady") : t("noActiveModel"));
+      pill.className = "pill " + (ready ? "ok" : "warn");
+      const am = active || (r && r.model_id ? r : null);
+      $("activeModelLine").textContent = (am && am.model_id)
+        ? (t("activeModel") + ": " + am.model_id) : "";
+      $("readinessDetail").textContent = (r && r.detail) ? r.detail : "";
+    }
     function renderModels(models, recommendation) {
       if (recommendation) $("recommendation").textContent =
         (LANG === "ar" ? "التوصية: " : "Recommended: ") + recommendation.profile + " — " + recommendation.reason;
@@ -301,12 +377,90 @@
           const b = el("button", t("install")); b.className = "btn"; b.disabled = m.runnable === false;
           b.onclick = () => installModel(m.id); row.appendChild(b);
         } else {
+          if (!m.active) {
+            const act = el("button", t("activate")); act.className = "btn";
+            act.onclick = () => activateModel(m.id); row.appendChild(act);
+          }
           const v = el("button", t("verify")); v.className = "btn ghost"; v.onclick = () => verifyModel(m.id); row.appendChild(v);
           const h = el("button", t("health")); h.className = "btn ghost"; h.onclick = () => healthModel(m.id); row.appendChild(h);
-          const r = el("button", t("remove")); r.className = "btn danger"; r.onclick = () => removeModel(m.id); row.appendChild(r);
+          const r = el("button", t("remove")); r.className = "btn danger"; r.disabled = !!m.active;
+          r.onclick = () => removeModel(m.id); row.appendChild(r);
         }
         card.appendChild(row);
         const prog = el("div"); prog.id = "prog-" + m.id; prog.className = "muted"; card.appendChild(prog);
+        box.appendChild(card);
+      });
+    }
+    function renderTools(data) {
+      const box = $("tools"); box.replaceChildren();
+      const items = (data && data.tools) || [];
+      $("toolsCount").textContent = (data && data.count != null ? data.count : items.length) + "";
+      if (!items.length) { const d = el("div", t("noTools")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(tool => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", tool.name));
+        (tool.permissions || []).forEach(p => { const s = el("span", p); s.className = "pill"; head.appendChild(s); });
+        if (tool.side_effecting) { const s = el("span", t("sideEffecting")); s.className = "pill warn"; head.appendChild(s); }
+        card.appendChild(head);
+        const desc = el("div", tool.description); desc.className = "muted"; card.appendChild(desc);
+        box.appendChild(card);
+      });
+    }
+    function renderWorkflows(data) {
+      const box = $("workflows"); box.replaceChildren();
+      const items = (data && data.workflows) || [];
+      if (!items.length) { const d = el("div", t("noWorkflows")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(w => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", w.name));
+        const st = el("span", w.status); st.className = "pill"; head.appendChild(st);
+        card.appendChild(head);
+        if (w.description) { const d = el("div", w.description); d.className = "muted"; card.appendChild(d); }
+        const meta = el("div", `${t("status")}: ${w.status} · v${w.latest_version}`); meta.className = "muted";
+        card.appendChild(meta); box.appendChild(card);
+      });
+    }
+    function renderConnectors(data) {
+      const box = $("connectors"); box.replaceChildren();
+      $("connectorsState").textContent = t("enabled") + ": " + (data && data.enabled ? t("yes") : t("no"));
+      const items = (data && data.connectors) || [];
+      if (!items.length) { const d = el("div", t("noConnectors")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(c => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", c.name));
+        const st = el("span", c.state); st.className = "pill"; head.appendChild(st);
+        if (c.write_capable) { const s = el("span", t("writeCapable")); s.className = "pill warn"; head.appendChild(s); }
+        if (c.authenticated) { const s = el("span", t("authenticated")); s.className = "pill ok"; head.appendChild(s); }
+        card.appendChild(head);
+        if (c.detail) { const d = el("div", c.detail); d.className = "muted"; card.appendChild(d); }
+        box.appendChild(card);
+      });
+    }
+    function renderComputer(c) {
+      const box = $("computer"); box.replaceChildren();
+      const rows = [
+        [t("enabled"), c && c.enabled ? t("yes") : t("no")],
+        ["available", c && c.available ? t("yes") : t("no")],
+        [t("screenPolicy"), (c && c.screen_policy) || "—"],
+        ["pointer", c && c.pointer_allowed ? t("yes") : t("no")],
+        ["keyboard", c && c.keyboard_allowed ? t("yes") : t("no")],
+      ];
+      rows.forEach(([k, v]) => { const d = el("div", k + ": " + v); box.appendChild(d); });
+    }
+    function renderMemory(data) {
+      const box = $("memory"); box.replaceChildren();
+      const items = (data && data.entries) || [];
+      if (!items.length) { const d = el("div", t("noMemory")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(e => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", e.key));
+        const k = el("span", e.kind); k.className = "pill"; head.appendChild(k);
+        card.appendChild(head);
+        const body = el("div", e.content); body.className = "muted"; body.style.whiteSpace = "pre-wrap"; card.appendChild(body);
         box.appendChild(card);
       });
     }
@@ -366,6 +520,38 @@
       $("provisionBtn").disabled = busy;
       $("cancelProvisionBtn").disabled = !busy;
     }
+    function renderProviders(p) {
+      const box = $("providers"); box.replaceChildren();
+      $("providersDefault").textContent =
+        t("defaultProvider") + ": " + (p && p.default_model ? p.default_model : "—");
+      const list = (p && p.providers) || [];
+      if (!list.length) { const d = el("div", t("noProviders")); d.className = "empty"; box.appendChild(d); return; }
+      list.forEach(pr => {
+        const card = el("div"); card.className = "card";
+        const row = el("div"); row.className = "row wrap";
+        const name = el("strong", pr.name + (pr.local ? " (local)" : "")); row.appendChild(name);
+        if (pr.is_default) { const b = el("span", t("defaultProvider")); b.className = "pill ok"; row.appendChild(b); }
+        (pr.capabilities || []).forEach(c => { const s = el("span", c); s.className = "pill"; row.appendChild(s); });
+        const btn = el("button", t("testConnection")); btn.className = "btn ghost";
+        const out = el("span", "…"); out.className = "muted";
+        btn.onclick = async () => {
+          btn.disabled = true; out.textContent = "…";
+          try {
+            const r = await api().test_provider(pr.name);
+            out.textContent = r.ok ? ("✓ " + (r.latency_ms != null ? r.latency_ms + "ms" : "")) : ("✗ " + (r.error || ""));
+            out.className = "pill " + (r.ok ? "ok" : "danger");
+          } catch (e) { out.textContent = "✗ " + e; out.className = "pill danger"; }
+          finally { btn.disabled = false; }
+        };
+        row.appendChild(btn); row.appendChild(out);
+        card.appendChild(row);
+        if (pr.model || pr.base_url) {
+          const meta = el("div", [pr.model, pr.base_url].filter(Boolean).join("  ·  "));
+          meta.className = "muted"; card.appendChild(meta);
+        }
+        box.appendChild(card);
+      });
+    }
     function renderSettings(s) {
       const box = $("settings"); box.replaceChildren();
       [["locale", s.general.locale], ["environment", s.general.environment],
@@ -387,10 +573,19 @@
         const boot = await a.bootstrap();
         renderRuns(boot.runs); renderApprovals(boot.approvals);
         renderModels(boot.models, boot.recommendation);
+        renderReadiness(boot.readiness, boot.active_model);
+        renderTools(boot.tools); renderWorkflows(boot.workflows);
+        renderConnectors(boot.connectors); renderComputer(boot.computer);
+        renderMemory(boot.memory);
         renderPrivacy(boot.modes.privacy); renderPermissions(boot.permissions);
         renderModes(boot.modes); renderSettings(boot.settings); renderDiagnostics(boot.diagnostics);
         renderBrowser(boot.browser);
+        renderProviders(boot.providers);
         $("modeBadge").textContent = boot.modes.current;
+        // First-run setup: no model configured at all — surface it plainly.
+        if (boot.providers && boot.providers.needs_setup) {
+          toast(t("setupNeeded") + ": " + t("runSetup"));
+        }
       } catch (e) { toast("تعذّر تحميل الحالة: " + e); }
     }
     async function loadTimeline(runId) {
@@ -416,6 +611,16 @@
       catch (e) { toast("تعذّر التثبيت: " + e); }
     }
     async function verifyModel(id) { const a = api(); if (!a) return; try { const r = await a.verify_model(id); toast(r.detail || "verified"); } catch (e) { toast(String(e)); } }
+    async function activateModel(id) {
+      const a = api(); if (!a) return;
+      const box = $("prog-" + id); if (box) box.textContent = "…";
+      try {
+        const r = await a.activate_model(id);
+        if (r && r.active) toast(t("activeModel") + ": " + r.model_id);
+        else toast(t("notReady") + ": " + ((r && r.reason) || ""));
+        await refresh();
+      } catch (e) { toast(String(e)); }
+    }
     async function healthModel(id) { const a = api(); if (!a) return; try { const r = await a.model_health(id); toast(r.health + ": " + (r.detail || "")); } catch (e) { toast(String(e)); } }
     async function removeModel(id) { const a = api(); if (!a) return; try { await a.remove_model(id); await refresh(); } catch (e) { toast(String(e)); } }
     async function setMode(m) { const a = api(); if (!a) return; try { await a.set_mode(m); await refresh(); } catch (e) { toast(String(e)); } }

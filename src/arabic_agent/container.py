@@ -91,7 +91,9 @@ from .memory.base import MemoryStore
 from .memory.memory_store import InMemoryMemoryStore
 from .memory.policy import MemoryPolicy
 from .models.gateway import ModelGateway
+from .models.providers.anthropic_compatible import AnthropicCompatibleProvider
 from .models.providers.openai_compatible import OpenAICompatibleProvider
+from .models.providers.setup_required import SETUP_MODEL_ID, SetupRequiredProvider
 from .models.registry import ProviderRegistry
 from .models.routing import ModelRouter, RoutingPolicy
 from .observability.logging import configure_logging
@@ -130,6 +132,7 @@ from .tools.builtin import (
     BROWSER_TOOLS,
     COMPUTER_TOOLS,
     CONNECTOR_TOOLS,
+    DOCUMENT_GENERATION_TOOLS,
     DOCUMENT_TOOLS,
     EXTENDED_FILESYSTEM_TOOLS,
     PROJECT_TOOLS,
@@ -417,6 +420,7 @@ class Platform:
                 registry.register(
                     OpenAICompatibleProvider(
                         name="openai",
+                        base_url=settings.openai_base_url,
                         api_key=settings.openai_api_key.get_secret_value(),
                         timeout=settings.request_timeout_seconds,
                     )
@@ -427,6 +431,20 @@ class Platform:
                     else "openai/gpt-4o-mini"
                 )
                 remote_candidates.append(model)
+            # Anthropic is registered only when its key is configured. It speaks
+            # the Messages API, so it needs its own adapter, but it is a remote
+            # candidate like any other and the agent core never sees the
+            # difference.
+            if settings.anthropic_api_key.get_secret_value():
+                registry.register(
+                    AnthropicCompatibleProvider(
+                        name="anthropic",
+                        base_url=settings.anthropic_base_url,
+                        api_key=settings.anthropic_api_key.get_secret_value(),
+                        timeout=settings.request_timeout_seconds,
+                    )
+                )
+                remote_candidates.append(f"anthropic/{settings.anthropic_model}")
             # A configured local endpoint (Ollama / llama.cpp server) runs on
             # this machine even though it speaks the OpenAI wire protocol.
             if settings.local_model_base_url:
@@ -474,15 +492,23 @@ class Platform:
                 registry.register(local_model_provider)
                 local_candidates.append(model_logical_id(descriptor))
             candidates = [*local_candidates, *remote_candidates]
+            setup_only = not candidates
 
-            if not candidates:
-                raise ConfigurationError(
-                    "no model provider configured: set AAP_OPENAI_API_KEY, "
-                    "AAP_LOCAL_MODEL_BASE_URL (local endpoint) or "
-                    "AAP_LOCAL_MODEL_PATH + AAP_LOCAL_MODEL_STORAGE_DIR (local model)"
-                )
+            if setup_only:
+                # First run of a fresh install: nothing is configured yet. Rather
+                # than refuse to start — which would make it impossible to open
+                # the product and configure a model — register an honest
+                # setup-required provider. It performs no inference and every
+                # call raises an actionable ConfigurationError, so a task can
+                # never silently succeed against it. The desktop surfaces it as
+                # ``needs_setup``; installing/activating a model replaces it.
+                registry.register(SetupRequiredProvider())
+                candidates = [SETUP_MODEL_ID]
             router = ModelRouter(
-                local_models=tuple(local_candidates),
+                # The setup placeholder must be reachable even in OFFLINE mode so
+                # a task gets its actionable ConfigurationError instead of a
+                # generic fail-closed refusal; it runs on this machine.
+                local_models=(SETUP_MODEL_ID,) if setup_only else tuple(local_candidates),
                 remote_models=tuple(remote_candidates),
             )
             routing_policy = RoutingPolicy(
@@ -544,6 +570,10 @@ class Platform:
         # project understanding. These are workspace-sandboxed (not host-level),
         # so they are available in every runtime.
         document_tools = [tool_cls() for tool_cls in DOCUMENT_TOOLS]
+        # Document generation (write-side): real PDF/DOCX/XLSX/CSV/Markdown/HTML/
+        # JSON output. Workspace-sandboxed and approval-gated like any write, so
+        # it is available in every runtime where a workspace exists.
+        document_generation_tools = [tool_cls() for tool_cls in DOCUMENT_GENERATION_TOOLS]
         extended_filesystem_tools = [tool_cls() for tool_cls in EXTENDED_FILESYSTEM_TOOLS]
         project_tools = [tool_cls() for tool_cls in PROJECT_TOOLS]
         # Phase 7: computer use / perception. Local-only and opt-in — on a cloud
@@ -580,6 +610,7 @@ class Platform:
                 ShellCommandTool(),
                 *extended_filesystem_tools,
                 *document_tools,
+                *document_generation_tools,
                 *project_tools,
                 *local_tools,
                 *computer_tools,

@@ -46,6 +46,15 @@ documents = [
     "python-pptx>=0.6.23,<2",
     "beautifulsoup4>=4.12,<5",
 ]
+# Document *generation* (write-side). Optional and separate from ingestion: PDF
+# output uses reportlab, and Arabic PDF text additionally needs a shaper
+# (arabic-reshaper + python-bidi) plus a Unicode font resolved at run time.
+# A format whose library is absent is reported unsupported rather than faked.
+docgen = [
+    "reportlab>=4,<5",
+    "arabic-reshaper>=3,<4",
+    "python-bidi>=0.4,<1",
+]
 # Autonomous browsing (Phase 8). Optional: the browser backend reports itself
 # unavailable (honestly, with a reason) when Playwright or a Chromium binary is
 # absent, and the browser tools are then simply not registered. Install with
@@ -132,6 +141,14 @@ follow_imports = "skip"
 # first-party stubs; mypy neither follows nor requires stubs for them.
 [[tool.mypy.overrides]]
 module = ["pypdf.*", "docx.*", "openpyxl.*", "pptx.*", "bs4.*", "lxml.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+# Document *generation* is an optional, lazily-imported dependency set:
+# reportlab (PDF) and the Arabic shapers (arabic-reshaper, python-bidi). None
+# ship first-party stubs, so mypy neither follows nor requires stubs for them.
+[[tool.mypy.overrides]]
+module = ["reportlab.*", "arabic_reshaper.*", "bidi.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
 

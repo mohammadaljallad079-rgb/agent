@@ -91,6 +91,25 @@ class ModelRouter:
         # Unknown capability set: assume the provider will reject if it cannot.
         return True if declared is None else capability in declared
 
+    @property
+    def local_models(self) -> tuple[str, ...]:
+        """The model ids currently classified as local."""
+        return self._local
+
+    def add_local_model(self, model_id: str) -> None:
+        """Classify ``model_id`` as local (idempotent).
+
+        Used when a model is activated at runtime so offline / prefer-local
+        routing can select it without rebuilding the router.
+        """
+        if model_id not in self._local:
+            self._local = (*self._local, model_id)
+
+    def add_remote_model(self, model_id: str) -> None:
+        """Classify ``model_id`` as remote (idempotent)."""
+        if model_id not in self._remote:
+            self._remote = (*self._remote, model_id)
+
     def _local_candidates(self, capability: ModelCapability) -> list[str]:
         return [m for m in self._local if self._supports(m, capability)]
 

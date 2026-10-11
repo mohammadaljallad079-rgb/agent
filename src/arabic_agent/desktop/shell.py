@@ -88,6 +88,12 @@ class DesktopBridge:
     async def modes(self) -> Any:
         return await self._get("/desktop/modes")
 
+    async def providers(self) -> Any:
+        return await self._get("/desktop/providers")
+
+    async def test_provider(self, provider_name: str) -> Any:
+        return await self._post(f"/desktop/providers/{provider_name}/test")
+
     async def settings(self) -> Any:
         return await self._get("/desktop/settings")
 
@@ -131,6 +137,30 @@ class DesktopBridge:
 
     async def model_health(self, model_id: str) -> Any:
         return await self._post(f"/desktop/models/{model_id}/health")
+
+    async def model_readiness(self) -> Any:
+        return await self._get("/desktop/models/readiness")
+
+    async def activate_model(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/models/{model_id}/activate")
+
+    async def deactivate_model(self) -> Any:
+        return await self._post("/desktop/models/active/deactivate")
+
+    async def tools(self) -> Any:
+        return await self._get("/desktop/tools")
+
+    async def workflows(self) -> Any:
+        return await self._get("/desktop/workflows")
+
+    async def connectors(self) -> Any:
+        return await self._get("/desktop/connectors")
+
+    async def computer(self) -> Any:
+        return await self._get("/desktop/computer")
+
+    async def memory(self) -> Any:
+        return await self._get("/desktop/memory")
 
     async def remove_model(self, model_id: str) -> Any:
         return await self._delete(f"/desktop/models/{model_id}")

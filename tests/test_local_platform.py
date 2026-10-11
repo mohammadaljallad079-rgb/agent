@@ -186,6 +186,59 @@ async def test_local_tool_cannot_escape_sandbox(tmp_path):
         )
 
 
+async def test_document_generation_round_trips_through_executor(tmp_path):
+    """A real PDF with Arabic is written through policy → approval → sandbox.
+
+    This proves the generation tools are registered, gated by ``WRITE_FILE``
+    (approval-required), and write into the workspace — the same path every
+    other write takes, not a side door.
+    """
+    from arabic_agent.core.enums import ApprovalStatus
+    from arabic_agent.permissions.base import Principal
+    from arabic_agent.tools.base import ToolContext
+
+    platform = _build_local(tmp_path)
+    workspace = tmp_path / "approved"
+    workspace.mkdir(parents=True, exist_ok=True)
+    principal = Principal(tenant_id="tnt_1", user_id="usr_1")
+    context = ToolContext(
+        tenant_id="tnt_1",
+        user_id="usr_1",
+        run_id="run_1",
+        workspace_dir=str(workspace),
+    )
+
+    outcome = await platform.executor.execute(
+        principal=principal,
+        tool_name="generate_document",
+        arguments={
+            "path": "تقرير.pdf",
+            "title": "تقرير",
+            "blocks": [{"type": "paragraph", "text": "مرحبا بالعالم"}],
+        },
+        context=context,
+    )
+    assert outcome.kind.value == "approval_required"
+
+    approval = outcome.approval
+    assert approval is not None
+    await platform.approvals.resolve(
+        approval.id,
+        tenant_id="tnt_1",
+        status=ApprovalStatus.APPROVED,
+        resolved_by="usr_1",
+    )
+    approved = await platform.approvals.get(approval.id, tenant_id="tnt_1")
+    result = await platform.executor.execute_approved(
+        approval=approved, context=context, principal=principal
+    )
+    assert result.kind.value == "completed"
+    written = workspace / "تقرير.pdf"
+    assert written.is_file()
+    assert written.stat().st_size > 0
+    assert written.read_bytes().startswith(b"%PDF")
+
+
 def test_control_api_auth_fails_closed_without_token(tmp_path):
     platform = _build_local(tmp_path)
     runtime = platform.local_runtime

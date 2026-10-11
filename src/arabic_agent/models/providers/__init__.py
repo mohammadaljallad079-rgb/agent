@@ -6,5 +6,6 @@ targets OpenAI, Azure OpenAI, Ollama, vLLM and llama.cpp's server.
 """
 
 from .openai_compatible import OpenAICompatibleProvider
+from .setup_required import SETUP_MODEL_ID, SetupRequiredProvider
 
-__all__ = ["OpenAICompatibleProvider"]
+__all__ = ["SETUP_MODEL_ID", "OpenAICompatibleProvider", "SetupRequiredProvider"]

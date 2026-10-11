@@ -260,6 +260,28 @@ def test_ui_dir_exists():
     assert (UI_DIR / "index.html").is_file()
 
 
+async def test_bridge_provider_surface_over_real_http(live_desktop: str):
+    bridge = DesktopBridge(base_url=live_desktop, token=TOKEN)
+    try:
+        view = await bridge.providers()
+        assert "providers" in view
+        assert "default_model" in view
+        result = await bridge.test_provider("fake")
+        assert result["ok"] is True
+    finally:
+        await bridge.aclose()
+
+
+def test_ui_has_a_real_provider_surface():
+    """The providers section is wired to the bridge, not a placeholder."""
+    html = _load_index_html()
+    assert 'id="s-providers"' in html
+    assert '"providers"' in html
+    assert "a.test_provider(" in html or "api().test_provider(" in html
+    assert "مزوّدو الذكاء السحابي" in html
+    assert "اختبار الاتصال" in html
+
+
 def test_load_index_html_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     import arabic_agent.desktop.shell as shell
 

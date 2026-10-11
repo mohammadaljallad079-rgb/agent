@@ -163,7 +163,14 @@ and secrets are reported by kind + locator only, never by value.
 
 ## Phase 3 — Tools & documents
 
-- [ ] Document generation tools: PDF, DOCX, XLSX, PPTX, CSV (independent tools).
+- [x] Document generation tools: `generate_document` (real PDF/DOCX/Markdown/
+      TXT/HTML/JSON) and `create_spreadsheet` (real XLSX/CSV), plus
+      `document_generation_formats` to report which formats this install can
+      actually produce. Arabic is first-class: PDF shapes it with a resolved
+      Unicode font, DOCX/HTML are written RTL-aware and UTF-8, and CSV carries a
+      BOM so Excel opens Arabic correctly. Writes are `WRITE_FILE` gated and
+      approval-aware. PPTX generation remains planned.
+- [ ] PPTX generation (independent tool).
 - [ ] Browser automation tool (sandboxed, permission-gated).
 - [ ] Email tool (IMAP/SMTP + provider APIs), `SEND_EMAIL` gated.
 - [ ] Calendar tool.
@@ -557,8 +564,10 @@ binary; not implementable in this environment):
 
 ## Phase 7 — Product surface
 
-- [ ] Web UI with full RTL/LTR support, locale switching, plan/timeline view,
-      approval inbox, and tool-run visibility. Must be backed by the real API.
+- [ ] Cloud/multi-tenant web UI with full RTL/LTR support, locale switching,
+      plan/timeline view, approval inbox, and tool-run visibility. Must be backed
+      by the real API. (The desktop UI inside the pywebview shell exists — see
+      Phase 10 — but a browser-served SaaS frontend does not.)
 - [ ] Admin console: tenants, users, roles, policies, integrations, audit search.
 - [ ] Billing/quotas for SaaS.
 
@@ -582,13 +591,17 @@ binary; not implementable in this environment):
   (`AAP_LOCAL_STORE_DIR`) that is durable across restarts with no external
   service; `Platform.durable` reports which is in force. The in-memory default
   remains for the unit test suite.
-- Only one cloud provider family (OpenAI-compatible) is implemented. A local
-  model is a first-class provider: llama.cpp (in-process), Ollama, and any
-  OpenAI-compatible local endpoint all run behind the same `ModelProvider`
-  contract and route through the same gateway.
-- The tool set now covers the workspace filesystem, document ingestion/search
-  and project inspection (Phase 3a). Document *generation*, browser, email,
-  calendar, printing, image and video tools are still planned (Phase 3).
+- Two cloud provider families are implemented: OpenAI-compatible (OpenAI,
+  Azure OpenAI, and any OpenAI-compatible gateway) and Anthropic-compatible
+  (the Messages API). A local model is a first-class provider: llama.cpp
+  (in-process), Ollama, and any OpenAI-compatible local endpoint all run behind
+  the same `ModelProvider` contract and route through the same gateway. Adding a
+  provider is a registration, not an agent-core change. Gemini is not yet
+  implemented.
+- The tool set now covers the workspace filesystem, document ingestion/search,
+  document *generation* (PDF/DOCX/XLSX/CSV/Markdown/HTML/JSON, Arabic-aware) and
+  project inspection (Phase 3a). Browser, email, calendar, printing, image,
+  video and PPTX generation tools are still planned (Phase 3).
 - The desktop runtime foundation (local runtime, filesystem sandbox, controlled
   command execution, local tool set, capability catalogue, data-boundary policy,
   sync queue, and control API) is implemented and tested. The desktop product
@@ -601,7 +614,9 @@ binary; not implementable in this environment):
   templating, approvals, retries), its HTTP API, the trigger/scheduler layer
   (cron, event, webhook, manual) and workflow-run worker recovery are
   implemented and tested.
-- The web UI does not exist yet; the HTTP API is the only interface.
+- A cloud/multi-tenant web UI does not exist yet; the HTTP API is the only
+  cloud interface. The Arabic-first RTL UI inside the desktop pywebview shell
+  is implemented (Phase 10) but is not a browser-served SaaS frontend.
 - There is one known third-party deprecation warning from `starlette.testclient`
   with `httpx`; it does not affect runtime behavior.
 - Phase 5C closeout: the full suite is green (352 passed, 0 skipped) against
@@ -695,6 +710,29 @@ binary; not implementable in this environment):
   desktop tests use a real SQLite file, a real local HTTP server, a real child
   process, the real app under uvicorn and the real platform (only the LLM is
   faked) — no mocks of code under test.
+- Final closeout: the full suite is green — **841 passed, 55 skipped, 0 failed**
+  with the local runtime (skips are the opt-in Postgres/Redis/model/display/
+  browser suites; run them with `docker compose up -d` plus the `AAP_TEST_*`
+  variables). Two honest defects were found and fixed in this pass, both with
+  regression tests. (1) The desktop activation audit calls omitted the
+  required `run_id` keyword, so activating a local model raised
+  `TypeError: AuditLog.record() missing keyword-only argument 'run_id'`
+  (`desktop/service.py`; now audited with `run_id="local"`, matching the
+  settings-audit convention). (2) On a genuinely fresh install (no key, no
+  local weights) the setup-required provider was registered but **absent from
+  the router's candidate list**, so a task failed with a generic fail-closed
+  `PermissionDeniedError` instead of the actionable `ConfigurationError` the
+  code documents; the setup placeholder is now routed as a local model
+  (`container.py`), so first-run tasks fail honestly and actionably. Coverage
+  added: `tests/test_desktop_activation.py` (model activation end to end —
+  activate switches the gateway default, readiness is real, activation is
+  audited, selection persists across a restart, a failed health check does not
+  report ready), `tests/test_setup_provider.py` (setup provider honesty and
+  gateway default-model switching). `ruff` and `mypy --strict` are clean
+  (`mypy`: 218 source files, no issues). The docs' earlier "130 tests" line in
+  ARCHITECTURE.md §2 refers to the Phase 0 foundation snapshot and is retained
+  as historical; this closeout section and the suite counts above are the
+  current source of truth.
 
 ## Verification commands
 

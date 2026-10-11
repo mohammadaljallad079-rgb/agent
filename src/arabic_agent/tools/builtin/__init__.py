@@ -7,6 +7,7 @@ sandboxed to the run's workspace directory and gated by the policy engine.
 from .browser import BROWSER_TOOLS
 from .computer import COMPUTER_TOOLS
 from .connectors import CONNECTOR_TOOLS
+from .docgen import DOCUMENT_GENERATION_TOOLS
 from .documents import DOCUMENT_TOOLS
 from .echo import EchoTool
 from .filesystem import ListDirectoryTool, ReadFileTool, WriteFileTool
@@ -18,6 +19,7 @@ __all__ = [
     "BROWSER_TOOLS",
     "COMPUTER_TOOLS",
     "CONNECTOR_TOOLS",
+    "DOCUMENT_GENERATION_TOOLS",
     "DOCUMENT_TOOLS",
     "EXTENDED_FILESYSTEM_TOOLS",
     "PROJECT_TOOLS",

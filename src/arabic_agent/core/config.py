@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
     anthropic_api_key: SecretStr = SecretStr("")
     default_model: str = "openai/gpt-4o-mini"
+    # Base URLs let an operator point a cloud provider at Azure OpenAI, a proxy
+    # or any OpenAI-compatible gateway. Defaults are the vendor endpoints; the
+    # base URL is not a secret and is safe to display in the UI.
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    # Model id used for the Anthropic-compatible provider when its key is set.
+    anthropic_model: str = "claude-3-5-haiku-20241022"
     # Local OpenAI-compatible endpoint (Ollama / llama.cpp / vLLM) for offline.
     local_model_base_url: str = ""
     local_model_name: str = "qwen2.5:7b"

@@ -21,8 +21,11 @@ the platform's own policy gate.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..api.service import RunService
@@ -36,10 +39,11 @@ from ..core.enums import (
     RiskLevel,
     RunStatus,
 )
-from ..core.errors import ValidationError
+from ..core.errors import NotFoundError, PlatformError, ValidationError
 from ..desktop.events import DesktopEventBroker
-from ..desktop.model_manager import ModelManager
+from ..desktop.model_manager import ModelManager, read_active_model, write_active_model
 from ..local.hardware import HardwareProfile, detect_hardware
+from ..local.model_security import resolve_storage_dir
 from ..permissions.base import Permission, Principal
 
 logger = logging.getLogger(__name__)
@@ -91,6 +95,8 @@ class DesktopService:
         self._runs = RunService(platform)
         self._locale = locale
         self._browser = BrowserProvisioner()
+        #: True only after a real health check passed for the active model.
+        self._active_model_ready = False
 
     @property
     def events(self) -> DesktopEventBroker:
@@ -210,6 +216,283 @@ class DesktopService:
     def remove_model(self, model_id: str) -> dict[str, object]:
         return self._models.remove(model_id)
 
+    # -- Model activation ------------------------------------------------
+    def active_model(self) -> dict[str, object]:
+        """The active local model plus whether it is real and ready to run.
+
+        ``ready`` is only ever true after a genuine health check has passed; a
+        model that is merely selected is reported ``selected`` but not ready.
+        """
+        model_id = self._models.active_model_id()
+        if model_id is None:
+            return {"model_id": None, "selected": False, "installed": False, "ready": False}
+        verdict = self._models.can_activate(model_id)
+        installed = bool(verdict["ok"])
+        return {
+            "model_id": model_id,
+            "selected": True,
+            "installed": installed,
+            "installed_reason": verdict["reason"],
+            "ready": self._active_model_ready,
+        }
+
+    def can_activate_model(self, model_id: str) -> dict[str, object]:
+        return self._models.can_activate(model_id)
+
+    async def activate_model(self, model_id: str) -> dict[str, object]:
+        """Select an installed model, health-check it, and make it the runtime's.
+
+        Activation is real, not a flag: the model must be installed, must pass a
+        genuine health check (load + tiny inference), and only then is it
+        registered with the running gateway as the preferred local model. A
+        model that fails the health check is *not* activated and the previous
+        selection is left untouched.
+        """
+        verdict = self._models.can_activate(model_id)
+        if not verdict["ok"]:
+            raise NotFoundError(str(verdict["reason"]), details={"model_id": model_id})
+
+        health = await self._models.health_check(
+            model_id, provider_factory=self._provider_factory(model_id)
+        )
+        if health.get("health") != "healthy":
+            return {
+                "model_id": model_id,
+                "active": False,
+                "reason": "health check did not pass",
+                "health": health,
+            }
+
+        result = self._models.activate(
+            model_id,
+            persist=lambda mid: write_active_model(self._model_storage_dir(), mid),
+        )
+        self._active_model_ready = True
+        self._register_active_local_model(model_id)
+        await self._platform.audit.record(
+            AuditEventType.MODEL_ACTIVATED,
+            tenant_id=self._principal.tenant_id,
+            user_id=self._principal.user_id,
+            run_id="local",
+            message="local model activated",
+            data={"model_id": model_id},
+        )
+        return {**result, "health": health}
+
+    async def deactivate_model(self) -> dict[str, object]:
+        result = self._models.deactivate()
+        self._active_model_ready = False
+        write_active_model(self._model_storage_dir(), None)
+        await self._platform.audit.record(
+            AuditEventType.MODEL_DEACTIVATED,
+            tenant_id=self._principal.tenant_id,
+            user_id=self._principal.user_id,
+            run_id="local",
+            message="local model deactivated",
+            data={"model_id": result.get("previous_model_id")},
+        )
+        return result
+
+    async def model_readiness(self) -> dict[str, object]:
+        """A real, end-to-end readiness report for running the agent locally.
+
+        This is the first-run check: it reports whether the runtime has a local
+        model selected, installed, and able to answer — and what to do when it
+        does not. It never claims readiness without a passing health check.
+        """
+        active = self.active_model()
+        runtime = self._platform.local_runtime
+        mode = runtime.mode.value if runtime is not None else OperatingMode.ONLINE.value
+        if not active["selected"]:
+            return {
+                **active,
+                "mode": mode,
+                "next_step": "install_and_activate",
+                "detail": "no local model selected",
+            }
+        if not active["installed"]:
+            return {
+                **active,
+                "mode": mode,
+                "next_step": "install",
+                "detail": str(active.get("installed_reason") or "model is not installed"),
+            }
+        health = await self._models.health_check(
+            str(active["model_id"]),
+            provider_factory=self._provider_factory(str(active["model_id"])),
+        )
+        self._active_model_ready = health.get("health") == "healthy"
+        return {
+            **active,
+            "ready": self._active_model_ready,
+            "mode": mode,
+            "health": health,
+            "next_step": "" if self._active_model_ready else "diagnose",
+            "detail": str(health.get("detail") or ""),
+        }
+
+    def _model_storage_dir(self) -> Path:
+        settings = self._platform.settings
+        return Path(
+            settings.local_model_storage_dir or str(Path(settings.local_store_dir) / "models")
+        )
+
+    def _register_active_local_model(self, model_id: str) -> None:
+        """Register the activated model with the running gateway.
+
+        The registry is keyed by provider name; re-registering under the same
+        name (``local``) with ``replace=True`` swaps the provider so the agent
+        uses the newly activated weights without an agent-core change.
+        """
+        factory = self._provider_factory(model_id)
+        if factory is None:
+            return
+        provider = factory()
+        descriptor = self._models.descriptor_for(model_id)
+        if descriptor is None:
+            return
+        from ..local.model_registry import model_logical_id
+
+        registry = self._platform.gateway.registry
+        registry.register(provider, replace=True)
+        self._platform.local_model_provider = provider
+        logical = model_logical_id(descriptor)
+        # Point the gateway at the activated model so the *agent* runs it, and
+        # keep the router aware this id is local so offline/prefer-local routing
+        # can select it. The previous default (e.g. the setup placeholder) stays
+        # as a fallback, harmless because the router pins local-required traffic
+        # to local candidates only.
+        self._platform.gateway.set_default_model(logical)
+        router = self._platform.gateway.router
+        if router is not None:
+            router.add_local_model(logical)
+
+    # -- Capabilities / tools -------------------------------------------
+    def tools_view(self) -> dict[str, object]:
+        """The tools the running agent actually has, with their real permissions.
+
+        This is a read view over the live tool registry — the same registry the
+        agent uses. It never lists a tool the runtime did not register.
+        """
+        tools = []
+        for tool in self._platform.tools.all():
+            perms = sorted(p.value for p in tool.permissions)
+            risks = {p.value: r.value for p, r in tool.permission_risks().items()}
+            tools.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "permissions": perms,
+                    "risks": risks,
+                    "side_effecting": bool(getattr(tool, "side_effecting", False)),
+                }
+            )
+        tools.sort(key=lambda t: str(t["name"]))
+        return {"tools": tools, "count": len(tools)}
+
+    # -- Workflows -------------------------------------------------------
+    async def list_workflows(self, *, limit: int = 50) -> list[dict[str, object]]:
+        records = await self._platform.workflows.list_workflows(
+            tenant_id=self._principal.tenant_id, limit=limit
+        )
+        return [
+            {
+                "id": w.id,
+                "name": w.name,
+                "description": w.description,
+                "status": w.status.value,
+                "latest_version": w.latest_version,
+                "published": w.is_published,
+                "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+            }
+            for w in records
+        ]
+
+    async def list_workflow_runs(
+        self, workflow_id: str, *, limit: int = 20
+    ) -> list[dict[str, object]]:
+        runs = await self._platform.workflow_runs.list_runs(
+            tenant_id=self._principal.tenant_id, workflow_id=workflow_id, limit=limit
+        )
+        return [
+            {
+                "id": r.id,
+                "status": getattr(r.status, "value", str(r.status)),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in runs
+        ]
+
+    # -- Connectors ------------------------------------------------------
+    def connectors_view(self) -> dict[str, object]:
+        """Configured connectors with their real, reported health.
+
+        An unconfigured or unreachable connector is reported as such; nothing
+        here claims a connection the runtime did not make.
+        """
+        runtime = self._platform.connector_runtime
+        if runtime is None:
+            return {"enabled": False, "connectors": [], "count": 0}
+        connectors = []
+        for connector in runtime.registry.all():
+            info = connector.info()
+            connectors.append(
+                {
+                    "name": info.name,
+                    "kind": info.kind.value,
+                    "state": info.state.value,
+                    "capabilities": sorted(c.value for c in info.capabilities),
+                    "write_capable": info.write_capable,
+                    "approval_required": info.approval_required,
+                    "authenticated": info.authenticated,
+                    "detail": info.detail,
+                }
+            )
+        return {
+            "enabled": self._platform.settings.connectors_enabled,
+            "connectors": connectors,
+            "count": len(connectors),
+        }
+
+    # -- Computer control ------------------------------------------------
+    def computer_view(self) -> dict[str, object]:
+        """Computer-control availability from real settings and runtime state."""
+        settings = self._platform.settings
+        runtime = self._platform.computer_runtime
+        enabled = bool(settings.computer_control_enabled)
+        return {
+            "enabled": enabled,
+            "available": runtime is not None,
+            "screen_policy": settings.computer_screen_policy,
+            "pointer_allowed": enabled and runtime is not None,
+            "keyboard_allowed": enabled and runtime is not None,
+        }
+
+    # -- Memory ----------------------------------------------------------
+    async def list_memory(self, *, limit: int = 50) -> dict[str, object]:
+        """The tenant's stored memory entries, newest first.
+
+        Memory is tenant-scoped; this never returns another tenant's entries.
+        """
+        from ..memory.base import MemoryQuery
+
+        query = MemoryQuery(tenant_id=self._principal.tenant_id, limit=limit)
+        entries = await self._platform.memory.query(query)
+        return {
+            "entries": [
+                {
+                    "id": e.id,
+                    "kind": e.kind.value,
+                    "key": e.key,
+                    "content": e.content,
+                    "importance": e.importance,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in entries
+            ],
+            "count": len(entries),
+        }
+
     # -- Browser provisioning -------------------------------------------
     def browser_view(self) -> dict[str, object]:
         """Browser readiness plus the browser config, from real state."""
@@ -326,21 +609,103 @@ class DesktopService:
         }
 
     # -- Cloud providers -------------------------------------------------
+    def providers_view(self) -> dict[str, object]:
+        """Configured model providers, with their real config and no secrets."""
+        providers = self._cloud_providers()
+        return {
+            "providers": providers,
+            "default_model": self._platform.gateway.default_model,
+            "fallbacks": list(self._platform.gateway.fallbacks),
+            "needs_setup": any(p.get("needs_setup") for p in providers),
+            "active_model": self.active_model(),
+        }
+
     def _cloud_providers(self) -> list[dict[str, object]]:
         """Configured providers, with no secret value ever returned."""
         result: list[dict[str, object]] = []
-        for provider in self._platform.gateway._registry.all():
+        for provider in self._platform.gateway.registry.all():
             is_local = getattr(provider, "is_local", False)
+            needs_setup = provider.name == "setup"
             result.append(
                 {
                     "name": provider.name,
                     "local": bool(is_local),
                     "capabilities": sorted(c.value for c in provider.capabilities),
+                    "model": self._provider_model(provider.name),
+                    "base_url": self._provider_base_url(provider.name),
                     # Never the key: only whether one is configured.
-                    "configured": True,
+                    "configured": not needs_setup,
+                    "needs_setup": needs_setup,
+                    "detail": getattr(provider, "detail", "") if needs_setup else "",
+                    "is_default": self._platform.gateway.default_model.startswith(
+                        f"{provider.name}/"
+                    ),
                 }
             )
         return result
+
+    def _provider_base_url(self, name: str) -> str:
+        settings = self._platform.settings
+        if name == "openai":
+            return settings.openai_base_url
+        if name == "anthropic":
+            return settings.anthropic_base_url
+        if name == "local":
+            return settings.local_model_base_url
+        return ""
+
+    def _provider_model(self, name: str) -> str:
+        """The model id a provider is configured with (never a secret)."""
+        settings = self._platform.settings
+        if name == "anthropic":
+            return settings.anthropic_model
+        if name == "local":
+            return settings.local_model_name
+        if name == "openai":
+            default = settings.default_model
+            return default.split("/", 1)[1] if default.startswith("openai/") else default
+        return ""
+
+    async def test_provider(self, name: str) -> dict[str, object]:
+        """Send one bounded real completion to a configured provider.
+
+        This is a genuine connectivity + credential check: it calls the
+        provider's own ``complete`` with a tiny prompt and reports the real
+        outcome and latency. It never returns the key. A failure is reported as
+        an honest ``ok: false`` with the provider's message (redacted), not a
+        fabricated success.
+        """
+        from ..core.redaction import redact
+        from ..models.base import ChatMessage, ModelRequest
+
+        registry = self._platform.gateway._registry
+        if not registry.has(name):
+            raise NotFoundError(
+                f"provider is not configured: {name}", details={"known": registry.names()}
+            )
+        provider = registry.get(name)
+        request = ModelRequest(
+            messages=(ChatMessage.user("ping"),),
+            model=self._provider_model(name),
+            max_tokens=8,
+        )
+        started = time.perf_counter()
+        try:
+            response = await asyncio.wait_for(provider.complete(request), timeout=30.0)
+        except TimeoutError:
+            return {"provider": name, "ok": False, "error": "timed out after 30s"}
+        except PlatformError as exc:
+            return {"provider": name, "ok": False, "error": redact({"e": exc.message})["e"]}
+        except Exception as exc:  # a connectivity check must never crash the app
+            return {"provider": name, "ok": False, "error": redact({"e": str(exc)})["e"]}
+        latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
+        return {
+            "provider": name,
+            "ok": True,
+            "model": response.model,
+            "latency_ms": latency_ms,
+            "finish_reason": response.finish_reason,
+        }
 
     # -- Settings / permissions -----------------------------------------
     def permissions_view(self) -> dict[str, object]:
@@ -478,7 +843,20 @@ def build_model_manager(platform: Platform) -> ModelManager:
         hardware: HardwareProfile | None = detect_hardware(disk_path=storage)
     except Exception:  # detection must never crash startup
         hardware = None
-    active = settings.local_model_name or None
+    # The persisted activation wins over the configured name, so a model the
+    # user selected in the UI is still active after a restart. The configured
+    # name is the fallback for a deployment that pins a model via AAP_* — but
+    # only when that model is actually installed, so a first run is not
+    # misreported as having an active model that does not exist.
+    persisted = read_active_model(resolve_storage_dir(storage))
+    manager = ModelManager(storage_dir=storage, hardware=hardware)
+    configured = settings.local_model_name or None
+    if persisted and manager.can_activate(persisted)["ok"]:
+        active = persisted
+    elif configured and manager.can_activate(configured)["ok"]:
+        active = configured
+    else:
+        active = None
     return ModelManager(storage_dir=storage, hardware=hardware, active_model_id=active)
 
 

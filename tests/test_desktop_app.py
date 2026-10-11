@@ -158,6 +158,47 @@ def test_privacy_view_reports_real_settings(tmp_path):
     assert privacy["connectors_enabled"] is False
 
 
+def test_providers_view_never_leaks_a_secret(tmp_path):
+    """The provider surface reports configuration, never a key."""
+    client = TestClient(_app(tmp_path))
+    providers = client.get("/desktop/providers", headers=HEADERS).json()
+    assert "providers" in providers
+    assert providers["default_model"] == "fake/model"
+    for provider in providers["providers"]:
+        # No field may carry a secret value; model/base_url/detail are safe.
+        assert set(provider).issubset(
+            {
+                "name",
+                "local",
+                "capabilities",
+                "model",
+                "base_url",
+                "configured",
+                "needs_setup",
+                "detail",
+                "is_default",
+            }
+        )
+    # The bootstrap payload carries the same view.
+    boot = client.get("/desktop/bootstrap", headers=HEADERS).json()
+    assert boot["providers"]["default_model"] == "fake/model"
+
+
+def test_provider_test_endpoint_reports_real_result(tmp_path):
+    """The connection test runs a real completion and reports the outcome."""
+    client = TestClient(_app(tmp_path))
+    result = client.post("/desktop/providers/fake/test", headers=HEADERS).json()
+    assert result["provider"] == "fake"
+    assert result["ok"] is True
+    assert "latency_ms" in result
+
+
+def test_provider_test_unknown_provider_is_404(tmp_path):
+    client = TestClient(_app(tmp_path))
+    response = client.post("/desktop/providers/nope/test", headers=HEADERS)
+    assert response.status_code == 404
+
+
 def test_permissions_view_matches_policy(tmp_path):
     client = TestClient(_app(tmp_path))
     payload = client.get("/desktop/permissions", headers=HEADERS).json()

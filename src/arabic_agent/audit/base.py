@@ -35,6 +35,8 @@ class AuditEventType(StrEnum):
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_RESOLVED = "approval.resolved"
     MODEL_CALL = "model.call"
+    MODEL_ACTIVATED = "model.activated"
+    MODEL_DEACTIVATED = "model.deactivated"
     MEMORY_WRITE = "memory.write"
     MEMORY_READ = "memory.read"
     JOB_ENQUEUED = "job.enqueued"

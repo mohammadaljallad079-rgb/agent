@@ -17,9 +17,9 @@ cloud, free or local model without touching the agent core.
 
 ## Status
 
-This repository is the **foundation phase**. It is real, runnable code with a
-tested core — not a mockup. What is implemented and what is deliberately left
-for later is listed in [`TODO.md`](TODO.md); nothing pretends to work.
+This repository is a real, runnable product foundation through Phase 10 — not a
+mockup. What is implemented and what is deliberately left for later is listed in
+[`TODO.md`](TODO.md); nothing pretends to work.
 
 - ✅ Agent loop with bounded recovery (retry / repair / replan / skip / abort)
 - ✅ Tool abstraction + registry, with real sandboxed filesystem and shell tools
@@ -45,9 +45,13 @@ for later is listed in [`TODO.md`](TODO.md); nothing pretends to work.
   plus cron/event/webhook/manual triggers and a durable scheduler
 - ✅ Local/desktop runtime: filesystem sandbox, controlled command runner,
   local tool set, data-boundary policy, sync queue and a loopback control API
-  (`agent-desktop`) — the desktop *application* is not built yet
-- ⏳ Document and media tools, social/ERP connectors, desktop packaging,
-  web UI (see `TODO.md`)
+  (`agent-desktop`), plus the desktop application itself — an authenticated
+  loopback HTTP+SSE surface, a Local AI Manager, a pywebview native window
+  (`agent-shell`) and an Arabic-first RTL UI
+- ✅ Real document generation: PDF (Arabic-shaped with a Unicode font), DOCX,
+  XLSX, CSV, Markdown, HTML and JSON, as ordinary approval-gated tools
+- ⏳ PPTX generation, media (image/video) tools, social/ERP connectors, a
+  packaged/signed desktop binary and auto-update (see `TODO.md`)
 
 ## Architecture
 

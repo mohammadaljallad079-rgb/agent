@@ -17,10 +17,15 @@ Endpoints (all under ``/desktop``):
 * ``GET  /desktop/events``         — Server-Sent Events stream (real runtime events)
 * ``GET  /desktop/approvals``      — pending approvals
 * ``POST /desktop/approvals/{id}`` — approve / deny
-* ``GET  /desktop/models``         — catalogue + installed state
+* ``GET  /desktop/models``         — catalogue + installed state + active model
+* ``GET  /desktop/models/readiness`` — real first-run readiness report
 * ``POST /desktop/models/{id}/install`` / ``GET .../progress`` / ``POST .../cancel``
+* ``POST /desktop/models/{id}/activate`` / ``POST /desktop/models/active/deactivate``
 * ``POST /desktop/models/{id}/verify`` / ``POST .../health`` / ``DELETE /desktop/models/{id}``
 * ``GET  /desktop/modes`` / ``POST /desktop/modes``
+* ``GET  /desktop/tools``          — the live tool registry with permissions
+* ``GET  /desktop/workflows`` / ``GET /desktop/workflows/{id}/runs``
+* ``GET  /desktop/connectors`` / ``GET /desktop/computer`` / ``GET /desktop/memory``
 * ``GET  /desktop/settings`` / ``GET /desktop/permissions``
 * ``GET  /desktop/diagnostics`` / ``GET /desktop/diagnostics/export``
 * ``GET  /desktop/version``
@@ -104,11 +109,19 @@ def create_desktop_app(
             "modes": service.modes(),
             "models": service.list_models(),
             "recommendation": service.recommend_model(),
+            "active_model": service.active_model(),
+            "readiness": await service.model_readiness(),
             "runs": runs,
             "approvals": await service.list_approvals(),
             "permissions": service.permissions_view(),
             "settings": service.settings_view(),
             "browser": service.browser_view(),
+            "providers": service.providers_view(),
+            "tools": service.tools_view(),
+            "connectors": service.connectors_view(),
+            "computer": service.computer_view(),
+            "workflows": await service.list_workflows(),
+            "memory": await service.list_memory(),
             "diagnostics": service.diagnostics(),
         }
 
@@ -172,11 +185,27 @@ def create_desktop_app(
     # -- Models ----------------------------------------------------------
     @app.get("/desktop/models")
     async def list_models(_: None = Depends(authorize)) -> dict[str, object]:
-        return {"models": service.list_models(), "recommendation": service.recommend_model()}
+        return {
+            "models": service.list_models(),
+            "recommendation": service.recommend_model(),
+            "active": service.active_model(),
+        }
+
+    @app.get("/desktop/models/readiness")
+    async def model_readiness(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.model_readiness()
 
     @app.post("/desktop/models/{model_id}/install", status_code=status.HTTP_202_ACCEPTED)
     async def install_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
         return await service.install_model(model_id)
+
+    @app.post("/desktop/models/{model_id}/activate")
+    async def activate_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return await service.activate_model(model_id)
+
+    @app.post("/desktop/models/active/deactivate")
+    async def deactivate_model(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.deactivate_model()
 
     @app.get("/desktop/models/{model_id}/progress")
     async def model_progress(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
@@ -206,6 +235,14 @@ def create_desktop_app(
     async def get_modes(_: None = Depends(authorize)) -> dict[str, object]:
         return service.modes()
 
+    @app.get("/desktop/providers")
+    async def list_providers(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.providers_view()
+
+    @app.post("/desktop/providers/{provider_name}/test")
+    async def test_provider(provider_name: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return await service.test_provider(provider_name)
+
     @app.post("/desktop/modes")
     async def set_mode(payload: ModeRequest, _: None = Depends(authorize)) -> dict[str, object]:
         return await service.set_mode(payload.mode)
@@ -234,6 +271,37 @@ def create_desktop_app(
     @app.get("/desktop/permissions")
     async def get_permissions(_: None = Depends(authorize)) -> dict[str, object]:
         return service.permissions_view()
+
+    # -- Capabilities / tools --------------------------------------------
+    @app.get("/desktop/tools")
+    async def get_tools(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.tools_view()
+
+    # -- Workflows -------------------------------------------------------
+    @app.get("/desktop/workflows")
+    async def list_workflows(_: None = Depends(authorize)) -> dict[str, object]:
+        return {"workflows": await service.list_workflows()}
+
+    @app.get("/desktop/workflows/{workflow_id}/runs")
+    async def list_workflow_runs(
+        workflow_id: str, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return {"runs": await service.list_workflow_runs(workflow_id)}
+
+    # -- Connectors ------------------------------------------------------
+    @app.get("/desktop/connectors")
+    async def get_connectors(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.connectors_view()
+
+    # -- Computer control -------------------------------------------------
+    @app.get("/desktop/computer")
+    async def get_computer(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.computer_view()
+
+    # -- Memory ----------------------------------------------------------
+    @app.get("/desktop/memory")
+    async def get_memory(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.list_memory()
 
     # -- Diagnostics -----------------------------------------------------
     @app.get("/desktop/diagnostics")

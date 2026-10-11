@@ -80,6 +80,11 @@ class ModelGateway:
         return self._router
 
     @property
+    def registry(self) -> ProviderRegistry:
+        """The provider registry (read-mostly; activation may re-register)."""
+        return self._registry
+
+    @property
     def routing_policy(self) -> RoutingPolicy | None:
         return self._routing_policy
 
@@ -94,6 +99,21 @@ class ModelGateway:
     @property
     def fallbacks(self) -> tuple[str, ...]:
         return self._fallbacks
+
+    def set_default_model(self, model_id: str, *, prepend_fallback: bool = True) -> None:
+        """Make ``model_id`` the primary model, keeping the rest as fallbacks.
+
+        The model must already be routable (its provider registered). This is
+        how a user-selected model becomes the one the agent actually runs,
+        without an agent-core change.
+        """
+        self._registry.resolve(model_id)
+        previous = self._default_model
+        self._default_model = model_id
+        rest = [m for m in self._fallbacks if m != model_id]
+        if prepend_fallback and previous and previous != model_id and previous not in rest:
+            rest = [previous, *rest]
+        self._fallbacks = tuple(rest)
 
     def default_supports(self, capability: ModelCapability) -> bool:
         """Whether the default model can serve ``capability``.

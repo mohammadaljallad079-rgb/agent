@@ -28,6 +28,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..core.enums import ModelCapability, ModelHealth, ModelProfile
 from ..core.errors import ConflictError, NotFoundError, ValidationError
@@ -47,6 +48,40 @@ logger = logging.getLogger(__name__)
 #: Bounded health-check inference prompt (Arabic-first, tiny output).
 _HEALTH_PROMPT = "قل: جاهز"
 _HEALTH_MAX_TOKENS = 8
+
+
+def _active_model_path(storage_dir: Path) -> Path:
+    return storage_dir / "active_model.json"
+
+
+def read_active_model(storage_dir: Path) -> str | None:
+    """Read the persisted active-model id, or ``None`` when none is set."""
+    import json
+
+    path = _active_model_path(storage_dir)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.warning("ignoring unreadable active-model file: %s", path)
+        return None
+    if isinstance(payload, dict):
+        value = payload.get("model_id")
+        return value if isinstance(value, str) and value else None
+    return None
+
+
+def write_active_model(storage_dir: Path, model_id: str | None) -> None:
+    """Persist (or clear) the active-model id so it survives a restart."""
+    import json
+
+    root = resolve_storage_dir(str(storage_dir))
+    root.mkdir(parents=True, exist_ok=True)
+    path = _active_model_path(root)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"model_id": model_id}, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 @dataclass
@@ -371,6 +406,64 @@ class ModelManager:
             sha256=raw_sha if isinstance(raw_sha, str) else None,
         )
 
+    # -- Activation -----------------------------------------------------
+    def active_model_id(self) -> str | None:
+        """The id of the model the runtime is currently set to run, if any."""
+        return self._active_model_id
+
+    def active_descriptor(self) -> LocalModelDescriptor | None:
+        """Descriptor for the active model, or ``None`` when none is active."""
+        if self._active_model_id is None:
+            return None
+        return self.descriptor_for(self._active_model_id)
+
+    def can_activate(self, model_id: str) -> dict[str, object]:
+        """Report whether ``model_id`` could be activated, and why not.
+
+        This is a *pre-flight* check, not a health check: it confirms the model
+        is a known catalogue entry and is actually installed on disk. It never
+        claims the model will load — :meth:`health_check` does that against a
+        real backend.
+        """
+        model = self._catalogue.get(model_id)
+        if model is None:
+            return {"ok": False, "reason": "unknown model", "model_id": model_id}
+        if self.descriptor_for(model_id) is None:
+            return {"ok": False, "reason": "model is not installed", "model_id": model_id}
+        return {"ok": True, "reason": "", "model_id": model_id}
+
+    def activate(
+        self, model_id: str, *, persist: Callable[[str], None] | None = None
+    ) -> dict[str, object]:
+        """Select an installed model as the active local model.
+
+        Only an installed, known catalogue model can be activated — selection is
+        never a claim that the model is healthy; the desktop runs a real health
+        check against the activated model. When ``persist`` is given it is
+        called with the id so the choice survives a restart.
+        """
+        verdict = self.can_activate(model_id)
+        if not verdict["ok"]:
+            raise NotFoundError(str(verdict["reason"]), details={"model_id": model_id})
+        self._active_model_id = model_id
+        if persist is not None:
+            persist(model_id)
+        model = self._catalogue.get(model_id)
+        descriptor = self.descriptor_for(model_id)
+        return {
+            "model_id": model_id,
+            "active": True,
+            "backend": model.backend if model else "",
+            "model_path": descriptor.model_path if descriptor else "",
+            "persisted": persist is not None,
+        }
+
+    def deactivate(self) -> dict[str, object]:
+        """Clear the active model (the runtime then has no local model)."""
+        previous = self._active_model_id
+        self._active_model_id = None
+        return {"previous_model_id": previous, "active": None}
+
     # -- Removal --------------------------------------------------------
     def remove(self, model_id: str) -> dict[str, object]:
         """Remove an installed model from the store.
@@ -416,4 +509,4 @@ class ModelManager:
         return model is not None and ModelCapability.VISION in model.capabilities
 
 
-__all__ = ["InstallProgress", "ModelManager"]
+__all__ = ["InstallProgress", "ModelManager", "read_active_model", "write_active_model"]
