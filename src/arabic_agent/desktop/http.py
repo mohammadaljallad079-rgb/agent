@@ -79,6 +79,11 @@ class SetupModelRequest(BaseModel):
     model_id: str | None = Field(default=None, max_length=200)
 
 
+class TestInferenceRequest(BaseModel):
+    #: Optional model id; omitted means "the active model".
+    model_id: str | None = Field(default=None, max_length=200)
+
+
 def create_desktop_app(
     service: DesktopService,
     *,
@@ -243,6 +248,12 @@ def create_desktop_app(
     @app.post("/desktop/models/{model_id}/health")
     async def model_health(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
         return await service.model_health(model_id)
+
+    @app.post("/desktop/models/test-inference")
+    async def test_model_inference(
+        payload: TestInferenceRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.test_model_inference(payload.model_id)
 
     @app.delete("/desktop/models/{model_id}")
     async def remove_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:

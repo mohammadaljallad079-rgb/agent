@@ -292,11 +292,13 @@ def test_providers_never_leak_secrets(tmp_path):
 # --------------------------------------------------------------------------
 # First-run setup: one action makes a model installed *and* active
 # --------------------------------------------------------------------------
-def _app_with_real_install(tmp_path: Path, server):  # type: ignore[no-untyped-def]
+def _app_with_real_install(tmp_path: Path, server, *, sha256=None, size_bytes=None):  # type: ignore[no-untyped-def]
     """A desktop app whose catalogue model is served by a real local HTTP server.
 
     Installation therefore exercises the real downloader/verifier; only the
-    inference backend is faked.
+    inference backend is faked. ``sha256``/``size_bytes`` let a test pin the
+    expected artifact independently of what the server actually serves, so an
+    integrity mismatch is provable.
     """
     from arabic_agent.core.enums import ModelProfile
     from arabic_agent.desktop.model_catalogue import (
@@ -315,7 +317,8 @@ def _app_with_real_install(tmp_path: Path, server):  # type: ignore[no-untyped-d
         profile=ModelProfile.LIGHTWEIGHT,
         url=f"{server.base_url}/m.gguf",
         filename=MODEL_FILENAME,
-        size_bytes=len(payload),
+        sha256=sha256,
+        size_bytes=size_bytes if size_bytes is not None else len(payload),
         resources=ResourceRequirement(min_ram_bytes=1024**3, disk_bytes=len(payload)),
     )
     registry = ProviderRegistry()
@@ -383,3 +386,108 @@ def test_setup_is_idempotent_when_already_installed(tmp_path):
         # Already installed: no re-download, but still active.
         assert second["installed_now"] is False
         assert second["active"] is True
+
+
+# --------------------------------------------------------------------------
+# Routed inference acceptance test
+# --------------------------------------------------------------------------
+def test_inference_acceptance_passes_against_activated_model(tmp_path):
+    """The acceptance test runs a real routed request and records the pass."""
+    app = _app(tmp_path)
+    client = TestClient(app)
+    client.post(f"/desktop/models/{MODEL_ID}/activate", headers=HEADERS)
+
+    resp = client.post("/desktop/models/test-inference", json={}, headers=HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["passed"] is True
+    assert body["output_chars"] > 0
+    # The pass is persisted on the active-model view for the UI to show.
+    active = client.get("/desktop/models", headers=HEADERS).json()["active"]
+    assert active["inference_verified"] is True
+
+
+def test_inference_acceptance_resets_on_activation(tmp_path):
+    """A fresh activation invalidates a previous acceptance pass."""
+    app = _app(tmp_path)
+    client = TestClient(app)
+    client.post(f"/desktop/models/{MODEL_ID}/activate", headers=HEADERS)
+    client.post("/desktop/models/test-inference", json={}, headers=HEADERS)
+    # Deactivate and reactivate: the pass must not carry over.
+    client.post("/desktop/models/active/deactivate", headers=HEADERS)
+    client.post(f"/desktop/models/{MODEL_ID}/activate", headers=HEADERS)
+    active = client.get("/desktop/models", headers=HEADERS).json()["active"]
+    assert active["inference_verified"] is False
+
+
+def test_inference_acceptance_fails_closed_without_a_model(tmp_path):
+    """In genuine first-run setup mode the test reports a real failure, not a pass."""
+    from arabic_agent.models.providers.setup_required import SETUP_MODEL_ID
+
+    # No provider injected and no key/local model configured, so the platform
+    # registers its honest setup-required provider — a real fresh install.
+    app = build_local_control_app(_settings(tmp_path))
+    assert app.state.desktop_service._platform.gateway.default_model == SETUP_MODEL_ID
+    client = TestClient(app)
+    body = client.post("/desktop/models/test-inference", json={}, headers=HEADERS).json()
+    assert body["passed"] is False
+    assert "failed" in body["detail"]
+
+
+# --------------------------------------------------------------------------
+# Integrity verification of the download
+# --------------------------------------------------------------------------
+def test_install_verifies_a_pinned_sha256(tmp_path):
+    """A pinned hash that matches the served bytes installs successfully."""
+    import hashlib
+
+    payload = b"GGUF" + b"\x00" * 4096
+    digest = hashlib.sha256(payload).hexdigest()
+    with http_server() as server:
+        app = _app_with_real_install(tmp_path, server, sha256=digest)
+        client = TestClient(app)
+        resp = client.post("/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()["installed"] is True
+        # The manifest records the verified hash.
+        verified = client.post(f"/desktop/models/{MODEL_ID}/verify", headers=HEADERS).json()
+        assert verified["success"] is True
+        assert verified["sha256"] == digest
+
+
+def test_install_refuses_a_hash_mismatch(tmp_path):
+    """A tampered/substituted download is refused and leaves no model behind."""
+    with http_server() as server:
+        app = _app_with_real_install(tmp_path, server, sha256="0" * 64)
+        client = TestClient(app)
+        resp = client.post("/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS)
+        body = resp.json()
+        assert body["installed"] is False
+        # The real file must not have been promoted into place.
+        assert not (tmp_path / "data" / "models" / MODEL_FILENAME).exists()
+
+
+def test_install_refuses_a_size_mismatch(tmp_path):
+    """A truncated download is refused before it is promoted."""
+    with http_server() as server:
+        app = _app_with_real_install(tmp_path, server, size_bytes=999_999_999)
+        client = TestClient(app)
+        body = client.post(
+            "/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS
+        ).json()
+        assert body["installed"] is False
+        assert not (tmp_path / "data" / "models" / MODEL_FILENAME).exists()
+
+
+def test_verify_detects_post_install_corruption(tmp_path):
+    """Corrupting an installed file is caught by a later verification."""
+    with http_server() as server:
+        app = _app_with_real_install(tmp_path, server)
+        client = TestClient(app)
+        client.post("/desktop/models/setup", json={"model_id": MODEL_ID}, headers=HEADERS)
+        # Tamper with the file on disk after installation.
+        target = tmp_path / "data" / "models" / MODEL_FILENAME
+        target.write_bytes(b"tampered")
+        result = client.post(f"/desktop/models/{MODEL_ID}/verify", headers=HEADERS).json()
+        assert result["success"] is False
+        assert "integrity" in result["detail"] or "failed" in result["detail"]

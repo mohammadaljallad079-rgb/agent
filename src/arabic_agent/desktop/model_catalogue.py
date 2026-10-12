@@ -63,10 +63,11 @@ class CatalogueModel(BaseModel):
 
 
 #: The catalogue. Kept small and honest; every entry is a real, named artifact.
-#: The ``sha256`` is ``None`` where the project has not pinned a specific
-#: revision — the installer still verifies size, and a hash is added when the
-#: operator pins one. A model with no pinned hash is still confined to the
-#: model store and never executed as code.
+#: Each entry pins the exact artifact: a fixed source URL, the exact byte size
+#: and the real SHA-256 of the file at that URL. The installer verifies both, so
+#: a truncated, substituted or tampered download is refused rather than loaded.
+#: Sizes and hashes were taken from the publishers' LFS metadata; changing a URL
+#: without updating the hash is a bug the integrity check will catch.
 DEFAULT_CATALOGUE: tuple[CatalogueModel, ...] = (
     CatalogueModel(
         id="qwen2.5-0.5b-instruct-q4_k_m",
@@ -80,13 +81,14 @@ DEFAULT_CATALOGUE: tuple[CatalogueModel, ...] = (
             "qwen2.5-0.5b-instruct-q4_k_m.gguf"
         ),
         filename="qwen2.5-0.5b-instruct-q4_k_m.gguf",
-        size_bytes=int(0.40 * _GIB),
+        sha256="74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+        size_bytes=491400032,
         context_window=4096,
         capabilities=frozenset(
             {ModelCapability.CHAT, ModelCapability.TOOL_CALLING, ModelCapability.CODE}
         ),
         resources=ResourceRequirement(
-            min_ram_bytes=2 * _GIB, disk_bytes=int(0.40 * _GIB), prefers_gpu=False
+            min_ram_bytes=2 * _GIB, disk_bytes=512 * 1024**2, prefers_gpu=False
         ),
         description="Smallest tier. Fast on modest hardware; limited reasoning.",
         description_ar="أصغر فئة. سريع على الأجهزة المتواضعة؛ قدرات استدلال محدودة.",
@@ -103,13 +105,14 @@ DEFAULT_CATALOGUE: tuple[CatalogueModel, ...] = (
             "qwen2.5-3b-instruct-q4_k_m.gguf"
         ),
         filename="qwen2.5-3b-instruct-q4_k_m.gguf",
-        size_bytes=int(1.96 * _GIB),
+        sha256="626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d",
+        size_bytes=2104932768,
         context_window=8192,
         capabilities=frozenset(
             {ModelCapability.CHAT, ModelCapability.TOOL_CALLING, ModelCapability.CODE}
         ),
         resources=ResourceRequirement(
-            min_ram_bytes=6 * _GIB, disk_bytes=int(1.96 * _GIB), prefers_gpu=True
+            min_ram_bytes=6 * _GIB, disk_bytes=int(2.1 * _GIB), prefers_gpu=True
         ),
         description="Balanced default. Good tool-calling on an 8 GB+ machine.",
         description_ar="الخيار المتوازن الافتراضي. استدعاء أدوات جيد على جهاز ‏8GB+.",
@@ -122,17 +125,18 @@ DEFAULT_CATALOGUE: tuple[CatalogueModel, ...] = (
         parameters="7B",
         quantization="Q4_K_M",
         url=(
-            "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/"
-            "qwen2.5-7b-instruct-q4_k_m.gguf"
+            "https://huggingface.co/lmstudio-community/Qwen2.5-7B-Instruct-GGUF/"
+            "resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
         ),
-        filename="qwen2.5-7b-instruct-q4_k_m.gguf",
-        size_bytes=int(4.68 * _GIB),
+        filename="Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        sha256="3e357ab3eda2c442f25c0080bb8998eedc05fd16ce1728eacff9ccc5c3d240c6",
+        size_bytes=4683073952,
         context_window=8192,
         capabilities=frozenset(
             {ModelCapability.CHAT, ModelCapability.TOOL_CALLING, ModelCapability.CODE}
         ),
         resources=ResourceRequirement(
-            min_ram_bytes=12 * _GIB, disk_bytes=int(4.68 * _GIB), prefers_gpu=True
+            min_ram_bytes=12 * _GIB, disk_bytes=int(4.5 * _GIB), prefers_gpu=True
         ),
         description="High quality. Needs a 16 GB+ machine; a GPU helps.",
         description_ar="جودة عالية. يحتاج جهازًا ‏16GB+‏؛ ويستفيد من كرت رسوميات.",

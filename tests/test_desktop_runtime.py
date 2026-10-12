@@ -277,6 +277,16 @@ def test_ui_has_a_real_first_run_setup_surface():
     assert "إعداد النموذج" in html
 
 
+def test_ui_has_a_real_inference_acceptance_surface():
+    """The routed inference test is wired to the bridge, not a placeholder."""
+    html = _load_index_html()
+    assert 'id="inferBtn"' in html
+    assert "a.test_model_inference(" in html
+    # Both language strings exist for the surface.
+    assert "اختبار الاستدلال" in html
+    assert "Test inference" in html
+
+
 def test_ui_dir_exists():
     assert UI_DIR.is_dir()
     assert (UI_DIR / "index.html").is_file()

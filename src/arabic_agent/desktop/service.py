@@ -44,9 +44,15 @@ from ..desktop.events import DesktopEventBroker
 from ..desktop.model_manager import ModelManager, read_active_model, write_active_model
 from ..local.hardware import HardwareProfile, detect_hardware
 from ..local.model_security import resolve_storage_dir
+from ..models.base import ChatMessage, ModelRequest
 from ..permissions.base import Permission, Principal
 
 logger = logging.getLogger(__name__)
+
+#: Wall-clock bound for the routed inference acceptance test. A CPU-only model
+#: answering one short prompt can legitimately take a while, but the test must
+#: never hang the UI forever.
+_ACCEPTANCE_TIMEOUT_SECONDS = 120.0
 
 #: Capabilities the settings screen can surface (label, permission, Arabic label).
 _SETTINGS_CAPABILITIES: tuple[tuple[str, Permission, str], ...] = (
@@ -97,6 +103,8 @@ class DesktopService:
         self._browser = BrowserProvisioner()
         #: True only after a real health check passed for the active model.
         self._active_model_ready = False
+        #: True only after the routed inference acceptance test produced output.
+        self._inference_verified = False
 
     @property
     def events(self) -> DesktopEventBroker:
@@ -208,6 +216,50 @@ class DesktopService:
     def verify_model(self, model_id: str) -> dict[str, object]:
         return self._models.verify(model_id)
 
+    async def test_model_inference(self, model_id: str | None = None) -> dict[str, object]:
+        """Prove the *routed* model answers: a genuine inference acceptance test.
+
+        Unlike :meth:`model_health`, which loads the file-backed backend for one
+        installed model, this runs the request through the live gateway exactly
+        as a user task would — so it exercises the active model, the routing
+        policy and the provider the agent actually uses. It is the acceptance
+        check the UI offers after activation, and it never reports success
+        without real model output. ``passed`` is false with a reason when there
+        is no runnable model (e.g. the setup-required placeholder) rather than a
+        fabricated pass.
+        """
+        target = model_id or self._models.active_model_id()
+        request = ModelRequest(
+            messages=[ChatMessage.user("Reply with the single word: ready")],
+            max_tokens=16,
+        )
+        try:
+            response = await asyncio.wait_for(
+                self._platform.gateway.complete(request), timeout=_ACCEPTANCE_TIMEOUT_SECONDS
+            )
+        except (TimeoutError, PlatformError) as exc:
+            detail = getattr(exc, "message", None) or str(exc)
+            self._inference_verified = False
+            return {
+                "model_id": target,
+                "passed": False,
+                "detail": f"inference test failed: {detail}",
+            }
+        text = (response.message.content or "").strip()
+        passed = bool(text)
+        self._inference_verified = passed
+        return {
+            "model_id": target,
+            "passed": passed,
+            "detail": "model produced output" if passed else "model returned no output",
+            "output_chars": len(text),
+            "model": response.model,
+            "usage": {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+            },
+        }
+
     async def model_health(self, model_id: str) -> dict[str, object]:
         return await self._models.health_check(
             model_id, provider_factory=self._provider_factory(model_id)
@@ -225,7 +277,13 @@ class DesktopService:
         """
         model_id = self._models.active_model_id()
         if model_id is None:
-            return {"model_id": None, "selected": False, "installed": False, "ready": False}
+            return {
+                "model_id": None,
+                "selected": False,
+                "installed": False,
+                "ready": False,
+                "inference_verified": False,
+            }
         verdict = self._models.can_activate(model_id)
         installed = bool(verdict["ok"])
         return {
@@ -234,6 +292,7 @@ class DesktopService:
             "installed": installed,
             "installed_reason": verdict["reason"],
             "ready": self._active_model_ready,
+            "inference_verified": self._inference_verified,
         }
 
     def can_activate_model(self, model_id: str) -> dict[str, object]:
@@ -268,6 +327,9 @@ class DesktopService:
             persist=lambda mid: write_active_model(self._model_storage_dir(), mid),
         )
         self._active_model_ready = True
+        # A freshly activated model has not yet passed the routed acceptance
+        # test; the UI must re-run it rather than inherit a stale pass.
+        self._inference_verified = False
         self._register_active_local_model(model_id)
         await self._platform.audit.record(
             AuditEventType.MODEL_ACTIVATED,
@@ -282,6 +344,7 @@ class DesktopService:
     async def deactivate_model(self) -> dict[str, object]:
         result = self._models.deactivate()
         self._active_model_ready = False
+        self._inference_verified = False
         write_active_model(self._model_storage_dir(), None)
         await self._platform.audit.record(
             AuditEventType.MODEL_DEACTIVATED,

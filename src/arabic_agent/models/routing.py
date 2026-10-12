@@ -44,6 +44,11 @@ class RoutingPolicy(BaseModel):
     prefer_local: bool = False
     #: Whether falling back to a remote model is ever permitted.
     allow_remote_fallback: bool = True
+    #: Hard local-only pin: no remote model may serve a request, and a remote
+    #: fallback is never permitted, regardless of sensitivity or availability.
+    #: Set by a local runtime in OFFLINE mode so "local only" is enforced in one
+    #: place rather than re-derived (and potentially mis-derived) per call site.
+    local_only: bool = False
 
 
 class RoutingDecision(BaseModel):
@@ -136,28 +141,42 @@ class ModelRouter:
            fail-closed refusal — the caller must not proceed.
         """
         private = sensitivity in _PRIVATE_SENSITIVITIES
+        # A hard local-only pin is stronger than mode/preference: it never
+        # permits a remote candidate, even when a remote model would otherwise be
+        # allowed and a local one is unavailable.
         local_required = (
-            policy.mode is OperatingMode.OFFLINE
+            policy.local_only
+            or policy.mode is OperatingMode.OFFLINE
             or policy.prefer_local
             or private
             or not policy.allow_remote
         )
-        remote_permitted = policy.allow_remote and policy.mode is not OperatingMode.OFFLINE
+        remote_permitted = (
+            not policy.local_only
+            and policy.allow_remote
+            and policy.mode is not OperatingMode.OFFLINE
+        )
         locals_available = self._local_candidates(capability)
         remotes_available = self._remote_candidates(capability) if remote_permitted else []
 
         if requested_model is not None:
             requested_is_local = requested_model in self._local
             if local_required and not requested_is_local:
+                reason = (
+                    f"policy requires a local model but {requested_model!r} is remote; "
+                    "refusing to send data to the cloud"
+                )
+                if policy.local_only:
+                    reason = (
+                        "local-only mode is enforced; refusing to run a remote model "
+                        f"{requested_model!r} instead of a local one"
+                    )
                 return RoutingDecision(
                     candidates=(),
                     location=ModelLocation.LOCAL,
                     remote_allowed=False,
                     fail_closed=True,
-                    reason=(
-                        f"policy requires a local model but {requested_model!r} is remote; "
-                        "refusing to send data to the cloud"
-                    ),
+                    reason=reason,
                 )
             location = ModelLocation.LOCAL if requested_is_local else ModelLocation.REMOTE
             return RoutingDecision(
@@ -169,15 +188,21 @@ class ModelRouter:
 
         if local_required:
             if not locals_available:
+                reason = (
+                    "local model required by policy but none is available; "
+                    "failing closed instead of using a cloud model"
+                )
+                if policy.local_only:
+                    reason = (
+                        "local-only mode is enforced but no local model is available; "
+                        "failing closed rather than falling back to a cloud model"
+                    )
                 return RoutingDecision(
                     candidates=(),
                     location=ModelLocation.LOCAL,
                     remote_allowed=False,
                     fail_closed=True,
-                    reason=(
-                        "local model required by policy but none is available; "
-                        "failing closed instead of using a cloud model"
-                    ),
+                    reason=reason,
                 )
             return RoutingDecision(
                 candidates=tuple(locals_available),

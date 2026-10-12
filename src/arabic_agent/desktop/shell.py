@@ -141,6 +141,9 @@ class DesktopBridge:
     async def model_readiness(self) -> Any:
         return await self._get("/desktop/models/readiness")
 
+    async def test_model_inference(self, model_id: str | None = None) -> Any:
+        return await self._post("/desktop/models/test-inference", {"model_id": model_id})
+
     async def activate_model(self, model_id: str) -> Any:
         return await self._post(f"/desktop/models/{model_id}/activate")
 

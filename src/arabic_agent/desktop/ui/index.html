@@ -122,6 +122,7 @@
           <span class="pill" id="readyPill">—</span>
           <span class="muted" id="activeModelLine"></span>
           <button class="btn" id="setupBtn" data-i18n="runSetup" style="display:none">إعداد النموذج</button>
+          <button class="btn ghost" id="inferBtn" data-i18n="testInference">اختبار الاستدلال</button>
         </div>
         <div class="muted" id="readinessDetail"></div>
       </div>
@@ -231,7 +232,9 @@
         writeCapable:"قابل للكتابة", authenticated:"موثّق", screenPolicy:"سياسة الشاشة",
         enabled:"مفعّل", disabled:"معطّل", detail:"التفاصيل", importance:"الأهمية",
         artifacts:"المستندات الناتجة", noArtifacts:"لا توجد مستندات بعد", open:"فتح",
-        size:"الحجم", format:"الصيغة", openFailed:"تعذّر الفتح" },
+        size:"الحجم", format:"الصيغة", openFailed:"تعذّر الفتح",
+        testInference:"اختبار الاستدلال", inferenceOk:"اجتاز اختبار الاستدلال",
+        inferenceFailed:"فشل اختبار الاستدلال", inferenceNotRun:"لم يُجرَ اختبار الاستدلال بعد" },
       en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
@@ -254,7 +257,9 @@
         writeCapable:"write-capable", authenticated:"authenticated", screenPolicy:"Screen policy",
         enabled:"enabled", disabled:"disabled", detail:"Detail", importance:"Importance",
         artifacts:"Generated documents", noArtifacts:"No documents yet", open:"Open",
-        size:"Size", format:"Format", openFailed:"Could not open" }
+        size:"Size", format:"Format", openFailed:"Could not open",
+        testInference:"Test inference", inferenceOk:"Inference test passed",
+        inferenceFailed:"Inference test failed", inferenceNotRun:"Inference test not run yet" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
     const t = (k) => (I18N[LANG][k] || k);
@@ -368,6 +373,14 @@
       $("readinessDetail").textContent = (r && r.detail) ? r.detail : "";
       // First-run setup is offered only when there is no active local model.
       $("setupBtn").style.display = selected ? "none" : "";
+      // The inference test needs a selected model to route to.
+      $("inferBtn").disabled = !selected;
+      // Show the last acceptance result without claiming a pass we never ran.
+      if (am && am.model_id && am.inference_verified) {
+        $("readinessDetail").textContent = (r && r.detail ? r.detail + " · " : "") + t("inferenceOk");
+      } else if (am && am.model_id) {
+        $("readinessDetail").textContent = (r && r.detail ? r.detail + " · " : "") + t("inferenceNotRun");
+      }
     }
     function renderModels(models, recommendation) {
       if (recommendation) $("recommendation").textContent =
@@ -682,6 +695,16 @@
         await refresh();
       } catch (e) { toast(String(e)); } finally { btn.disabled = false; }
     }
+    async function testInference() {
+      const a = api(); if (!a) return;
+      const btn = $("inferBtn"); btn.disabled = true;
+      $("readinessDetail").textContent = t("testInference") + "…";
+      try {
+        const r = await a.test_model_inference(null);
+        toast(r.passed ? t("inferenceOk") : (t("inferenceFailed") + ": " + (r.detail || "")));
+        await refresh();
+      } catch (e) { toast(String(e)); } finally { btn.disabled = false; }
+    }
     async function setMode(m) { const a = api(); if (!a) return; try { await a.set_mode(m); await refresh(); } catch (e) { toast(String(e)); } }
     async function provisionBrowser() {
       const a = api(); if (!a) return;
@@ -726,6 +749,7 @@
       };
       $("exportBtn").onclick = exportDiagnostics;
       $("setupBtn").onclick = setupModel;
+      $("inferBtn").onclick = testInference;
       $("provisionBtn").onclick = provisionBrowser;
       $("cancelProvisionBtn").onclick = cancelBrowserProvision;
       $("langBtn").onclick = () => { LANG = LANG === "ar" ? "en" : "ar"; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };

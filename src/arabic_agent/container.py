@@ -516,6 +516,7 @@ class Platform:
                 allow_remote=not is_local,
                 prefer_local=settings.model_prefer_local,
                 allow_remote_fallback=settings.model_allow_remote_fallback,
+                local_only=is_local and settings.local_mode is OperatingMode.OFFLINE,
             )
             gateway = ModelGateway(
                 registry,

@@ -327,6 +327,36 @@ def test_router_respects_capability_filter():
     assert decision.candidates == ("local/vision",)
 
 
+def test_router_local_only_refuses_remote_even_when_available():
+    """A hard local-only pin never lets a remote model serve a request."""
+    router = ModelRouter(local_models=["local/m"], remote_models=["openai/gpt"])
+    decision = router.decide(
+        policy=RoutingPolicy(mode=OperatingMode.HYBRID, local_only=True)
+    )
+    assert decision.candidates == ("local/m",)
+    assert decision.remote_allowed is False
+    assert decision.fail_closed is False
+
+
+def test_router_local_only_refuses_remote_requested_model():
+    router = ModelRouter(local_models=["local/m"], remote_models=["openai/gpt"])
+    decision = router.decide(
+        policy=RoutingPolicy(mode=OperatingMode.HYBRID, local_only=True),
+        requested_model="openai/gpt",
+    )
+    assert decision.fail_closed is True
+    assert decision.candidates == ()
+    assert "local-only" in decision.reason
+
+
+def test_router_local_only_fails_closed_with_no_local_model():
+    router = ModelRouter(local_models=[], remote_models=["openai/gpt"])
+    decision = router.decide(policy=RoutingPolicy(mode=OperatingMode.HYBRID, local_only=True))
+    assert decision.fail_closed is True
+    assert decision.candidates == ()
+    assert decision.remote_allowed is False
+
+
 async def test_gateway_fails_closed_and_does_not_fall_back():
     registry = ProviderRegistry()
     registry.register(LocalBackendProvider(descriptor=_descriptor(), backend=FakeBackend()))
@@ -360,6 +390,51 @@ async def test_gateway_counts_local_and_remote_requests():
     assert gateway.stats.remote_requests == 0
 
 
+async def test_local_only_mode_never_calls_a_remote_model():
+    """In local-only mode a request never reaches the remote provider.
+
+    The remote provider records every call, so this proves no fallback happened
+    even though the remote model is registered and would otherwise be a valid
+    fallback for the default model.
+    """
+    remote = _RemoteProvider()
+    registry = ProviderRegistry()
+    registry.register(LocalBackendProvider(descriptor=_descriptor(), backend=FakeBackend()))
+    registry.register(remote)
+    router = ModelRouter(local_models=["local/model.gguf"], remote_models=["remote/m"])
+    gateway = ModelGateway(
+        registry,
+        settings=Settings(environment="test"),
+        default_model="local/model.gguf",
+        fallbacks=("remote/m",),
+        router=router,
+        routing_policy=RoutingPolicy(mode=OperatingMode.OFFLINE, local_only=True),
+    )
+    await gateway.complete(ModelRequest(messages=(ChatMessage.user("مرحبا"),)))
+    assert gateway.stats.local_requests == 1
+    assert gateway.stats.remote_requests == 0
+    assert remote.calls == 0
+
+
+async def test_local_only_mode_refuses_rather_than_falling_back():
+    """With no local model, local-only fails closed instead of using the cloud."""
+    remote = _RemoteProvider()
+    registry = ProviderRegistry()
+    registry.register(remote)
+    router = ModelRouter(local_models=[], remote_models=["remote/m"])
+    gateway = ModelGateway(
+        registry,
+        settings=Settings(environment="test"),
+        default_model="remote/m",
+        router=router,
+        routing_policy=RoutingPolicy(mode=OperatingMode.OFFLINE, local_only=True),
+    )
+    with pytest.raises(PermissionDeniedError):
+        await gateway.complete(ModelRequest(messages=(ChatMessage.user("سرّي"),)))
+    assert gateway.stats.remote_requests == 0
+    assert remote.calls == 0
+
+
 class _RemoteProvider(ModelProvider):
     """A minimal non-local provider for accounting tests."""
 
@@ -367,7 +442,11 @@ class _RemoteProvider(ModelProvider):
     capabilities = frozenset({ModelCapability.CHAT})
     is_local = False
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def complete(self, request: ModelRequest) -> ModelResponse:
+        self.calls += 1
         return ModelResponse(message=ChatMessage.assistant("remote"), model="remote")
 
 
