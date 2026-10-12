@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import tomllib
 from pathlib import Path
 
 from arabic_agent.desktop import packaging, product_paths
@@ -12,6 +14,31 @@ from arabic_agent.desktop.product_paths import (
     default_product_root,
     resolve_product_paths,
 )
+
+
+# --- Optional-dependency honesty --------------------------------------------
+def test_every_referenced_extra_is_declared() -> None:
+    """An error that tells the user to install an extra must name a real extra.
+
+    Several modules degrade honestly by raising a message like
+    "install the 'computer' extra" when an optional library is missing. That
+    advice is only actionable if the named extra actually exists in
+    ``[project.optional-dependencies]``. This pins the two together so a rename
+    or a forgotten declaration cannot leave the user chasing a non-existent
+    extra.
+    """
+    root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = set(pyproject["project"]["optional-dependencies"]) | {"dev", "all"}
+
+    referenced: set[str] = set()
+    pattern = re.compile(r"install the '([a-z0-9-]+)' extra")
+    for source in (root / "src").rglob("*.py"):
+        referenced.update(pattern.findall(source.read_text(encoding="utf-8")))
+
+    assert referenced, "expected at least one 'install the ... extra' message"
+    missing = referenced - declared
+    assert not missing, f"messages reference undeclared extras: {sorted(missing)}"
 
 
 # --- Product paths ----------------------------------------------------------

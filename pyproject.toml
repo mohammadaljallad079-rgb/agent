@@ -62,6 +62,14 @@ docgen = [
 browser = [
     "playwright>=1.40,<2",
 ]
+# Computer use / screen perception (Phase 7). Optional: Pillow supplies the
+# pixels for capture and encoding; the backend reports itself unavailable
+# (honestly, with a reason) when Pillow is absent. OCR itself drives the
+# `tesseract` binary, so it needs no Python package beyond Pillow; that binary
+# is a system dependency, not a pip one.
+computer = [
+    "pillow>=10,<13",
+]
 # Desktop shell (Phase 10). Optional: the runtime and the desktop HTTP surface
 # work headless without it; only the native window (`agent-shell`) needs
 # pywebview and a system web engine (WebView2 on Windows).
@@ -153,10 +161,11 @@ follow_imports = "skip"
 ignore_missing_imports = true
 
 # Screen capture / perception (Phase 7) are optional, lazily-imported
-# dependencies: Pillow for pixels and pytesseract for OCR. Neither ships
-# first-party stubs; mypy neither follows nor requires stubs for them.
+# dependencies: Pillow for pixels. OCR drives the `tesseract` *binary* (a system
+# dependency), not a Python package. Pillow ships no first-party stubs, so mypy
+# neither follows nor requires stubs for it.
 [[tool.mypy.overrides]]
-module = ["PIL.*", "pytesseract.*"]
+module = ["PIL.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
 
