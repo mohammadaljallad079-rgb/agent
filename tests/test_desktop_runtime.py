@@ -323,6 +323,7 @@ def test_ui_has_a_real_printing_surface():
     # Reachable from navigation and fed from the bootstrap payload.
     assert '"printing"' in html
     assert "boot.printing" in html and "boot.printJobs" in html
+    assert "a.printing()" in html and "a.print_jobs()" in html
     # Arabic strings are present for the surface.
     assert "الطباعة" in html
     assert "مهام الطباعة" in html

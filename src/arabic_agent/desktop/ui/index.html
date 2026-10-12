@@ -295,6 +295,7 @@
       $("s-" + section).classList.add("active");
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.section === section));
       if (section === "artifacts") refreshArtifacts();
+      if (section === "printing") refreshPrinting();
     }
 
     // ---- navigation ----
@@ -727,6 +728,15 @@
     async function refreshArtifacts() {
       const a = api(); if (!a) return;
       try { renderArtifacts(await a.artifacts()); } catch (e) { toast(String(e)); }
+    }
+    // Likewise for printing: opening the panel re-reads the live state and the
+    // tenant's job list, which can change while the page is open.
+    async function refreshPrinting() {
+      const a = api(); if (!a) return;
+      try {
+        const [state, jobs] = await Promise.all([a.printing(), a.print_jobs()]);
+        renderPrinting(state, jobs);
+      } catch (e) { toast(String(e)); }
     }
     async function setupModel() {
       const a = api(); if (!a) return;
