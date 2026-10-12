@@ -12,6 +12,7 @@ from arabic_agent.core.enums import PlatformKind
 from arabic_agent.printing.base import (
     PrintBackend,
     PrintDocument,
+    PrinterCapabilities,
     PrinterInfo,
     PrintJob,
     PrintJobStatus,
@@ -30,6 +31,8 @@ class FakePrintBackend(PrintBackend):
         printers: list[PrinterInfo] | None = None,
         fail_submit: bool = False,
         cancel_result: bool = True,
+        status: PrintJobStatus = PrintJobStatus.PRINTING,
+        capabilities: PrinterCapabilities | None = None,
     ) -> None:
         self._printers = printers or [
             PrinterInfo(id="HP_LaserJet", name="HP LaserJet", is_default=True, backend=self.name),
@@ -37,8 +40,11 @@ class FakePrintBackend(PrintBackend):
         ]
         self._fail_submit = fail_submit
         self._cancel_result = cancel_result
+        self._status = status
+        self._capabilities = capabilities
         self.submitted: list[tuple[PrintDocument, str, PrintOptions]] = []
         self.cancelled: list[tuple[str, str]] = []
+        self.status_queries: list[tuple[str, str]] = []
 
     async def list_printers(self) -> list[PrinterInfo]:
         self.require_available()
@@ -61,12 +67,16 @@ class FakePrintBackend(PrintBackend):
             backend=self.name,
         )
 
-    async def job_status(self, job_id: str) -> PrintJobStatus:
-        return PrintJobStatus.QUEUED
+    async def job_status(self, job_id: str, *, printer_id: str = "") -> PrintJobStatus:
+        self.status_queries.append((job_id, printer_id))
+        return self._status
 
     async def cancel_job(self, job_id: str, *, printer_id: str = "") -> bool:
         self.cancelled.append((job_id, printer_id))
         return self._cancel_result
+
+    async def printer_capabilities(self, printer_id: str) -> PrinterCapabilities | None:
+        return self._capabilities
 
 
 class FakeUnavailablePrintBackend(PrintBackend):

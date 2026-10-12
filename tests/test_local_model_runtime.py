@@ -330,9 +330,7 @@ def test_router_respects_capability_filter():
 def test_router_local_only_refuses_remote_even_when_available():
     """A hard local-only pin never lets a remote model serve a request."""
     router = ModelRouter(local_models=["local/m"], remote_models=["openai/gpt"])
-    decision = router.decide(
-        policy=RoutingPolicy(mode=OperatingMode.HYBRID, local_only=True)
-    )
+    decision = router.decide(policy=RoutingPolicy(mode=OperatingMode.HYBRID, local_only=True))
     assert decision.candidates == ("local/m",)
     assert decision.remote_allowed is False
     assert decision.fail_closed is False

@@ -16,26 +16,34 @@ from .base import (
     PrintColorMode,
     PrintDocument,
     PrintDuplex,
+    PrinterCapabilities,
     PrinterInfo,
     PrintJob,
     PrintJobStatus,
     PrintOptions,
+    PrintOrientation,
 )
 from .policy import DEFAULT_PRINTABLE_TYPES, JobBudget, PrintPolicy
 from .runtime import PrintRuntime
+from .store import InMemoryPrintJobStore, PrintJobRecord, PrintJobStore
 
 __all__ = [
     "DEFAULT_PRINTABLE_TYPES",
+    "InMemoryPrintJobStore",
     "JobBudget",
     "PrintBackend",
     "PrintColorMode",
     "PrintDocument",
     "PrintDuplex",
     "PrintJob",
+    "PrintJobRecord",
     "PrintJobStatus",
+    "PrintJobStore",
     "PrintOptions",
+    "PrintOrientation",
     "PrintPolicy",
     "PrintRuntime",
+    "PrinterCapabilities",
     "PrinterInfo",
     "build_print_backend",
 ]

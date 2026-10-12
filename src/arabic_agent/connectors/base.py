@@ -62,6 +62,13 @@ class ConnectorCapability(StrEnum):
     ACTION_EXECUTE = "action.execute"
     # Webhooks
     WEBHOOK_SEND = "webhook.send"
+    # Calendar
+    CALENDAR_LIST = "calendar.list"
+    CALENDAR_READ = "calendar.read"
+    CALENDAR_CREATE = "calendar.create"
+    CALENDAR_UPDATE = "calendar.update"
+    CALENDAR_DELETE = "calendar.delete"
+    CALENDAR_FREEBUSY = "calendar.freebusy"
 
 
 class OperationKind(StrEnum):

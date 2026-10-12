@@ -65,6 +65,8 @@ from ...persistence.mapping import (
     workflow_version_from_row,
     workflow_version_to_row,
 )
+from ...printing.base import PrintJobStatus, PrintOptions
+from ...printing.store import PrintJobRecord, PrintJobStore
 from ...runs.base import RunRecord
 from ...runs.store import RunStore
 from ...workflows.models import Workflow, WorkflowVersion
@@ -77,6 +79,7 @@ from .schema import (
     LocalApprovalRow,
     LocalAuditEventRow,
     LocalIdempotencyRow,
+    LocalPrintJobRow,
     LocalRunRow,
     LocalSyncActionRow,
     LocalWorkflowRow,
@@ -898,11 +901,121 @@ def _action_from_row(row: LocalActionLedgerRow) -> ActionRecord:
     )
 
 
+# --- Print jobs -------------------------------------------------------------
+class LocalPrintJobStore(PrintJobStore):
+    """Durable local print-job metadata (survives a restart).
+
+    Persists the same :class:`~arabic_agent.printing.store.PrintJobRecord` the
+    in-memory store holds, so a submitted job can be reviewed, its status
+    reconciled, or it can be cancelled after the application restarts. Only safe
+    metadata is stored; the document path and bytes are never persisted.
+    """
+
+    def __init__(self, db: LocalDatabase) -> None:
+        self._db = db
+
+    async def add(self, record: PrintJobRecord) -> PrintJobRecord:
+        async with self._db.transaction() as session:
+            session.add(LocalPrintJobRow(**_print_job_to_row(record)))
+        return record
+
+    async def get(self, job_id: str, *, tenant_id: str) -> PrintJobRecord:
+        async with self._db.transaction() as session:
+            row = await session.get(LocalPrintJobRow, job_id)
+        if row is None or row.tenant_id != tenant_id:
+            raise NotFoundError("print job not found", details={"job_id": job_id})
+        return _print_job_from_row(row)
+
+    async def update(self, record: PrintJobRecord) -> PrintJobRecord:
+        values = _print_job_to_row(record)
+        async with self._db.transaction() as session:
+            result = await session.execute(
+                update(LocalPrintJobRow)
+                .where(
+                    LocalPrintJobRow.id == record.id,
+                    LocalPrintJobRow.tenant_id == record.tenant_id,
+                )
+                .values(**values)
+            )
+            if cast(CursorResult[Any], result).rowcount == 0:
+                raise NotFoundError("print job not found", details={"job_id": record.id})
+        return record
+
+    async def list_for_run(self, *, tenant_id: str, run_id: str) -> list[PrintJobRecord]:
+        stmt = (
+            select(LocalPrintJobRow)
+            .where(
+                LocalPrintJobRow.tenant_id == tenant_id,
+                LocalPrintJobRow.run_id == run_id,
+            )
+            .order_by(LocalPrintJobRow.created_at)
+        )
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [_print_job_from_row(r) for r in rows]
+
+    async def list_recent(self, *, tenant_id: str, limit: int = 50) -> list[PrintJobRecord]:
+        stmt = (
+            select(LocalPrintJobRow)
+            .where(LocalPrintJobRow.tenant_id == tenant_id)
+            .order_by(LocalPrintJobRow.created_at.desc())
+            .limit(limit)
+        )
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [_print_job_from_row(r) for r in rows]
+
+
+def _print_job_to_row(record: PrintJobRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "tenant_id": record.tenant_id,
+        "user_id": record.user_id,
+        "run_id": record.run_id,
+        "printer_id": record.printer_id,
+        "title": record.title,
+        "status": record.status.value,
+        "backend": record.backend,
+        "size_bytes": record.size_bytes,
+        "options": record.options.model_dump(mode="json"),
+        "observed": record.observed,
+        "detail": record.detail,
+        "error": record.error,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def _print_job_from_row(row: LocalPrintJobRow) -> PrintJobRecord:
+    try:
+        options = PrintOptions(**(row.options or {}))
+    except Exception:
+        options = PrintOptions()
+    return PrintJobRecord(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        user_id=row.user_id,
+        run_id=row.run_id,
+        printer_id=row.printer_id,
+        title=row.title,
+        status=PrintJobStatus(row.status),
+        backend=row.backend,
+        size_bytes=row.size_bytes,
+        options=options,
+        observed=row.observed,
+        detail=row.detail,
+        error=row.error,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 __all__ = [
     "LocalActionLedger",
     "LocalApprovalStore",
     "LocalAuditSink",
     "LocalIdempotencyGuard",
+    "LocalPrintJobStore",
     "LocalRunStore",
     "LocalSyncQueue",
     "LocalWorkflowRunStore",

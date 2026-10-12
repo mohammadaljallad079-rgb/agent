@@ -1,4 +1,4 @@
-# Architecture — Arabic AI Agent Platform
+# Architecture ŌĆö Arabic AI Agent Platform
 
 > This document is the authoritative design for the platform. It describes what
 > exists today (the foundation) and the boundaries along which the rest of the
@@ -12,8 +12,8 @@
 The product is an **Agent Operating Platform**, not a chatbot.
 
 ```
-Chatbot:  User → Message → Answer
-Agent:    User → Goal → Plan → Tools → Execute → Observe → Verify → Result
+Chatbot:  User ŌåÆ Message ŌåÆ Answer
+Agent:    User ŌåÆ Goal ŌåÆ Plan ŌåÆ Tools ŌåÆ Execute ŌåÆ Observe ŌåÆ Verify ŌåÆ Result
 ```
 
 The LLM is a **reasoning engine behind an abstraction**. The durable value of
@@ -43,23 +43,23 @@ Layers, from the outside in. Dependencies point **downward only**; no lower
 layer imports a higher one.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ Interfaces        HTTP API (FastAPI)   ·  CLI  ·  Worker  · (future) Desktop│
-├──────────────────────────────────────────────────────────────────┤
-│ Runtime boundary  Transport: Local Runtime  |  Cloud Runtime       │
-├──────────────────────────────────────────────────────────────────┤
-│ Orchestration     AgentRunner (the loop) · Planner · RecoveryPolicy│
-│                   TaskEngine · ContextManager · Worker/RunExecutor │
-├──────────────────────────────────────────────────────────────────┤
-│ Capabilities      ToolRegistry/Tools · Permissions/Policy/Approvals│
-│                   ModelGateway/Providers · Memory · Integrations   │
-├──────────────────────────────────────────────────────────────────┤
-│ Foundations       Audit · Config/Settings · Errors · Redaction ·   │
-│                   i18n · Tenancy · IDs                             │
-├──────────────────────────────────────────────────────────────────┤
-│ Infrastructure    Persistence (Postgres) · Redis (queue/lock/      │
-│                   rate-limit/idempotency) · Migrations (Alembic)   │
-└──────────────────────────────────────────────────────────────────┘
+ŌöīŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöÉ
+Ōöé Interfaces        HTTP API (FastAPI)   ┬Ę  CLI  ┬Ę  Worker  ┬Ę (future) DesktopŌöé
+Ōö£ŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöż
+Ōöé Runtime boundary  Transport: Local Runtime  |  Cloud Runtime       Ōöé
+Ōö£ŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöż
+Ōöé Orchestration     AgentRunner (the loop) ┬Ę Planner ┬Ę RecoveryPolicyŌöé
+Ōöé                   TaskEngine ┬Ę ContextManager ┬Ę Worker/RunExecutor Ōöé
+Ōö£ŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöż
+Ōöé Capabilities      ToolRegistry/Tools ┬Ę Permissions/Policy/ApprovalsŌöé
+Ōöé                   ModelGateway/Providers ┬Ę Memory ┬Ę Integrations   Ōöé
+Ōö£ŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöż
+Ōöé Foundations       Audit ┬Ę Config/Settings ┬Ę Errors ┬Ę Redaction ┬Ę   Ōöé
+Ōöé                   i18n ┬Ę Tenancy ┬Ę IDs                             Ōöé
+Ōö£ŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöż
+Ōöé Infrastructure    Persistence (Postgres) ┬Ę Redis (queue/lock/      Ōöé
+Ōöé                   rate-limit/idempotency) ┬Ę Migrations (Alembic)   Ōöé
+ŌööŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöĆŌöś
 ```
 
 ### Module map
@@ -108,11 +108,11 @@ selects them when `AAP_DATABASE_URL` is set.
 
 **Optimistic concurrency.** `RunRecord` carries a `version`; every write goes
 through `RunStore.update(record, expected_version=...)`, a conditional `UPDATE`
-whose row count is checked. A stale writer gets `ConflictError` and re-reads —
+whose row count is checked. A stale writer gets `ConflictError` and re-reads ŌĆö
 this is what makes the state machine safe across replicas.
 
 **Reliable queue.** `worker/queue.py::RedisJobQueue` keeps a ready list and an
-in-flight sorted set. Claiming atomically moves a job ready→inflight; `ack`
+in-flight sorted set. Claiming atomically moves a job readyŌåÆinflight; `ack`
 removes it; `nack` requeues or drops; `reclaim_stale` returns jobs whose worker
 died before acking. Lua scripts make each step atomic. `InMemoryJobQueue` is the
 local/offline and test implementation.
@@ -140,7 +140,7 @@ where concrete implementations are chosen and wired. Nothing else constructs its
 own dependencies. `Platform.build()` is the dependency-injection seam: tests and
 the desktop runtime inject a deterministic/local model provider and in-memory
 stores, while production builds providers from configuration. If no model
-provider is configured, `build()` raises `ConfigurationError` — the platform
+provider is configured, `build()` raises `ConfigurationError` ŌĆö the platform
 refuses to start in a half-working state.
 
 ---
@@ -152,27 +152,27 @@ transition is explicit so behaviour is testable and observable.
 
 ```
 run(principal, goal)
-  ├─ prepare sandboxed workspace (per run, under a tenant-scoped root)
-  ├─ recall relevant memory (policy-filtered)
-  ├─ resolve plan:  resume existing  |  Planner.plan(goal)  |  single-step fallback
-  ├─ for each pending step (bounded by max_steps_per_run):
-  │     ├─ guard checks (steps / retries / replans / wall-clock deadline)
-  │     ├─ ContextManager.build(...)  → system + history + memory + plan + tool specs
-  │     ├─ ModelGateway.complete(request)
-  │     ├─ for each tool call:
-  │     │     ├─ ToolExecutor.execute(...)
-  │     │     │     ├─ PolicyEngine.evaluate(principal, tool, permission, risk)
-  │     │     │     │     ├─ DENIED            → PermissionDeniedError
-  │     │     │     │     └─ REQUIRES_APPROVAL → create Approval, raise ApprovalRequiredError
-  │     │     │     ├─ Tool.validate_arguments → Tool.run (sandboxed)
-  │     │     │     └─ ToolResult (ok / error)
-  │     │     └─ observe → append tool result to history
-  │     ├─ on failure → RecoveryPolicy.decide(error_class, attempts, replans)
-  │     │     RETRY | REPAIR | REPLAN | APPROVE | SKIP | ABORT
-  │     └─ on success → TaskEngine.complete_step
-  ├─ verify final result (model-assisted, bounded)
-  ├─ persist task outcome to memory (policy-filtered, redacted)
-  └─ audit every transition → AgentRunResult
+  Ōö£ŌöĆ prepare sandboxed workspace (per run, under a tenant-scoped root)
+  Ōö£ŌöĆ recall relevant memory (policy-filtered)
+  Ōö£ŌöĆ resolve plan:  resume existing  |  Planner.plan(goal)  |  single-step fallback
+  Ōö£ŌöĆ for each pending step (bounded by max_steps_per_run):
+  Ōöé     Ōö£ŌöĆ guard checks (steps / retries / replans / wall-clock deadline)
+  Ōöé     Ōö£ŌöĆ ContextManager.build(...)  ŌåÆ system + history + memory + plan + tool specs
+  Ōöé     Ōö£ŌöĆ ModelGateway.complete(request)
+  Ōöé     Ōö£ŌöĆ for each tool call:
+  Ōöé     Ōöé     Ōö£ŌöĆ ToolExecutor.execute(...)
+  Ōöé     Ōöé     Ōöé     Ōö£ŌöĆ PolicyEngine.evaluate(principal, tool, permission, risk)
+  Ōöé     Ōöé     Ōöé     Ōöé     Ōö£ŌöĆ DENIED            ŌåÆ PermissionDeniedError
+  Ōöé     Ōöé     Ōöé     Ōöé     ŌööŌöĆ REQUIRES_APPROVAL ŌåÆ create Approval, raise ApprovalRequiredError
+  Ōöé     Ōöé     Ōöé     Ōö£ŌöĆ Tool.validate_arguments ŌåÆ Tool.run (sandboxed)
+  Ōöé     Ōöé     Ōöé     ŌööŌöĆ ToolResult (ok / error)
+  Ōöé     Ōöé     ŌööŌöĆ observe ŌåÆ append tool result to history
+  Ōöé     Ōö£ŌöĆ on failure ŌåÆ RecoveryPolicy.decide(error_class, attempts, replans)
+  Ōöé     Ōöé     RETRY | REPAIR | REPLAN | APPROVE | SKIP | ABORT
+  Ōöé     ŌööŌöĆ on success ŌåÆ TaskEngine.complete_step
+  Ōö£ŌöĆ verify final result (model-assisted, bounded)
+  Ōö£ŌöĆ persist task outcome to memory (policy-filtered, redacted)
+  ŌööŌöĆ audit every transition ŌåÆ AgentRunResult
 ```
 
 Key invariants:
@@ -256,7 +256,7 @@ identically. `run_command` runs with the workspace as its working directory.
 bytes for text/Markdown/JSON/CSV/HTML/PDF/DOCX/XLSX/PPTX and inspect ZIP/TAR
 archives without extracting. Each section carries provenance
 (page/slide/sheet/line) and parse limits are conservative. Optional parser
-dependencies degrade honestly — an absent parser reports the format as
+dependencies degrade honestly ŌĆö an absent parser reports the format as
 unsupported rather than fabricating a result. Ingested content is scanned for
 likely secrets; a finding is reported by kind + locator only
 (`SECRET_DETECTED`), never by value. `project/` builds a project summary from
@@ -265,7 +265,7 @@ real filesystem evidence (languages, manifests, tests, entrypoints, docs).
 `documents/generation.py` is the write-side counterpart: `generate_document`
 writes a real PDF/DOCX/Markdown/TXT/HTML/JSON file from a title plus ordered
 content blocks, and `create_spreadsheet` writes a real XLSX/CSV from tabular
-data. Arabic is first-class — PDF shapes Arabic with a resolved Unicode font
+data. Arabic is first-class ŌĆö PDF shapes Arabic with a resolved Unicode font
 (failing loudly when none is present rather than emitting missing glyphs), DOCX
 is written RTL-aware, HTML is emitted `dir="rtl"`, and CSV carries a BOM so
 Excel opens Arabic correctly. A format whose library is absent is reported
@@ -276,18 +276,18 @@ write.
 
 Future tools (PPTX generation, email, ERP, WhatsApp, social, image, video,
 calendar, printing) are declared in `TODO.md` and plug into the same interface.
-Browser tools are no longer in this list — they are implemented (see §13c).
+Browser tools are no longer in this list ŌĆö they are implemented (see ┬¦13c).
 
 ---
 
 ## 6. Permission system
 
-`arabic_agent/permissions/` — a real policy layer between the agent and every
+`arabic_agent/permissions/` ŌĆö a real policy layer between the agent and every
 tool, never an advisory message.
 
 - `Permission` enum: `READ_FILE`, `WRITE_FILE`, `MOVE_FILE`, `DELETE_FILE`,
   `RUN_COMMAND`, `PRINT_DOCUMENT`, `SEND_EMAIL`, `CREATE_INVOICE`,
-  `DELETE_INVOICE`, `SEND_WHATSAPP`, `SEND_SOCIAL_MESSAGE`, … extensible.
+  `DELETE_INVOICE`, `SEND_WHATSAPP`, `SEND_SOCIAL_MESSAGE`, ŌĆ” extensible.
 - `RiskLevel`: `LOW | MEDIUM | HIGH | CRITICAL`.
 - `Principal`: `tenant_id`, `user_id`, `roles`, `granted_permissions`;
   `has_role()` and `may_hold()`.
@@ -313,7 +313,7 @@ printing, and running shell commands require approval or are denied.
 
 ## 7. Human-in-the-loop approvals
 
-Approvals are first-class, persisted, audited entities — not a chat message.
+Approvals are first-class, persisted, audited entities ŌĆö not a chat message.
 
 - `Approval`: `id`, `run_id`, `tenant_id`, `user_id`, `tool_name`, `permission`,
   `arguments`, `summary`, `status`, `created_at`, `expires_at`, `resolved_by`,
@@ -329,8 +329,8 @@ Approvals are first-class, persisted, audited entities — not a chat message.
 - Both the request and the decision are written to the audit log.
 
 Example the design supports end-to-end: *"42 invoices were created. Send them to
-customers?"* → the send tool's permission is `REQUIRES_APPROVAL` → the run pauses
-with a pending approval → the user approves → the run resumes and sends.
+customers?"* ŌåÆ the send tool's permission is `REQUIRES_APPROVAL` ŌåÆ the run pauses
+with a pending approval ŌåÆ the user approves ŌåÆ the run resumes and sends.
 
 ---
 
@@ -346,13 +346,13 @@ with a pending approval → the user approves → the run resumes and sends.
 - `TaskStore` (ABC) with `InMemoryTaskStore` today; `save`, `get(tenant_id)`,
   `get_by_run`.
 - `TaskEngine`: `create_plan`, `start_step`, `complete_step`, `fail_step`,
-  `block_step`, `skip_step`, `replan` — every transition persisted.
+  `block_step`, `skip_step`, `replan` ŌĆö every transition persisted.
 
 Because state is durable, a run that stops (error, approval, timeout) can be
 resumed and knows exactly which step it reached. A multi-step goal such as
-*"prepare customer invoices and send them"* decomposes into identify → query →
-validate → generate → render PDFs → prepare messages → request approval → send →
-verify → report, and survives interruption at any step.
+*"prepare customer invoices and send them"* decomposes into identify ŌåÆ query ŌåÆ
+validate ŌåÆ generate ŌåÆ render PDFs ŌåÆ prepare messages ŌåÆ request approval ŌåÆ send ŌåÆ
+verify ŌåÆ report, and survives interruption at any step.
 
 ---
 
@@ -423,7 +423,7 @@ schedule), `WEBHOOK` (an inbound HTTP call authenticated by an HMAC signature),
 
 **Cron.** `triggers/cron.py` is a dependency-free 5-field cron parser with
 timezone support and Vixie day-of-month/day-of-week semantics, plus macros
-(`@daily`, …). `CronExpression.next_after` is strictly-after, so a scheduler can
+(`@daily`, ŌĆ”). `CronExpression.next_after` is strictly-after, so a scheduler can
 never spin on the same instant. `MisfirePolicy` governs a missed occurrence:
 `SKIP` advances past it, `RUN_ONE` fires once, `RUN_ALL` catches up (bounded by
 `AAP_SCHEDULER_MAX_CATCHUP`).
@@ -474,7 +474,7 @@ restricted to `AAP_ALLOWED_EVENT_TYPES`).
   `Usage` are provider-neutral.
 
 `OpenAICompatibleProvider` serves both cloud OpenAI and any local
-OpenAI-compatible server (Ollama, vLLM, llama.cpp) — the offline path.
+OpenAI-compatible server (Ollama, vLLM, llama.cpp) ŌĆö the offline path.
 `AnthropicCompatibleProvider` serves the Anthropic Messages API (it bridges the
 schema differences: top-level `system`, typed content blocks, `tool_use` /
 `tool_result`). Both are registered in `container.py` only when a key is
@@ -490,7 +490,7 @@ code.
 
 **Native-engine isolation.** File-backed engines (llama.cpp via
 `llama-cpp-python`) run inside the same process as the agent by default, but the
-native library can abort on some hardware — a SIGSEGV/SIGABRT that no Python
+native library can abort on some hardware ŌĆö a SIGSEGV/SIGABRT that no Python
 `try/except` can catch. When `AAP_LOCAL_MODEL_ISOLATE` is on (the default),
 `local/subprocess_backend.py` runs the engine in a dedicated child process
 (`local/subprocess_worker.py`) and speaks a length-prefixed JSON protocol over
@@ -561,7 +561,7 @@ what failed, what was retried, who approved what, and how long it took.
 ### 12a. Observability package (Phase 1b)
 
 `arabic_agent/observability/` is a dependency-light package the whole platform
-depends on — the agent core never imports a vendor SDK.
+depends on ŌĆö the agent core never imports a vendor SDK.
 
 - **Correlation** (`context.py`): a frozen `CorrelationContext`
   (`request_id`, `run_id`, `job_id`, `tenant_id`, `user_id`, `worker_id`) held in
@@ -578,7 +578,7 @@ depends on — the agent core never imports a vendor SDK.
   enqueue/claim/ack/nack/fail, queue depth, approval latency, rate-limit
   rejections, dependency up/down. Label values are redacted and bounded (raw
   error text is never a label).
-- **Tracing** (`tracing.py`): `Tracer` + `span()` cover API → run → model → tool;
+- **Tracing** (`tracing.py`): `Tracer` + `span()` cover API ŌåÆ run ŌåÆ model ŌåÆ tool;
   spans record correlation ids, status and error. `otel.py` bridges finished
   spans to OpenTelemetry **only** when the SDK is installed and enabled.
 - **Readiness** (`readiness.py`): `ReadinessService` runs `DatabaseProbe`,
@@ -594,11 +594,11 @@ depends on — the agent core never imports a vendor SDK.
 
 - `Capability`: `LOCAL_FILES | LOCAL_APPS | PRINTING | BROWSER | LOCAL_LLM |
   NETWORK | PERSISTENT_STORE | GPU`.
-- `RuntimeProfile.local()` — files, local apps, printing, browser, local LLM,
+- `RuntimeProfile.local()` ŌĆö files, local apps, printing, browser, local LLM,
   persistent store; **no network** by default.
-- `RuntimeProfile.cloud()` — network and persistent store; **no** local files,
+- `RuntimeProfile.cloud()` ŌĆö network and persistent store; **no** local files,
   apps, printing, or GPU.
-- `Transport` (ABC) — `submit_run(tenant, user, goal)` / `poll_run(...)`: the
+- `Transport` (ABC) ŌĆö `submit_run(tenant, user, goal)` / `poll_run(...)`: the
   contract for a desktop runtime talking to a cloud runtime.
 
 The rule is: **never assume everything needs the cloud, and never assume
@@ -616,50 +616,50 @@ even be named by the model.
 
 Components:
 
-- **`runtime.py`** — `LocalRuntime` orchestrates lifecycle, mode, devices,
+- **`runtime.py`** ŌĆö `LocalRuntime` orchestrates lifecycle, mode, devices,
   boundary, audit and the local tool registry. `build_local_runtime(settings)`
   constructs it from configuration; `LocalRuntimeStatus` is the honest,
   non-secret status surface (state, mode, platform, capability ids, workspace
   roots).
-- **`lifecycle.py`** — `LifecycleStateMachine` with the states
-  `stopped → starting → ready → running ⇄ paused → stopping → stopped` and an
+- **`lifecycle.py`** ŌĆö `LifecycleStateMachine` with the states
+  `stopped ŌåÆ starting ŌåÆ ready ŌåÆ running Ōćä paused ŌåÆ stopping ŌåÆ stopped` and an
   explicit `accepts_tools` predicate; illegal transitions raise.
-- **`modes.py`** — `ModeManager` holds the *declared* mode
+- **`modes.py`** ŌĆö `ModeManager` holds the *declared* mode
   (`online | offline | hybrid`). The mode is never inferred from a failed
   request; `offline` forces local routing.
-- **`device.py`** — `DeviceIdentity` / `DeviceRegistry` identify a device by an
+- **`device.py`** ŌĆö `DeviceIdentity` / `DeviceRegistry` identify a device by an
   operator-provided `instance_fingerprint`, **not** by serial number or MAC
   address (no hardware identifiers are collected).
-- **`sandbox.py`** — `FilesystemPolicy` + `FilesystemSandbox`. Allow-list of
+- **`sandbox.py`** ŌĆö `FilesystemPolicy` + `FilesystemSandbox`. Allow-list of
   roots, explicit deny-list, textual `..` refusal, NUL-byte refusal,
-  sensitive-location protection (`/etc`, `~/.ssh`, `~/.aws`, `*.pem`, …) applied
+  sensitive-location protection (`/etc`, `~/.ssh`, `~/.aws`, `*.pem`, ŌĆ”) applied
   *before* the allow-list, and symlink-escape detection. Relative paths are
   anchored to the run workspace, so a tool path is deterministic and cannot
   depend on the process CWD.
-- **`command.py`** — `CommandPolicy` + `ControlledCommandRunner`. Commands are
+- **`command.py`** ŌĆö `CommandPolicy` + `ControlledCommandRunner`. Commands are
   allow-listed by basename, executed with `shell=False` (so `;`, `|`, `$(...)`
   are literal arguments, never a second command), with a minimal environment
   that inherits **no** secrets, a hard timeout, and a CWD confined to approved
   roots.
-- **`capabilities.py`** — `LocalCapability` catalogue. Only the filesystem and
+- **`capabilities.py`** ŌĆö `LocalCapability` catalogue. Only the filesystem and
   command capabilities are `implemented=True`; clipboard, screen capture, input
   control and application launch are declared with `implemented=False` so the
   vocabulary and audit surface are stable without pretending to work.
-- **`boundary.py`** — `DataBoundaryPolicy` decides where a piece of data may be
+- **`boundary.py`** ŌĆö `DataBoundaryPolicy` decides where a piece of data may be
   processed (`LOCAL | REMOTE | EITHER`) given its sensitivity. `SECRET` never
   routes remotely; `CONFIDENTIAL` is local-only by default; `offline` forces
   local.
-- **`sync.py`** — `SyncQueue` + `SyncCoordinator`. Only a closed set of
+- **`sync.py`** ŌĆö `SyncQueue` + `SyncCoordinator`. Only a closed set of
   `SyncKind`s ever crosses the boundary; secret-like payload keys are redacted
   and a payload the boundary refuses is marked `REJECTED`, not uploaded.
-- **`control.py` / `http.py`** — `LocalControlAPI` and a small FastAPI app for
+- **`control.py` / `http.py`** ŌĆö `LocalControlAPI` and a small FastAPI app for
   the desktop UI: token-authenticated `/local/status`, `/local/capabilities`,
   `/local/start|stop|pause|resume`. Auth fails closed when a token is required
   but not configured.
-- **`main.py`** — the `agent-desktop` entry point. It builds the local platform,
+- **`main.py`** ŌĆö the `agent-desktop` entry point. It builds the local platform,
   refuses to start without `AAP_LOCAL_CONTROL_TOKEN` when auth is on, and serves
   the control app on loopback (`AAP_LOCAL_CONTROL_HOST`/`_PORT`).
-- **`sandbox_provider.py`** — `SandboxProvider` is the single seam that turns a
+- **`sandbox_provider.py`** ŌĆö `SandboxProvider` is the single seam that turns a
   tool call into a sandbox; the local tools build every sandbox through it, so
   the workspace/extra-root/deny-list merge lives in one place.
 
@@ -670,9 +670,9 @@ path goes through the sandbox: `read_local_file`, `list_local_directory`,
 moves and deletes are approval-gated by the permission policy; reads are not.
 
 **Durable local persistence.** A local build is durable, not in-memory.
-`local/persistence/` provides `LocalDatabase` — an async SQLAlchemy engine over
+`local/persistence/` provides `LocalDatabase` ŌĆö an async SQLAlchemy engine over
 an embedded SQLite file (WAL journal, `NullPool` so connections close
-deterministically and no aiosqlite thread lingers) — plus local implementations
+deterministically and no aiosqlite thread lingers) ŌĆö plus local implementations
 of the *same* store ABCs the cloud build uses: workflows, versions, runs and
 steps, approvals, audit, the sync queue and idempotency keys. The schema is
 owned by Alembic (`migrations_local/`, its own `local_alembic_version` table so
@@ -680,7 +680,7 @@ it never collides with the Postgres branch) and the composition root runs the
 migration at build time. The chain is also shipped *inside the package* as
 `arabic_agent/_migrations_local` (see `[tool.hatch.build.targets.wheel]` in
 `pyproject.toml`), and `_default_migrations_dir()` resolves the packaged copy
-first and falls back to the repository root — so an installed wheel, which has
+first and falls back to the repository root ŌĆö so an installed wheel, which has
 no repository checkout, can still create and upgrade its own SQLite schema.
 `Platform.durable` reports whether the store is on
 disk; `Platform.local_database` is the handle. A local build uses no Postgres
@@ -689,7 +689,7 @@ local stores exactly as in the Postgres ones (wrong-tenant reads raise
 `NotFoundError`; a stale `expected_version` raises `ConflictError`).
 
 **Restart and recovery.** Because the local store is durable, the recoverable
-worker runtime (§3a) works locally too. A run left `RUNNING` with an expired
+worker runtime (┬¦3a) works locally too. A run left `RUNNING` with an expired
 lease by a lost worker is reclaimed by `Worker.recover_stale` on the next local
 platform and driven to completion, and the recovery is written to the durable
 audit trail. A run waiting on approval survives a real process restart: the next
@@ -714,56 +714,56 @@ runtime the tools do not exist, so the model cannot even name them.
 The OS logic lives in `src/arabic_agent/computer/`, behind an interface, never
 inside the agent core or a tool handler:
 
-- **`base.py`** — `ComputerBackend` (ABC): `capture_screen`, `get_screen_metadata`,
+- **`base.py`** ŌĆö `ComputerBackend` (ABC): `capture_screen`, `get_screen_metadata`,
   `list_windows`, `get_active_window`, `focus_window`, `pointer_move/click/scroll`,
   `keyboard_type/key/hotkey`, plus `available` / `unavailable_reason` and
   `require_available()`. A backend that cannot work reports *why* instead of
   pretending. `CapturedImage`, `ScreenMetadata`, `WindowInfo`, `PointerButton`
   are the value types.
-- **`coords.py`** — the coordinate model. `CoordinateSpace` (`LOGICAL` vs
+- **`coords.py`** ŌĆö the coordinate model. `CoordinateSpace` (`LOGICAL` vs
   `PHYSICAL`) is explicit, never assumed: a `Point`/`Rect` carries its space, and
   `to_physical` / `to_logical` convert via a monitor's DPI scale. `MonitorInfo`,
   `virtual_bounds` (handles negative origins in a multi-monitor layout),
   `monitor_for_point`, and `clamp_point` (an off-screen target is pulled back in
   rather than silently clicking the wrong place).
-- **`capture.py`** — pure image helpers: PNG encode, bounded downscale
+- **`capture.py`** ŌĆö pure image helpers: PNG encode, bounded downscale
   (`resize_to_fit`), crop, and a perceptual hash (`difference_hash`) for
   change detection. No OS access.
-- **`ocr.py`** — `OcrEngine` Protocol with `NullOcr` and `TesseractOcr`
+- **`ocr.py`** ŌĆö `OcrEngine` Protocol with `NullOcr` and `TesseractOcr`
   (Arabic-first: `build_ocr_engine(languages=("ara","eng"))`). A missing
   tesseract yields `NullOcr`, which reports `available=False` rather than
   returning empty text as if it had read the screen.
-- **`perception.py`** — `PerceptionLayer` fuses the backend and OCR into an
+- **`perception.py`** ŌĆö `PerceptionLayer` fuses the backend and OCR into an
   `Observation`: image dimensions, monitors, cursor, active window, and
   `PerceivedElement`s / `TextBlock`s with boxes and provenance (`sources`).
   `Observation` is a frozen, Arabic-aware model with a `summary()` for the model.
-- **`grounding.py`** — turns a *semantic* target into a point. `GroundingTarget`
+- **`grounding.py`** ŌĆö turns a *semantic* target into a point. `GroundingTarget`
   can be an element id, a role+label, recognised text, or raw coordinates.
   `normalize_text` is Arabic-aware (strips diacritics/tatweel, folds
   presentation forms, normalises alef/ya/ta-marbuta), and text matching prefers
-  the longest overlap. A miss raises `NotFoundError` — the agent must re-observe,
+  the longest overlap. A miss raises `NotFoundError` ŌĆö the agent must re-observe,
   not click blindly.
-- **`policy.py`** — `ComputerPolicy` and `ActionBudget`: coordinate clamping,
+- **`policy.py`** ŌĆö `ComputerPolicy` and `ActionBudget`: coordinate clamping,
   allowed keys, max scroll, and per-run caps on pointer/keyboard/capture actions
   plus a minimum interval between actions. `ResourceExhaustedError` when a cap is
   hit. This is the anti-runaway layer.
-- **`observations.py`** — `ObservationStore`: the in-memory, run-scoped store of
+- **`observations.py`** ŌĆö `ObservationStore`: the in-memory, run-scoped store of
   recent observations with freshness checks.
-- **`runtime.py`** — `ComputerRuntime` is the single entry point the tools call.
+- **`runtime.py`** ŌĆö `ComputerRuntime` is the single entry point the tools call.
   It bundles the backend, perception, policy, budget, observation store, the
   screen-data boundary and the audit log, and enforces the
-  **observe → act → observe** discipline: an action must reference a fresh
+  **observe ŌåÆ act ŌåÆ observe** discipline: an action must reference a fresh
   observation (or capture one first), and every action is budgeted and audited.
   `changed_since` compares a fresh capture against a prior observation's hash.
-- **`attachments.py`** — `ObservationAttachmentProvider` offers the latest
+- **`attachments.py`** ŌĆö `ObservationAttachmentProvider` offers the latest
   observation to the runner as a `ContextAttachment`, but only when the
   screen-data boundary permits the destination and the model can see.
-- **`screen_boundary.py`** — `ScreenDataPolicy` (`never_store` | `local_only`
+- **`screen_boundary.py`** ŌĆö `ScreenDataPolicy` (`never_store` | `local_only`
   | `cloud_allowed`) mapped onto the existing `DataBoundaryPolicy` and
   `DataSensitivity`. A screenshot is treated as `SECRET` under `never_store` and
   `CONFIDENTIAL` under `local_only`, so a remote model never receives one; the
   mapping fails closed.
-- **`backends/`** — `linux_x11.py` and `windows.py` are *real* backends. The
+- **`backends/`** ŌĆö `linux_x11.py` and `windows.py` are *real* backends. The
   X11 backend captures through Pillow's `ImageGrab`, monitors via `xrandr`, and
   input/windows via `xdotool`, all with `shell=False` and an explicit argv (no
   model value can become a second command); it probes the display socket at
@@ -778,24 +778,24 @@ inside the agent core or a tool handler:
   unit-tested on any OS with a fake adapter; off Windows it reports itself
   unavailable with a clear reason rather than failing on first use.
   `null.py` is the honest "not available" backend; `build_computer_backend`
-  selects per platform (macOS returns a Null backend with a clear reason —
+  selects per platform (macOS returns a Null backend with a clear reason ŌĆö
   design only, no pretence).
 
 ### Tools (`tools/builtin/computer.py`)
 
 Ordinary `Tool`s, registered only for a local runtime with
 `AAP_COMPUTER_CONTROL_ENABLED=true`, so the permission/policy/approval/audit path
-is the *existing* one — computer control is not a bypass:
+is the *existing* one ŌĆö computer control is not a bypass:
 
-- `computer_screen` (`SCREEN_READ`) — capture and return a structured perception.
-- `computer_metadata` (`SCREEN_READ`) — monitors, bounds, cursor, active window;
+- `computer_screen` (`SCREEN_READ`) ŌĆö capture and return a structured perception.
+- `computer_metadata` (`SCREEN_READ`) ŌĆö monitors, bounds, cursor, active window;
   no pixels.
-- `computer_pointer` (`POINTER_CONTROL`) — move/click/double-click/right-click/scroll,
+- `computer_pointer` (`POINTER_CONTROL`) ŌĆö move/click/double-click/right-click/scroll,
   targeting by element, role+label, text, or coordinates.
-- `computer_keyboard` (`KEYBOARD_CONTROL`) — type Unicode (Arabic included),
+- `computer_keyboard` (`KEYBOARD_CONTROL`) ŌĆö type Unicode (Arabic included),
   press a key, or a hotkey.
-- `computer_window` (`WINDOW_CONTROL`) — list, active, focus.
-- `computer_verify` (`SCREEN_READ`) — re-capture and report whether the screen
+- `computer_window` (`WINDOW_CONTROL`) ŌĆö list, active, focus.
+- `computer_verify` (`SCREEN_READ`) ŌĆö re-capture and report whether the screen
   changed, so the agent confirms an effect instead of assuming it.
 
 `SCREEN_READ`/`POINTER_CONTROL`/`KEYBOARD_CONTROL` are `HIGH` risk and
@@ -810,7 +810,7 @@ The model layer is multimodal-ready without depending on any one provider:
 OpenAI-compatible provider encodes images as a `data:` URI content array.
 `ModelGateway.default_supports(VISION)` lets the context manager include an image
 *only* when the active model can see; `default_is_local()` decides whether the
-destination is remote. `ContextManager.build(attachments=…, allow_images=…)`
+destination is remote. `ContextManager.build(attachments=ŌĆ”, allow_images=ŌĆ”)`
 charges each image against the token budget and drops one that does not fit
 rather than overflowing the window. The runner asks an `AttachmentProvider` for
 the turn's attachments and treats a provider failure as "no attachment", never as
@@ -843,7 +843,7 @@ The agent can *open, read, search and operate* the web under the same governance
 as every other tool. Like computer use, this is a local-only, opt-in capability:
 on a cloud runtime, or when browsing is disabled, the tools do not exist, so the
 model cannot even name them. It is deliberately **not** a separate "browser
-agent" — the tools are ordinary `Tool`s that run through the existing executor,
+agent" ŌĆö the tools are ordinary `Tool`s that run through the existing executor,
 permission/policy gate, approval flow and audit trail.
 
 ### The `browser/` subsystem
@@ -851,61 +851,61 @@ permission/policy gate, approval flow and audit trail.
 All web logic lives in `src/arabic_agent/browser/`, behind an interface, never
 inside the agent core or a tool handler:
 
-- **`base.py`** — `BrowserBackend` (ABC): `navigate`, `snapshot`, `screenshot`,
+- **`base.py`** ŌĆö `BrowserBackend` (ABC): `navigate`, `snapshot`, `screenshot`,
   `click`, `type_text`, `press_key`, `select_option`, `set_checked`, `scroll`,
   `wait_for`, `download`, `upload`, `list_tabs`/`open_tab`/`switch_tab`/`close_tab`,
   `dialog`/`accept_dialog`/`dismiss_dialog`, plus `available` /
   `unavailable_reason`. Value types: `ElementInfo`, `FormInfo`, `FormFieldInfo`,
   `TabInfo`, `DialogInfo`, `DownloadedFile`, `Screenshot`, `PageSnapshot`.
   A backend that cannot work reports *why* instead of pretending.
-- **`url_security.py`** — `UrlPolicy` answers, deterministically and with no
+- **`url_security.py`** ŌĆö `UrlPolicy` answers, deterministically and with no
   network probe, whether a URL may be opened. It refuses dangerous schemes
-  (`javascript:`, `data:`, `blob:` …), `file://` outside an allowed root,
-  credential-bearing URLs, and — by default — loopback/private/link-local hosts
+  (`javascript:`, `data:`, `blob:` ŌĆ”), `file://` outside an allowed root,
+  credential-bearing URLs, and ŌĆö by default ŌĆö loopback/private/link-local hosts
   (including the cloud-metadata address `169.254.169.254`), i.e. SSRF is blocked
   before the engine is touched. Domain allow/deny lists are matched against the
   registrable host. The result is a `UrlDecision` carrying a `UrlRisk`, so a URL
   can be *refused* or merely *require approval*.
-- **`policy.py`** — `BrowserPolicy` and `ActionBudget`: bounded observations
+- **`policy.py`** ŌĆö `BrowserPolicy` and `ActionBudget`: bounded observations
   (elements/text), per-run caps on navigations/interactions/observations, a
   minimum interval between actions, tab limits, download count/size limits, an
   upload allow-list, a freshness requirement, and a repeated-navigation loop
   guard. Every refusal is a classified `PlatformError` the loop can recover from.
-- **`observations.py`** — `BrowserObservation` and `ObservationStore`: a bounded,
+- **`observations.py`** ŌĆö `BrowserObservation` and `ObservationStore`: a bounded,
   normalised view of the page (URL, title, headings, interactive elements, forms,
   links, dialog, scroll position) with a freshness timestamp and a truncation
   flag. Never a raw DOM dump; `build_observation` caps text.
-- **`content.py`** — pure, bounded web-text helpers: whitespace/blank-line
+- **`content.py`** ŌĆö pure, bounded web-text helpers: whitespace/blank-line
   normalisation, a bounded extract that *reports* it was bounded, and a
   term-search that returns only a bounded window of context around each match
   with a character offset for provenance.
-- **`injection.py`** — scans page text for a small, high-precision set of
+- **`injection.py`** ŌĆö scans page text for a small, high-precision set of
   prompt-injection phrases. A hit is recorded as an `InjectionIndicator` on the
   observation and on the audit trail and surfaced to the model as a *warning*,
   never an instruction. Detection flags; the boundary/permission/sandbox layers
   are the hard defences.
-- **`sources.py`** — `SourceLedger`: a bounded per-run ledger of pages the agent
+- **`sources.py`** ŌĆö `SourceLedger`: a bounded per-run ledger of pages the agent
   actually read (recorded from observations, never from the model), with a source
   quality heuristic, so the final answer cites real sources instead of invented
   ones.
-- **`boundary.py`** — `WebDataBoundary`: maps a `WebContentPolicy`
+- **`boundary.py`** ŌĆö `WebDataBoundary`: maps a `WebContentPolicy`
   (`never_store` | `local_only` | `cloud_allowed`) onto the existing
   `DataBoundaryPolicy`/`DataSensitivity` and answers one question
   deterministically: *may this page content be sent to a remote model?* The
   mapping fails closed.
-- **`runtime.py`** — `BrowserRuntime` is the single entry point the tools call.
+- **`runtime.py`** ŌĆö `BrowserRuntime` is the single entry point the tools call.
   It bundles the backend, URL policy, browser policy, budget, observation store,
   source ledger, web-data boundary and audit log, and enforces the
-  **observe → act → observe** discipline: an action must reference a fresh
+  **observe ŌåÆ act ŌåÆ observe** discipline: an action must reference a fresh
   observation, navigation is validated before the engine is touched, a `submit`
   or an accepted dialog is treated as consequential and refused unless the tool
   layer has cleared it, and every action is budgeted and audited. `changed_since`
   compares a fresh observation against a prior one.
-- **`attachments.py`** — `BrowserAttachmentProvider` offers the latest
+- **`attachments.py`** ŌĆö `BrowserAttachmentProvider` offers the latest
   observation's screenshot as a `ContextAttachment`, but only when the
   web-content boundary permits the destination and the model can see; it mirrors
   `computer/attachments.py` rather than inventing a parallel contract.
-- **`backends/`** — `playwright.py` is a *real* backend driving Chromium through
+- **`backends/`** ŌĆö `playwright.py` is a *real* backend driving Chromium through
   Playwright's async API. Each observation tags visible interactive elements with
   a stable `data-aap-ref`, and the model acts on that `ref`, never a CSS/XPath
   selector. Downloads are confined to the backend's own directory with a
@@ -923,15 +923,15 @@ Ordinary `Tool`s, registered only for a local runtime with
 `AAP_BROWSER_ENABLED=true`, so the permission/policy/approval/audit path is the
 *existing* one:
 
-- `browser_navigate` (`BROWSER_NAVIGATE`, MEDIUM) — validate then navigate.
-- `browser_observe` (`BROWSER_READ`, MEDIUM) — the bounded, freshness-tracked view.
-- `browser_interact` (`BROWSER_INTERACT`, HIGH) — click/type/press/select/check/scroll.
-- `browser_submit` (`BROWSER_SUBMIT`, CRITICAL) — consequential form submit.
+- `browser_navigate` (`BROWSER_NAVIGATE`, MEDIUM) ŌĆö validate then navigate.
+- `browser_observe` (`BROWSER_READ`, MEDIUM) ŌĆö the bounded, freshness-tracked view.
+- `browser_interact` (`BROWSER_INTERACT`, HIGH) ŌĆö click/type/press/select/check/scroll.
+- `browser_submit` (`BROWSER_SUBMIT`, CRITICAL) ŌĆö consequential form submit.
 - `browser_download` (`BROWSER_DOWNLOAD`, MEDIUM) / `browser_upload`
   (`BROWSER_UPLOAD` + `FILES_READ`, HIGH).
-- `browser_dialog` (`BROWSER_INTERACT`, HIGH) — get/accept/dismiss a dialog.
-- `browser_verify` (`BROWSER_READ`, MEDIUM) — re-observe and report change.
-- `browser_research` (`BROWSER_READ`, LOW) — the recorded source list, for
+- `browser_dialog` (`BROWSER_INTERACT`, HIGH) ŌĆö get/accept/dismiss a dialog.
+- `browser_verify` (`BROWSER_READ`, MEDIUM) ŌĆö re-observe and report change.
+- `browser_research` (`BROWSER_READ`, LOW) ŌĆö the recorded source list, for
   evidence-based citation.
 
 ### The approval gate is trusted, not model-supplied
@@ -941,7 +941,7 @@ it unless the call carries an approval. The signal is **not** a tool argument th
 model (or a hostile page) could forge: the executor injects
 `context.metadata["approval_granted"]` only on the resume path, after re-checking
 policy against the stored, granted `ApprovalRecord`. `ToolExecutor._merge_context`
-threads the trusted flag through, and the submit/dialog tools read it — so a
+threads the trusted flag through, and the submit/dialog tools read it ŌĆö so a
 model that emits `"approved": true` in its own arguments still gets an approval
 request rather than an executed submit.
 
@@ -952,7 +952,7 @@ Every step is audited: `browser.navigated`, `browser.tab_opened`/`_switched`/
 `browser.dialog_resolved`, `browser.waited`, `browser.downloaded`,
 `browser.uploaded`, `browser.action_verified`, `browser.action_failed`,
 `browser.stop_requested`, `browser.boundary_decision`. Page content, typed
-secrets and screenshots are never written to the audit trail — only metadata
+secrets and screenshots are never written to the audit trail ŌĆö only metadata
 (counts, refs, URLs, indicator kinds).
 
 ### Settings
@@ -971,8 +971,8 @@ secrets and screenshots are never written to the audit trail — only metadata
 
 ## 13d. Communications, external apps & real-world actions (Phase 9)
 
-The agent can act on systems *outside* the machine — send email, message a
-customer, call a business API (ERP/CRM), deliver a webhook — under the same
+The agent can act on systems *outside* the machine ŌĆö send email, message a
+customer, call a business API (ERP/CRM), deliver a webhook ŌĆö under the same
 governance as every other tool. These are the first operations that leave the
 sandbox and change state the platform does not own, so the phase adds one
 enforcement boundary, not a pile of new tools.
@@ -983,70 +983,82 @@ All external-system logic lives in `src/arabic_agent/connectors/`, behind
 interfaces, never inside the agent core or a tool handler. The agent core never
 learns a provider's name or protocol.
 
-- **`base.py`** — `Connector` (ABC): `healthcheck`, `call`, `operations`,
+- **`base.py`** ŌĆö `Connector` (ABC): `healthcheck`, `call`, `operations`,
   `operation`, `catalogue`. Value types: `ConnectorCall`, `ConnectorResult`,
   `OperationSpec`/`OperationKind` (READ/WRITE), `ConnectorHealth`
   (`READY` / `NOT_CONFIGURED` / `REAUTHENTICATION_REQUIRED` / `UNAVAILABLE`),
   `ConnectorInfo`, and `ConnectorRegistry`. A connector that cannot work reports
   *why* rather than pretending.
-- **`credentials.py`** — `CredentialRef` (a *reference*: provider + name, never a
+- **`credentials.py`** ŌĆö `CredentialRef` (a *reference*: provider + name, never a
   value) and `CredentialResolver` over `CredentialProvider`s
   (`EnvCredentialProvider`, `StaticCredentialProvider` for tests). A secret is
   resolved only at the execution boundary and never stored on a connector, a
   spec, or the audit trail.
-- **`retry.py`** — `RetryPolicy` / `with_retry`: bounded transport retries with
+- **`retry.py`** ŌĆö `RetryPolicy` / `with_retry`: bounded transport retries with
   backoff and jitter for *idempotent, safe-to-repeat* work only. A consequential
-  action is never retried here — ambiguity is handled by the ledger.
-- **`http.py`** — `HttpConnector` over `httpx`: every URL is validated by the
+  action is never retried here ŌĆö ambiguity is handled by the ledger.
+- **`http.py`** ŌĆö `HttpConnector` over `httpx`: every URL is validated by the
   existing `UrlPolicy` (SSRF/loopback/private/link-local/metadata refused,
   dangerous schemes refused), only permitted methods are accepted, the response
-  is size-capped and redacted, and a redirect is re-validated — a credential is
+  is size-capped and redacted, and a redirect is re-validated ŌĆö a credential is
   attached **only** to the configured origin, never carried across a redirect to
   another host.
-- **`email.py`** — `EmailConnector`: SMTP send (`email.send`) and IMAP search
+- **`email.py`** ŌĆö `EmailConnector`: SMTP send (`email.send`) and IMAP search
   (`email.search`), provider-neutral (any SMTP/IMAP host). Attachments are read
   only from workspace-authorized paths through the same `FilesystemPolicy` the
   file tools use. A received body is untrusted data: it is scanned for
   prompt-injection indicators and returned as a *warning*.
-- **`business.py`** — `BusinessConnector`: a generic ERP/CRM adapter over an HTTP
+- **`business.py`** ŌĆö `BusinessConnector`: a generic ERP/CRM adapter over an HTTP
   transport with declarative `ResourceMapping`s (collection `path` plus a derived
   item template). Operations: `record.search`/`get` (READ) and
   `record.create`/`update` (WRITE). No vendor logic; a concrete ERP is a mapping,
   not a subclass.
-- **`messaging.py`** — `MessagingConnector` over a `MessagingProvider` ABC
+- **`messaging.py`** ŌĆö `MessagingConnector` over a `MessagingProvider` ABC
   (`send`/`read`/`verify`). The only bundled provider is
   `WhatsAppBusinessProvider` (the official Cloud API), so the connector is
   provider-neutral by construction.
-- **`webhooks.py`** — `WebhookConnector`: signs the exact JSON bytes with
+- **`calendar.py`** ŌĆö `CalendarConnector` over a `CalendarProvider` ABC
+  (`list_calendars`/`list_events`/`get_event`/`free_busy` and the
+  `create_event`/`update_event`/`delete_event` writes). The bundled
+  `GoogleCalendarProvider` speaks the Calendar v3 REST API and the OAuth token
+  endpoint for refresh, but the connector names no provider: a different backend
+  is a new `CalendarProvider`, not a new connector. Reads map to
+  `calendar.list`/`get`/`freebusy` (READ) and writes to
+  `calendar.create`/`update`/`delete` (WRITE, approval-bound). A created/updated
+  event is only marked `VERIFIED` after a follow-up read confirms it, and a
+  delete after a read confirms it is gone. `credential_ready()` reports honestly
+  whether an access/refresh token is actually configured, so an unconfigured
+  connector is `NOT_CONFIGURED`, never a fake success.
+- **`webhooks.py`** ŌĆö `WebhookConnector`: signs the exact JSON bytes with
   HMAC-SHA256 and a timestamp, sending `X-AAP-Signature` / `X-AAP-Timestamp` /
   `X-AAP-Delivery-Id`, so a receiver can verify authenticity and reject replays.
   `sign_payload` is pure and testable.
-- **`oauth.py`** — provider-neutral OAuth 2.0: an `OAuthProvider` record
+- **`oauth.py`** ŌĆö provider-neutral OAuth 2.0: an `OAuthProvider` record
   (endpoints + scopes) drives an `OAuthClient` implementing the
   authorization-code + PKCE flow, refresh and revoke. Security is enforced here:
   a single-use, TTL-bounded `state` (anti-CSRF/replay), a PKCE verifier held
   server-side and never sent to the browser, tokens wrapped in `SecretStr` with a
   masking `repr`, and a rejected grant classified for reauthentication (never
-  looped). No provider is hardcoded — a new one is configuration.
-- **`policy.py`** — `ConnectorPolicy`: pure, declarative per-connector overrides
+  looped). No provider is hardcoded ŌĆö a new one is configuration.
+- **`policy.py`** ŌĆö `ConnectorPolicy`: pure, declarative per-connector overrides
   (enable/disable, force-approval, deny, and a data-sensitivity assignment) so an
   operator can narrow the runtime's declared-risk decisions without editing code.
-- **`ledger.py`** — `ActionLedger` (ABC) + `InMemoryActionLedger` and
+- **`ledger.py`** ŌĆö `ActionLedger` (ABC) + `InMemoryActionLedger` and
   `ActionRecord`/`ActionState`/`ActionTransitionError`. Every external action is
   claimed by a **cause-derived idempotency key** (tenant + run + step + connector
   + operation + payload digest) so a retry or a redelivered job does not repeat
   the effect. `canonical_digest` is the single source of truth for the action
   digest used both by the ledger key and by approval binding.
-- **`runtime.py`** — `ConnectorRuntime` is the single entry point the tools call,
+- **`runtime.py`** ŌĆö `ConnectorRuntime` is the single entry point the tools call,
   and the one place every Phase 9 safety property is enforced, in this order:
-  **availability → data boundary → approval binding → idempotency claim →
-  execute → verify → audit**. It exposes the catalogue for discovery, refuses a
+  **availability ŌåÆ data boundary ŌåÆ approval binding ŌåÆ idempotency claim ŌåÆ
+  execute ŌåÆ verify ŌåÆ audit**. It exposes the catalogue for discovery, refuses a
   `LOCAL_ONLY` payload to a remote destination via the existing
   `DataBoundaryPolicy`, requires a *trusted* `approval_granted` signal for a
   consequential write, recomputes the action digest and refuses an approval whose
   payload changed, records a consequential timeout as `UNKNOWN` and raises a
   non-retryable `AmbiguousActionError` rather than retrying blindly, and runs
-  act → observe → verify so a success is only `VERIFIED` when the provider
+  act ŌåÆ observe ŌåÆ verify so a success is only `VERIFIED` when the provider
   confirms it.
 
 ### Approval binding, idempotency and ambiguity
@@ -1070,21 +1082,33 @@ Three properties distinguish this from "a chat that calls an API":
 Ordinary `Tool`s, so they run through the *existing* executor, policy gate,
 approval flow and audit trail. Registered when `AAP_CONNECTORS_ENABLED=true`
 (the tools reach remote SaaS/SMTP/webhook systems, so unlike the local-only
-computer/browser tools they exist in a cloud runtime too — still opt-in, and
+computer/browser tools they exist in a cloud runtime too ŌĆö still opt-in, and
 every write/send stays approval-gated):
 
-- `connector_list` — the catalogue: capabilities, health, read/write/approval
+- `connector_list` ŌĆö the catalogue: capabilities, health, read/write/approval
   flags, so the model uses a connector that exists and is usable.
-- `http_request` (`CONNECTOR_HTTP`, HIGH) — a bounded, validated HTTP call.
-- `email_send` (`SEND_EMAIL`, HIGH) — SMTP send, approval bound to the exact
+- `http_request` (`CONNECTOR_HTTP`, HIGH) ŌĆö a bounded, validated HTTP call.
+- `email_send` (`SEND_EMAIL`, HIGH) ŌĆö SMTP send, approval bound to the exact
   recipient/subject/body/attachments.
-- `email_search` (`READ_EMAIL`, MEDIUM) — IMAP search; bodies are untrusted data.
-- `message_send` (`CONNECTOR_WRITE`, HIGH) — provider-neutral messaging send.
-- `webhook_send` (`SEND_WEBHOOK`, HIGH) — signed delivery.
-- `business_records` (`CONNECTOR_READ`/`CONNECTOR_WRITE`, MEDIUM/HIGH) —
+- `email_search` (`READ_EMAIL`, MEDIUM) ŌĆö IMAP search; bodies are untrusted data.
+- `message_send` (`CONNECTOR_WRITE`, HIGH) ŌĆö provider-neutral messaging send.
+- `webhook_send` (`SEND_WEBHOOK`, HIGH) ŌĆö signed delivery.
+- `business_records` (`CONNECTOR_READ`/`CONNECTOR_WRITE`, MEDIUM/HIGH) ŌĆö
   ERP/CRM search/get/create/update; reads pass, writes require approval.
-- `connector_verify` (`CONNECTOR_READ`, MEDIUM) — confirm an `UNKNOWN` action
+- `calendar_read` (`CALENDAR_READ`, MEDIUM) ŌĆö list calendars/events, read an
+  event, or check free/busy.
+- `calendar_write` (`CALENDAR_WRITE`, HIGH) ŌĆö create/update an event; approval
+  bound to the exact payload, verified by a follow-up read.
+- `calendar_delete` (`CALENDAR_DELETE`, HIGH) ŌĆö delete an event; approval-bound
+  and verified by a read that confirms it is gone.
+- `connector_verify` (`CONNECTOR_READ`, MEDIUM) ŌĆö confirm an `UNKNOWN` action
   before retrying it.
+
+The calendar tool is split read/write/delete rather than one tool with an
+`action` argument, because a tool-level grant is all-or-nothing: a single
+combined tool would gate *reads* behind the write grant. Three tools let the
+default policy leave reads allowed while writes and deletes require approval,
+matching the permission rules exactly.
 
 ### The approval gate is trusted, not model-supplied
 
@@ -1097,7 +1121,7 @@ policy against the stored, granted `ApprovalRecord`. A model that emits
 
 ### Audit
 
-Every step is audited with metadata only — never a secret, a message body or a
+Every step is audited with metadata only ŌĆö never a secret, a message body or a
 record payload: `connector.registered`, `connector.called`, `connector.result`,
 `connector.error`, `connector.healthcheck`, `connector.unavailable`,
 `external_action.boundary_decision`, `external_action.executing`,
@@ -1127,11 +1151,11 @@ promises across a restart.
 
 The local SQLite store gains two tables (migration `9faa23d73417`):
 
-- **`local_runs`** (`LocalRunStore`) — the same `RunStore` contract as the
+- **`local_runs`** (`LocalRunStore`) ŌĆö the same `RunStore` contract as the
   Postgres store, optimistic concurrency included. A desktop session (task) now
   survives closing the app and a crash mid-run, so a completed run can be
   reopened and a `RUNNING` run can be recovered.
-- **`local_action_ledger`** (`LocalActionLedger`) — the same `ActionLedger`
+- **`local_action_ledger`** (`LocalActionLedger`) ŌĆö the same `ActionLedger`
   contract, so an external effect (email sent, record written, webhook
   delivered) is **not repeated after a restart**. It stores only safe metadata
   and a canonical digest, never the raw payload or a secret, and `prune_before`
@@ -1146,9 +1170,9 @@ stores. This is why the connector runtime's ledger is now durable in local mode.
 | Module | Responsibility |
 | --- | --- |
 | `version.py` | Single source of truth for the product version (distribution metadata, with a packaged fallback). |
-| `events.py` | `DesktopEventBroker` — an `AuditSink` that mirrors real audit events to subscribers, per-tenant and bounded (drops oldest, never blocks the emitter), with a `stream()` SSE generator and `recent()` replay. Redaction is applied by the audit event constructor. |
+| `events.py` | `DesktopEventBroker` ŌĆö an `AuditSink` that mirrors real audit events to subscribers, per-tenant and bounded (drops oldest, never blocks the emitter), with a `stream()` SSE generator and `recent()` replay. Redaction is applied by the audit event constructor. |
 | `model_catalogue.py` | The supported-model catalogue (Qwen2.5 3B/7B/14B by capability tier) with real size/SHA-256 and resource estimates. |
-| `model_manager.py` | Local AI Manager: catalogue view, hardware-gated `recommend`, real `install` (delegates to `local/model_install.py`), `health_check` (a real model call — a present file is *not* health), `verify`, `remove`, and progress tracking. |
+| `model_manager.py` | Local AI Manager: catalogue view, hardware-gated `recommend`, real `install` (delegates to `local/model_install.py`), `health_check` (a real model call ŌĆö a present file is *not* health), `verify`, `remove`, and progress tracking. |
 | `service.py` | Product-level operations: bootstrap, run list/timeline, approvals, permissions view, modes/privacy, settings, diagnostics, cancel. |
 | `http.py` | The authenticated loopback HTTP + SSE surface (`/desktop/*`). |
 | `runtime_manager.py` | Desktop lifecycle: start the runtime as a child process, inject the port/token in the environment, poll readiness, restart, stop. |
@@ -1160,7 +1184,7 @@ stores. This is why the connector runtime's ledger is now durable in local mode.
 
 `DesktopBridge` (in `shell.py`) exposes **only** explicit product methods
 (`bootstrap`, `start_run`, `list_runs`, `run_timeline`, `list_approvals`,
-`decide_approval`, `models`, `install_model`, `set_mode`, `cancel_run`, …). It
+`decide_approval`, `models`, `install_model`, `set_mode`, `cancel_run`, ŌĆ”). It
 has no `get`/`request`/arbitrary-URL method, so a compromised page cannot use it
 to reach an arbitrary endpoint. It sends the control token as a header and never
 hands it to JavaScript.
@@ -1180,7 +1204,7 @@ goes through the Python bridge. The control token is never embedded in the page.
 - `install` refuses (via `ValidationError`) when the hardware gate rejects the
   model, verifies size and (when known) SHA-256, and records a versioned
   manifest. A model that fails verification is never registered.
-- `health_check` returns `UNKNOWN` when no provider factory is available —
+- `health_check` returns `UNKNOWN` when no provider factory is available ŌĆö
   "installed" is never reported as "healthy" without a real probe.
 - `remove` refuses to delete the active model (`ConflictError`), and every path
   stays inside the approved model store.
@@ -1200,6 +1224,60 @@ otherwise. No step embeds a secret; nothing here requires network access.
 `agent-desktop` (the runtime, `local/main.py`) and `agent-shell` (the native
 window, `desktop/shell.py`); `python -m arabic_agent.desktop.installer` installs
 and `... installer uninstall` removes.
+
+## 13f. Printing (Phase 11)
+
+Printing is an outbound *physical* side effect, so it reuses the connector
+discipline: a policy/budget gate, a data-boundary decision, approval binding and
+an auditable job store, all beneath ordinary permission-gated tools.
+
+### The seam (`printing/`)
+
+- `printing/base.py` — `PrintBackend` (ABC), the value types (`PrinterInfo`,
+  `PrinterCapabilities`, `PrintDocument`, `PrintOptions`, `PrintJob`,
+  `PrintJobStatus`) and `PrintColorMode` / `PrintDuplex` / `PrintOrientation`.
+  A backend knows only the OS spooler; permission, approval, policy, budget and
+  audit live above it.
+- `printing/backends/cups.py` — POSIX backend over `lp` / `lpstat` / `lpoptions`
+  / `cancel`. Arguments are built as an argv list (never a shell string), so a
+  hostile printer name or option cannot inject a command; a missing document is
+  a real not-found, not a spooler fault.
+- `printing/backends/windows.py` — Win32 spooler backend (`win32print`),
+  imported lazily so the module loads on POSIX.
+- `printing/backends/null.py` — an explicitly *unavailable* backend carrying a
+  reason; `build_print_backend` returns it (never `None`) when nothing is
+  implemented (e.g. macOS) or the tools are missing, so "not available" is never
+  mistaken for "no backend".
+- `printing/policy.py` — `PrintPolicy` (max document bytes, per-run job cap,
+  minimum interval, printable content types) and the per-run `JobBudget`.
+- `printing/runtime.py` — `PrintRuntime`, the single object the tools call: it
+  enforces size/policy, records the data-boundary decision *before* the spooler
+  is touched, consumes the budget, persists safe job metadata and audits every
+  action (printer id, job id, title, size — never document bytes).
+- `printing/store.py` — the job-metadata store; a durable SQLite-backed store
+  (`local/persistence`) survives a restart, with an in-memory fallback for a
+  storeless build. It is tenant-isolated.
+
+### Tools (`tools/builtin/printing.py`)
+
+`list_printers`, `print_document` (approval-gated `PRINT`), `print_job_status`,
+`list_print_jobs` (read-only, no permission) and `cancel_print_job`
+(approval-gated). The document path is resolved through the *filesystem sandbox*
+first, so a print request can only ever read a file the agent may already read —
+it cannot exfiltrate an arbitrary file to a printer. An unknown extension is
+refused rather than assumed printable. The tools are registered only for a local
+runtime with `AAP_PRINTING_ENABLED`, so on a cloud build the model cannot even
+name them. A status the spooler cannot observe is reported as `unknown`, never
+assumed complete.
+
+### Desktop surface
+
+`/desktop/printing` reports `enabled` / `available` / `backend` /
+`unavailable_reason` from real settings and runtime state (never a claimed
+printer), and `/desktop/printing/jobs` returns the tenant's persisted job
+metadata, most recent first. Both are included in `/desktop/bootstrap` and in
+`/desktop/diagnostics`; the capability catalogue lists printing under
+`PRINT_DOCUMENT`.
 
 ---
 
@@ -1230,17 +1308,17 @@ Baseline, designed in from the start:
 The identity model in `tenancy/models.py`:
 
 ```
-Tenant ─┬─ User ── Role ── permissions
-        ├─ AgentProfile ── tools
-        ├─ Integration
-        ├─ Memory
-        ├─ Task
-        ├─ Workflow (future)
-        └─ AuditLog
+Tenant ŌöĆŌö¼ŌöĆ User ŌöĆŌöĆ Role ŌöĆŌöĆ permissions
+        Ōö£ŌöĆ AgentProfile ŌöĆŌöĆ tools
+        Ōö£ŌöĆ Integration
+        Ōö£ŌöĆ Memory
+        Ōö£ŌöĆ Task
+        Ōö£ŌöĆ Workflow (future)
+        ŌööŌöĆ AuditLog
 ```
 
 Every long-lived entity carries `tenant_id`. A tenant can never read another
-tenant's runs, approvals, tasks, memory, or audit events — enforced at the store
+tenant's runs, approvals, tasks, memory, or audit events ŌĆö enforced at the store
 and API boundaries, not by convention. This is the shape a SaaS deployment needs
 from day one.
 
@@ -1257,8 +1335,8 @@ from day one.
 - `WebhookIntegration` is the reference implementation (a generic outbound
   webhook), proving the contract.
 
-Future integrations — Email, ERP, WhatsApp Business, Instagram, Facebook,
-Google, Microsoft, Calendar, Storage, Accounting — implement `Integration` and
+Future integrations ŌĆö Email, ERP, WhatsApp Business, Instagram, Facebook,
+Google, Microsoft, Calendar, Storage, Accounting ŌĆö implement `Integration` and
 are registered like any other. The agent selects them through tools that wrap
 the integration; integration logic never lives in the loop.
 
@@ -1284,25 +1362,25 @@ The UI layer (future) must render RTL/LTR from the same locale signal.
 
 These have clear insertion points and are tracked in `TODO.md`:
 
-- **PPTX generation** — the remaining generation format (PDF/DOCX/XLSX/CSV/
+- **PPTX generation** ŌĆö the remaining generation format (PDF/DOCX/XLSX/CSV/
   Markdown/TXT/HTML/JSON are implemented in `documents/generation.py`).
-- **Video understanding** — frames → OCR → speech-to-text → timeline → visual
+- **Video understanding** ŌĆö frames ŌåÆ OCR ŌåÆ speech-to-text ŌåÆ timeline ŌåÆ visual
   events, behind a video tool interface.
-- **Workflow scheduler** — cron/event/webhook triggers that start workflow runs
-  are implemented; see §8b. The workflow engine itself (definitions, versions,
-  runs, steps, conditions, templating, approvals, retries) is in §8a.
-- **Desktop agent** — now implemented as the Phase 10 desktop product surface
-  (see §13e): a local runtime with durable sessions and action ledger, a
+- **Workflow scheduler** ŌĆö cron/event/webhook triggers that start workflow runs
+  are implemented; see ┬¦8b. The workflow engine itself (definitions, versions,
+  runs, steps, conditions, templating, approvals, retries) is in ┬¦8a.
+- **Desktop agent** ŌĆö now implemented as the Phase 10 desktop product surface
+  (see ┬¦13e): a local runtime with durable sessions and action ledger, a
   token-authenticated loopback control surface, an Arabic-first RTL shell, a
   Local AI Manager and a Windows installer. The remaining piece is a packaged
   binary distribution and a signed installer.
 
 None of these require rewriting the agent core; each is an implementation behind
 an existing abstraction. Durable Postgres persistence, the Redis queue, the
-recoverable worker runtime (see §3a) and the desktop product surface (see §13e)
+recoverable worker runtime (see ┬¦3a) and the desktop product surface (see ┬¦13e)
 are now implemented.
 
-### 18a. Windows acceptance status (Phase 10W) — NOT VERIFIED
+### 18a. Windows acceptance status (Phase 10W) ŌĆö NOT VERIFIED
 
 Phase 10W requires proving the product on **actual Windows**. That acceptance
 has **not** been run and cannot be run from the current development host, which
@@ -1314,14 +1392,14 @@ What was verified on Linux (reproducible, but Linux-only):
 
 - The wheel builds and ships the desktop UI asset and the local Alembic chain.
 - A clean-venv install creates its SQLite schema (`local_runs`,
-  `local_action_ledger`, …) and the installer install/uninstall cycle runs with
+  `local_action_ledger`, ŌĆ”) and the installer install/uninstall cycle runs with
   `verify: ok` by really invoking the installed entry point.
 
 What is **not verified on Windows** (a real Windows run is still required, and
 is the whole point of the Phase 10W handoff), but is now implemented in the
 product:
 
-- **Windows computer backend** — `computer/backends/windows.py` implements the
+- **Windows computer backend** ŌĆö `computer/backends/windows.py` implements the
   same `ComputerBackend` contract as Linux/X11, over Win32 (`ctypes`): monitors
   and DPI scale, screen capture (optionally per-monitor), pointer/keyboard input
   through `SendInput` (Unicode injection so Arabic types regardless of layout),
@@ -1330,18 +1408,18 @@ product:
   injectable `Win32Adapter`, so it is unit-tested on any OS with a fake adapter
   (`tests/test_windows_backend.py`). Real screen capture, mouse, keyboard and the
   visual/computer-control E2E still require an interactive Windows desktop.
-- **Binary Windows installer** — `desktop/packaging.py` generates the two
+- **Binary Windows installer** ŌĆö `desktop/packaging.py` generates the two
   build inputs: a **one-folder** PyInstaller spec whose `Analysis` entry is the
   real script path `src/arabic_agent/__main__.py` (PyInstaller takes script
   paths, not module names), bundling the desktop UI and **both** migration chains
-  (`migrations_local/` → `arabic_agent/_migrations_local`, `migrations/` →
+  (`migrations_local/` ŌåÆ `arabic_agent/_migrations_local`, `migrations/` ŌåÆ
   `arabic_agent/_migrations_cloud`), and an Inno Setup script (per-user
   `{localappdata}` install, no UAC, Start-menu/desktop icons, opt-in startup)
   whose `SourceDir`/`OutputDir` match PyInstaller's output. Because the frozen
   entry runs as top-level `__main__`, it uses absolute imports, and the frozen
   runtime resolves its assets through `core/resources.py` (relative to the
   package, never the cwd). One script, `scripts/build_windows.ps1`, drives the
-  whole flow (`python -m arabic_agent.desktop.packaging dist` → `pyinstaller` →
+  whole flow (`python -m arabic_agent.desktop.packaging dist` ŌåÆ `pyinstaller` ŌåÆ
   `ISCC`) and is what `.github/workflows/windows.yml` runs on `windows-latest`
   before uploading `ArabicAIAgent-Setup-*.exe`. The artifact, its SHA-256 and an
   upgrade test still require a real Windows build.
@@ -1352,7 +1430,7 @@ and therefore cannot pass Windows acceptance as written:
 - **Code signing** (no certificate), **tray/background runtime** and **Windows
   notifications** are not implemented.
 
-Consequently the Phase 10W verdict is **PARTIALLY VERIFIED — IMPLEMENTATION
+Consequently the Phase 10W verdict is **PARTIALLY VERIFIED ŌĆö IMPLEMENTATION
 COMPLETE, WINDOWS RUN PENDING**: the product-side blockers (Windows computer
 backend, binary-installer packaging inputs, browser provisioning) are now
 implemented and unit-tested on this host, but no Windows acceptance gate has been
@@ -1368,89 +1446,89 @@ require an interactive Windows machine) is in
 The foundation is verified, not assumed.
 
 - **Unit / integration tests** (`tests/`, 160+ tests) exercise real code paths:
-  - `test_permissions.py` — policy decisions (allow/deny/requires-approval),
+  - `test_permissions.py` ŌĆö policy decisions (allow/deny/requires-approval),
     risk ceilings, tenant policy overrides.
-  - `test_tools.py` — argument validation, sandbox escape refusal, execution.
-  - `test_model_gateway.py` — resolution, retry, fallback, usage accounting.
-  - `test_agent_loop.py` — planning, tool execution, recovery, approval pause
+  - `test_tools.py` ŌĆö argument validation, sandbox escape refusal, execution.
+  - `test_model_gateway.py` ŌĆö resolution, retry, fallback, usage accounting.
+  - `test_agent_loop.py` ŌĆö planning, tool execution, recovery, approval pause
     and resume, guards.
-  - `test_memory.py` — write policy (secrets refused), scoping, expiry.
-  - `test_tasks_context.py` — plan transitions and context budgeting.
-  - `test_workflows.py` — the workflow engine: versioning, dependency
+  - `test_memory.py` ŌĆö write policy (secrets refused), scoping, expiry.
+  - `test_tasks_context.py` ŌĆö plan transitions and context budgeting.
+  - `test_workflows.py` ŌĆö the workflow engine: versioning, dependency
     scheduling, condition skip, templating, retries, approval pause/resume,
     error policies, idempotency and tenant scoping.
-  - `test_core.py` — config, IDs, redaction.
-  - `test_api.py` — auth, runs, approvals, rate limiting, error mapping,
+  - `test_core.py` ŌĆö config, IDs, redaction.
+  - `test_api.py` ŌĆö auth, runs, approvals, rate limiting, error mapping,
     workflow CRUD/run/approval over HTTP, and cross-tenant 404 isolation.
-  - `test_worker_recovery.py` — worker execution, lease-based recovery,
+  - `test_worker_recovery.py` ŌĆö worker execution, lease-based recovery,
     approval-safe recovery, poison-job failure bounds (in-memory stores).
-  - `test_observability.py` — correlation context propagation and isolation,
+  - `test_observability.py` ŌĆö correlation context propagation and isolation,
     metrics aggregation and Prometheus rendering, span recording and error
     status, log redaction, readiness aggregation with critical vs non-critical
     probes and timeouts.
-  - `test_readiness_integration.py` — **real Postgres/Redis**: the readiness
+  - `test_readiness_integration.py` ŌĆö **real Postgres/Redis**: the readiness
     probes reach the live dependency and report it, and an unreachable database
     flips readiness to not-ready without leaking the connection string.
-  - `test_persistence_postgres.py` — **real Postgres**: round-tripping of every
+  - `test_persistence_postgres.py` ŌĆö **real Postgres**: round-tripping of every
     new field, idempotency-key uniqueness, optimistic-concurrency conflicts,
     tenant isolation, `list_stale`/heartbeat semantics, one-shot approvals,
     memory upsert. Marked `postgres`.
-  - `test_redis_infra.py` — **real Redis**: token-bucket rate limiting,
+  - `test_redis_infra.py` ŌĆö **real Redis**: token-bucket rate limiting,
     distributed lock exclusivity, idempotency lifecycle, and the reliable
     queue's claim/ack/nack/reclaim lifecycle. Marked `redis`.
-  - `test_runtime_e2e.py` — the Phase 2 acceptance path: a run created through
+  - `test_runtime_e2e.py` ŌĆö the Phase 2 acceptance path: a run created through
     `RunService` in `queued` mode is persisted to Postgres, enqueued on Redis,
     executed by a real `Worker`, and recovered after simulated worker loss.
-  - `test_computer.py` — Phase 7: coordinate model and DPI round-trips, Arabic
+  - `test_computer.py` ŌĆö Phase 7: coordinate model and DPI round-trips, Arabic
     normalisation/grounding (diacritics, longest overlap), perception fusing,
-    policy clamps and budgets, the observe→act→observe discipline, stop and
-    staleness, the screen-data boundary, and OCR-engine construction — against a
+    policy clamps and budgets, the observeŌåÆactŌåÆobserve discipline, stop and
+    staleness, the screen-data boundary, and OCR-engine construction ŌĆö against a
     scripted backend (only the OS is doubled).
-  - `test_computer_tools.py` — the computer tools run through the **real**
+  - `test_computer_tools.py` ŌĆö the computer tools run through the **real**
     executor, policy engine, approval store and audit log: allow / deny /
     requires-approval, Arabic typing audited by length only, and honest failure
     when no runtime is present.
-  - `test_vision_context.py` — `ImageContent`, the OpenAI-compatible multimodal
+  - `test_vision_context.py` ŌĆö `ImageContent`, the OpenAI-compatible multimodal
     encoding, the gateway capability query, and context-manager attachment
     inclusion/budget-dropping.
-  - `test_computer_container.py` — the composition root registers computer tools
+  - `test_computer_container.py` ŌĆö the composition root registers computer tools
     only for a local runtime with computer control enabled; an unknown screen
     policy fails closed; a CSV OCR-language env value parses.
-  - `test_computer_e2e.py` — **real X11** (opt-in via `AAP_TEST_DISPLAY`): the
+  - `test_computer_e2e.py` ŌĆö **real X11** (opt-in via `AAP_TEST_DISPLAY`): the
     actual display is captured and real input is synthesised through `xdotool`,
-    driving capture → perceive → ground → act → verify. Skips when no display is
+    driving capture ŌåÆ perceive ŌåÆ ground ŌåÆ act ŌåÆ verify. Skips when no display is
     provided. The display must run a window manager (`Xvfb :99` + `openbox`),
     otherwise the pointer is pinned at the screen centre and two cases fail.
-  - `test_browser_url_security.py` — Phase 8: dangerous schemes, `file://`
+  - `test_browser_url_security.py` ŌĆö Phase 8: dangerous schemes, `file://`
     escapes, credential-bearing URLs, SSRF/loopback/private/link-local refusal
     (incl. the cloud-metadata address), and domain allow/deny matching.
-  - `test_browser_policy.py` — observation bounds, per-run caps, the
+  - `test_browser_policy.py` ŌĆö observation bounds, per-run caps, the
     minimum-interval and repeated-navigation loop guards, tab/download/upload
     limits, and freshness.
-  - `test_browser_helpers.py` — bounded text extraction and search, the
+  - `test_browser_helpers.py` ŌĆö bounded text extraction and search, the
     prompt-injection scanner, and source-ledger provenance/quality.
-  - `test_browser_runtime.py` — the observe→act→observe discipline, URL
+  - `test_browser_runtime.py` ŌĆö the observeŌåÆactŌåÆobserve discipline, URL
     validation before the engine is touched, the web-content boundary, the
     consequential-submit/dialog approval gate, `changed_since`, and the audit
-    trail (typed text by length only) — against a scripted backend.
-  - `test_browser_tools.py` — the browser tools run through the **real**
+    trail (typed text by length only) ŌĆö against a scripted backend.
+  - `test_browser_tools.py` ŌĆö the browser tools run through the **real**
     executor, policy engine, approval store and audit log: allow / deny /
     requires-approval, a forged `approved` argument still raising an approval,
     and honest failure when no runtime is present.
-  - `test_browser_container.py` — the composition root registers browser tools
+  - `test_browser_container.py` ŌĆö the composition root registers browser tools
     only for a local runtime with browsing enabled, and an unknown content
     policy fails closed.
-  - `test_browser_e2e.py` — **real Playwright/Chromium** (opt-in via
+  - `test_browser_e2e.py` ŌĆö **real Playwright/Chromium** (opt-in via
     `AAP_TEST_BROWSER=1`): a real local site is served, navigated, observed,
     screenshot, typed, submitted, downloaded and driven through a real
     JavaScript dialog and a download. Skips when no browser is available.
-  - `test_connectors.py` — Phase 9: connector building from declarative specs,
+  - `test_connectors.py` ŌĆö Phase 9: connector building from declarative specs,
     credential resolution, the URL policy on the HTTP connector, email send/read
     against a **real** local SMTP/IMAP server, the business adapter's
     search/get/create/update against a **real** local HTTP server, the messaging
     connector's send/read/verify, and webhook signing (signature/timestamp/
     delivery-id over the exact bytes).
-  - `test_connector_runtime.py` — the `ConnectorRuntime` and the connector tools
+  - `test_connector_runtime.py` ŌĆö the `ConnectorRuntime` and the connector tools
     through the **real** executor, policy engine, approval store and audit log:
     reads pass, a consequential write pauses for a trusted approval, an approval
     is bound to the exact payload digest, an identical action is not repeated, a
@@ -1458,78 +1536,78 @@ The foundation is verified, not assumed.
     and an ambiguous timeout both leave the action `UNKNOWN` (never retried), a
     `LOCAL_ONLY` payload is refused to a remote destination, an unavailable
     connector fails honestly, and a forged approval is not honoured.
-  - `test_connector_container.py` — the composition root registers connector
+  - `test_connector_container.py` ŌĆö the composition root registers connector
     tools and builds the runtime only when connectors are enabled, an empty spec
     list still wires an empty registry, and a cloud runtime with connectors off
     has none.
-  - `test_connector_oauth.py` — provider-neutral OAuth 2.0 against a **real**
+  - `test_connector_oauth.py` ŌĆö provider-neutral OAuth 2.0 against a **real**
     local token endpoint: PKCE (S256) is used and the verifier never appears in
     the browser URL, a state is single-use and expires (CSRF/replay refused), a
     rejected grant is classified for reauthentication (never looped), a refresh
     preserves the previous refresh token, the token set's `repr` masks the
     secret, and the declarative `ConnectorPolicy` overrides.
-  - `test_desktop_events.py` — Phase 10: the event broker mirrors real audit
+  - `test_desktop_events.py` ŌĆö Phase 10: the event broker mirrors real audit
     events to subscribers, redacts secret payloads, isolates tenants, drops the
     oldest (never blocks) on a lagging subscriber, and replays recent events.
-  - `test_desktop_model_manager.py` — the Local AI Manager: the catalogue is
+  - `test_desktop_model_manager.py` ŌĆö the Local AI Manager: the catalogue is
     reported without claiming anything is installed, `recommend` is hardware-
     gated (a small machine rejects the high-quality tier with a reason, a large
     one accepts it, and no hardware yields the documented default), install runs
     against a **real** local HTTP server and verifies size/integrity (an
     integrity failure leaves no model), health is `UNKNOWN` without a probe,
     removal refuses the active model, and every path stays in the store.
-  - `test_desktop_durable.py` — the durable desktop stores against a **real
+  - `test_desktop_durable.py` ŌĆö the durable desktop stores against a **real
     SQLite file**: a run and an external action both survive a store restart, an
     `UNKNOWN` action is preserved, idempotency is unique per tenant, tenants are
     isolated, run updates use optimistic concurrency, and `prune_before` keeps
     the unresolved action while removing terminal ones.
-  - `test_desktop_app.py` — the desktop HTTP surface built on the **real** local
+  - `test_desktop_app.py` ŌĆö the desktop HTTP surface built on the **real** local
     platform (only the LLM is faked): the control token is required, bootstrap
     reports real state, a run is persisted and its timeline carries real audit
     events, runs survive an app restart, approvals/models/modes/privacy/
     permissions/settings/diagnostics are exercised, diagnostics are redacted, and
     `with_desktop=False` omits the surface.
-  - `test_desktop_runtime.py` — the runtime manager starts and stops a **real
+  - `test_desktop_runtime.py` ŌĆö the runtime manager starts and stops a **real
     child process** (readiness, restart, immediate-exit failure), and the shell
     bridge drives the **real** desktop app under uvicorn: it exposes no generic
     URL method, rejects a bad token, and the UI assets are Arabic-first, RTL, CSP
     isolated and free of the control token.
-  - `test_desktop_installer.py` — the installer writes a launcher and manifest,
+  - `test_desktop_installer.py` ŌĆö the installer writes a launcher and manifest,
     verifies the installed runtime **by invoking it** (and reports `failed`, not
     a green state, when the interpreter is broken), reports the Windows-only
     steps as `skipped` (not success) off Windows, never embeds a secret, and
     uninstalls cleanly with or without user data.
-  - `test_document_generation.py` — real generation: a PDF and DOCX are written
+  - `test_document_generation.py` ŌĆö real generation: a PDF and DOCX are written
     and re-parsed with real libraries to prove the text is inside, XLSX/CSV
     round-trip Arabic through `openpyxl`/`csv`, a requested sheet name is
     honoured, an unsupported extension or block type is refused, a path escape
     is denied, and an absent library is reported unsupported rather than faked.
-  - `test_cloud_providers.py` — the OpenAI- and Anthropic-compatible providers
+  - `test_cloud_providers.py` ŌĆö the OpenAI- and Anthropic-compatible providers
     against a **real** local HTTP server: request shaping (top-level `system`,
     typed content blocks, `tool_use`/`tool_result`), header construction, tool
     parsing, and transient-vs-permanent error classification; the container
     registers Anthropic only when a key is present.
-  - `test_local_platform.py` — includes a `generate_document` round-trip through
+  - `test_local_platform.py` ŌĆö includes a `generate_document` round-trip through
     the **real** executor, policy engine, approval store and sandbox: a PDF is
     approval-gated and written into the workspace.
-  - `test_desktop_activation.py` — activating a local model end to end: the
+  - `test_desktop_activation.py` ŌĆö activating a local model end to end: the
     gateway default switches to the activated model (and the previous default is
     kept as a fallback), readiness is computed from a **real** health probe
     rather than from a present file, activation is written to the audit trail,
     the selection persists across a rebuild, and a failed probe never reports
     ready. This is the regression suite for the activation audit-call defect.
-  - `test_setup_provider.py` — the first-run setup provider: a fresh install
+  - `test_setup_provider.py` ŌĆö the first-run setup provider: a fresh install
     with no key and no local weights still assembles, the setup provider is
     routed and refuses inference with an actionable `ConfigurationError` (a task
     cannot silently succeed against it), and the gateway switches its default
     model at runtime without a rebuild (an unroutable switch is refused).
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
-  logic — real components are wired through `Platform.build()`.
+  logic ŌĆö real components are wired through `Platform.build()`.
 - **Infrastructure tests are opt-in.** The default `pytest` run needs no
   services; Postgres/Redis modules are skipped unless `AAP_TEST_DATABASE_URL`
   and `AAP_TEST_REDIS_URL` are set. When set they run against a **dedicated test
-  database** whose schema is created and dropped per test — never a mock:
+  database** whose schema is created and dropped per test ŌĆö never a mock:
   ```bash
   AAP_TEST_DATABASE_URL=postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test \
   AAP_TEST_REDIS_URL=redis://localhost:6379/15 \

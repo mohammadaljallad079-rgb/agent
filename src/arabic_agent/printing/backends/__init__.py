@@ -38,9 +38,7 @@ def build_print_backend(*, platform: PlatformKind | None = None) -> PrintBackend
             return windows
         return NullPrintBackend(windows.unavailable_reason)
     if kind is PlatformKind.MACOS:
-        return NullPrintBackend(
-            "the macOS printing backend is not implemented yet (design only)"
-        )
+        return NullPrintBackend("the macOS printing backend is not implemented yet (design only)")
     return NullPrintBackend()
 
 

@@ -1,8 +1,9 @@
 """The print runtime: the single object the print tools call.
 
 It bundles a :class:`PrintBackend`, the :class:`PrintPolicy`, a per-run
-:class:`JobBudget`, the local data boundary and the audit log, and enforces the
-discipline a physical side effect demands:
+:class:`JobBudget`, the local data boundary, the audit log and a
+:class:`PrintJobStore`, and enforces the discipline a physical side effect
+demands:
 
 * the document must resolve inside the filesystem sandbox (a print request can
   never read an arbitrary file);
@@ -11,6 +12,9 @@ discipline a physical side effect demands:
 * the data-boundary decision is recorded before the spooler is touched, so a
   document that must not leave the machine is never spooled to a network printer
   under a boundary that forbids it;
+* every job's safe metadata is persisted, so a user can list, inspect and cancel
+  jobs later — possibly after a restart — without the document bytes ever being
+  stored;
 * every action emits an audit event carrying *metadata only* — a printer id,
   job id, title and size — never the document bytes.
 
@@ -25,17 +29,19 @@ import time
 
 from ..audit.base import AuditEventType, AuditLog
 from ..core.enums import DataBoundary, DataSensitivity
-from ..core.errors import PermissionDeniedError, ValidationError
+from ..core.errors import NotFoundError, PermissionDeniedError, ValidationError
 from ..local.boundary import DataBoundaryPolicy
 from .base import (
     PrintBackend,
     PrintDocument,
+    PrinterCapabilities,
     PrinterInfo,
     PrintJob,
     PrintJobStatus,
     PrintOptions,
 )
 from .policy import JobBudget, PrintPolicy
+from .store import InMemoryPrintJobStore, PrintJobRecord, PrintJobStore
 
 #: Printing a document is an outbound physical action; treat the content as
 #: internal by default so the boundary decides whether a remote (network)
@@ -53,13 +59,14 @@ class PrintRuntime:
         policy: PrintPolicy,
         audit: AuditLog,
         boundary: DataBoundaryPolicy | None = None,
+        store: PrintJobStore | None = None,
     ) -> None:
         self._backend = backend
         self._policy = policy
         self._audit = audit
         self._boundary = boundary
+        self._store = store or InMemoryPrintJobStore()
         self._budgets: dict[str, JobBudget] = {}
-        self._jobs: dict[str, PrintJob] = {}
 
     @property
     def backend(self) -> PrintBackend:
@@ -68,6 +75,10 @@ class PrintRuntime:
     @property
     def policy(self) -> PrintPolicy:
         return self._policy
+
+    @property
+    def store(self) -> PrintJobStore:
+        return self._store
 
     @property
     def available(self) -> bool:
@@ -85,10 +96,28 @@ class PrintRuntime:
         return budget
 
     async def list_printers(
-        self, *, tenant_id: str, user_id: str, run_id: str
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        with_capabilities: bool = False,
     ) -> list[PrinterInfo]:
-        """Enumerate the host's printers, recording the attempt."""
+        """Enumerate the host's printers, recording the attempt.
+
+        With ``with_capabilities`` each printer's advertised capabilities are
+        queried and attached; a printer whose capabilities cannot be read is
+        left with ``capabilities=None`` rather than a guessed default.
+        """
         printers = await self._backend.list_printers()
+        if with_capabilities:
+            enriched: list[PrinterInfo] = []
+            for printer in printers:
+                caps = await self._backend.printer_capabilities(printer.id)
+                enriched.append(
+                    printer.model_copy(update={"capabilities": caps}) if caps else printer
+                )
+            printers = enriched
         await self._audit.record(
             AuditEventType.PRINT_PRINTERS_LISTED,
             tenant_id=tenant_id,
@@ -99,9 +128,16 @@ class PrintRuntime:
                 "count": len(printers),
                 "backend": self._backend.name,
                 "available": self._backend.available,
+                "with_capabilities": with_capabilities,
             },
         )
         return printers
+
+    async def printer_capabilities(
+        self, *, tenant_id: str, user_id: str, run_id: str, printer_id: str
+    ) -> PrinterCapabilities | None:
+        """Return a printer's advertised capabilities, or ``None`` if unreadable."""
+        return await self._backend.printer_capabilities(printer_id)
 
     async def submit(
         self,
@@ -160,10 +196,17 @@ class PrintRuntime:
         effective = document.model_copy(
             update={"path": resolved_path, "title": document.title or _basename(resolved_path)}
         )
-        job = await self._backend.submit(
-            document=effective, printer_id=printer_id, options=options
+        job = await self._backend.submit(document=effective, printer_id=printer_id, options=options)
+        await self._store.add(
+            PrintJobRecord.from_job(
+                job,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                run_id=run_id,
+                size_bytes=size_bytes,
+                options=options,
+            )
         )
-        self._jobs[job.id] = job
         await self._audit.record(
             AuditEventType.PRINT_JOB_SUBMITTED,
             tenant_id=tenant_id,
@@ -181,22 +224,88 @@ class PrintRuntime:
         )
         return job
 
+    async def get_job(self, *, tenant_id: str, job_id: str) -> PrintJobRecord:
+        """Return a persisted job record, isolated to the tenant."""
+        return await self._store.get(job_id, tenant_id=tenant_id)
+
+    async def list_jobs(
+        self, *, tenant_id: str, run_id: str | None = None, limit: int = 50
+    ) -> list[PrintJobRecord]:
+        """List persisted jobs for a run (or the tenant's most recent)."""
+        if run_id:
+            return await self._store.list_for_run(tenant_id=tenant_id, run_id=run_id)
+        return await self._store.list_recent(tenant_id=tenant_id, limit=limit)
+
     async def job_status(
-        self, *, tenant_id: str, user_id: str, run_id: str, job_id: str
-    ) -> PrintJobStatus:
-        return await self._backend.job_status(job_id)
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        job_id: str,
+        printer_id: str = "",
+    ) -> PrintJobRecord:
+        """Observe a job's status, persist it and audit the observation.
+
+        The status is read from the spooler; when the backend cannot observe it
+        the record keeps ``UNKNOWN`` and ``observed=False`` rather than claiming
+        success.
+        """
+        record = await self._store.get(job_id, tenant_id=tenant_id)
+        printer = printer_id or record.printer_id
+        status = await self._backend.job_status(job_id, printer_id=printer)
+        updated = record.with_status(status)
+        await self._store.update(updated)
+        await self._audit.record(
+            AuditEventType.PRINT_JOB_STATUS,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id or record.run_id,
+            message=f"print job status: {status.value}",
+            data={
+                "job_id": job_id,
+                "printer_id": printer,
+                "status": status.value,
+                "observed": updated.observed,
+            },
+        )
+        return updated
 
     async def cancel(
-        self, *, tenant_id: str, user_id: str, run_id: str, job_id: str, printer_id: str = ""
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        job_id: str,
+        printer_id: str = "",
     ) -> bool:
-        cancelled = await self._backend.cancel_job(job_id, printer_id=printer_id)
+        """Cancel a job, updating and auditing the persisted record.
+
+        A job that was never recorded for this tenant is refused rather than
+        silently cancelled by id, so one tenant cannot cancel another's job.
+        """
+        try:
+            record = await self._store.get(job_id, tenant_id=tenant_id)
+        except NotFoundError:
+            record = None
+        printer = printer_id or (record.printer_id if record else "")
+        cancelled = await self._backend.cancel_job(job_id, printer_id=printer)
+        if record is not None:
+            await self._store.update(
+                record.with_status(
+                    PrintJobStatus.CANCELLED if cancelled else record.status,
+                    detail="cancellation requested" if cancelled else "",
+                    error="" if cancelled else "the spooler refused the cancellation",
+                )
+            )
         await self._audit.record(
             AuditEventType.PRINT_JOB_CANCELLED if cancelled else AuditEventType.PRINT_JOB_FAILED,
             tenant_id=tenant_id,
             user_id=user_id,
             run_id=run_id,
             message="print job cancelled" if cancelled else "print job cancellation refused",
-            data={"job_id": job_id, "printer_id": printer_id, "cancelled": cancelled},
+            data={"job_id": job_id, "printer_id": printer, "cancelled": cancelled},
         )
         return cancelled
 

@@ -26,6 +26,14 @@ from .base import (
     OperationKind,
 )
 from .business import BusinessConnector, ResourceMapping
+from .calendar import (
+    CalendarConnector,
+    CalendarEvent,
+    CalendarListEntry,
+    CalendarProvider,
+    FreeBusySlot,
+    GoogleCalendarProvider,
+)
 from .credentials import (
     CredentialProvider,
     CredentialRef,
@@ -78,6 +86,10 @@ __all__ = [
     "ActionRecord",
     "ActionTransitionError",
     "BusinessConnector",
+    "CalendarConnector",
+    "CalendarEvent",
+    "CalendarListEntry",
+    "CalendarProvider",
     "Connector",
     "ConnectorCall",
     "ConnectorCapability",
@@ -99,6 +111,8 @@ __all__ = [
     "EmailMessage",
     "EmailPreview",
     "EnvCredentialProvider",
+    "FreeBusySlot",
+    "GoogleCalendarProvider",
     "HttpConnector",
     "HttpRequest",
     "HttpResponse",

@@ -20,6 +20,7 @@ Two rules are structural, not stylistic:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar
 
 from ...connectors.ledger import canonical_digest
@@ -451,6 +452,224 @@ class BusinessRecordsTool(_ConnectorTool):
         return self._result(invocation)
 
 
+class _CalendarToolBase(_ConnectorTool):
+    """Shared calendar logic.
+
+    The calendar surface is split into three tools — read, write, delete — so
+    each carries a single grant. A read is never gated behind a write's
+    approval, and a delete is classified by ``CALENDAR_DELETE`` rather than being
+    conflated with a create. This mirrors the platform's rule that reading data
+    and changing it are not the same permission.
+    """
+
+    parameters: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "connector": {"type": "string"},
+            "calendar_id": {"type": "string", "description": "Calendar id (default: primary)."},
+        },
+        "required": ["connector"],
+        "additionalProperties": False,
+    }
+
+    #: Action name -> normalized connector operation.
+    _OPERATIONS: ClassVar[dict[str, str]] = {}
+    #: Actions this tool accepts.
+    _ACTIONS: ClassVar[tuple[str, ...]] = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Build each subclass's schema from its own action set, so a read tool
+        # never advertises write fields and a delete tool never advertises a
+        # create. Doing it here keeps the declaration in one place.
+        if cls._ACTIONS:
+            needs_write = bool({"create_event", "update_event"} & set(cls._ACTIONS))
+            cls.parameters = cls._schema(include_write_fields=needs_write)
+
+    async def run(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+        runtime = self._runtime(context)
+        connector = str(arguments["connector"])
+        action = str(arguments.get("action") or "")
+        if action not in self._ACTIONS:
+            raise ValidationError(
+                f"{self.name} does not support the action {action!r}",
+                details={"supported": list(self._ACTIONS)},
+            )
+        operation = self._OPERATIONS[action]
+        payload = self._payload(action, arguments)
+        tenant_id, user_id, run_id, step_id = self._identity(context)
+        invocation = await runtime.invoke(
+            connector_name=connector,
+            operation=operation,
+            payload=payload,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+            step_id=step_id,
+            approval_granted=self._approval_granted(context),
+            approved_digest=self._approved_digest(connector, operation, payload),
+            verifier=self._verifier(runtime, connector, action),
+        )
+        return self._result(invocation)
+
+    def _verifier(
+        self, runtime: ConnectorRuntime, connector_name: str, action: str
+    ) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]] | None:
+        """A provider check for a consequential write (create/update/delete).
+
+        A calendar write that returned success is only marked ``VERIFIED`` when
+        the provider confirms the event exists (or, for a delete, no longer
+        exists). This is what prevents a timeout from being mistaken for a
+        completed change.
+        """
+        if action not in ("create_event", "update_event", "delete_event"):
+            return None
+        connector = runtime.connector(connector_name)
+        provider = getattr(connector, "provider", None)
+        if provider is None or not hasattr(provider, "verify"):
+            return None
+
+        async def verifier(data: dict[str, Any]) -> tuple[bool, str]:
+            event = data.get("event") or {}
+            event_id = str(event.get("id") or data.get("event_id") or "")
+            calendar_id = str(event.get("calendar_id") or data.get("calendar_id") or "")
+            if not event_id:
+                return False, "the provider returned no event id to verify"
+            found = await provider.verify(event_id, calendar_id=calendar_id)
+            if action == "delete_event":
+                if found is None:
+                    return True, f"event {event_id} is no longer present"
+                return False, f"event {event_id} is still present after delete"
+            if found is not None and found.id == event_id:
+                return True, f"event {event_id} confirmed at the provider"
+            return False, f"event {event_id} could not be confirmed at the provider"
+
+        return verifier
+
+    @staticmethod
+    def _payload(action: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """The normalized payload, with only the fields an action needs.
+
+        Keeping the payload minimal is what makes the approval digest and the
+        idempotency key precise: an unrelated argument never changes them.
+        """
+        payload: dict[str, Any] = {
+            "calendar_id": arguments.get("calendar_id") or "",
+        }
+        if action in ("get_event", "update_event", "delete_event"):
+            payload["event_id"] = arguments.get("event_id") or ""
+        if action in ("list_events", "free_busy"):
+            payload["time_min"] = arguments.get("time_min") or ""
+            payload["time_max"] = arguments.get("time_max") or ""
+        if action == "list_events":
+            payload["query"] = arguments.get("query") or ""
+            payload["max_results"] = int(arguments.get("max_results") or 50)
+        if action in ("create_event", "update_event"):
+            for field in ("summary", "description", "location", "start", "end"):
+                payload[field] = arguments.get(field) or ""
+            payload["all_day"] = bool(arguments.get("all_day"))
+            payload["attendees"] = _str_list(arguments.get("attendees"))
+        return payload
+
+    @classmethod
+    def _schema(cls, *, include_write_fields: bool) -> dict[str, Any]:
+        properties: dict[str, Any] = {
+            "connector": {"type": "string"},
+            "action": {"type": "string", "enum": list(cls._ACTIONS)},
+            "calendar_id": {"type": "string", "description": "Calendar id (default: primary)."},
+        }
+        if "get_event" in cls._ACTIONS or "update_event" in cls._ACTIONS:
+            properties["event_id"] = {"type": "string", "description": "Event id."}
+        if "list_events" in cls._ACTIONS or "free_busy" in cls._ACTIONS:
+            properties["time_min"] = {"type": "string", "description": "Window start."}
+            properties["time_max"] = {"type": "string", "description": "Window end."}
+        if "list_events" in cls._ACTIONS:
+            properties["query"] = {"type": "string", "description": "Text filter."}
+            properties["max_results"] = {
+                "type": "integer",
+                "description": "Max events to return (1-250).",
+            }
+        if include_write_fields:
+            properties.update(
+                {
+                    "summary": {"type": "string", "description": "Event title."},
+                    "description": {"type": "string"},
+                    "location": {"type": "string"},
+                    "start": {
+                        "type": "string",
+                        "description": "RFC3339 start (or YYYY-MM-DD for an all-day event).",
+                    },
+                    "end": {"type": "string", "description": "RFC3339 end (or YYYY-MM-DD)."},
+                    "all_day": {"type": "boolean", "description": "Treat start/end as dates."},
+                    "attendees": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Attendee email addresses.",
+                    },
+                }
+            )
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": ["connector", "action"],
+            "additionalProperties": False,
+        }
+
+
+class CalendarReadTool(_CalendarToolBase):
+    name = "calendar_read"
+    description = (
+        "Read calendars and events through a connected calendar. Actions: "
+        "list_calendars, list_events, get_event, free_busy. Read-only; no approval "
+        "is required."
+    )
+    _OPERATIONS: ClassVar[dict[str, str]] = {
+        "list_calendars": "calendar.list",
+        "list_events": "calendar.read",
+        "get_event": "calendar.read",
+        "free_busy": "calendar.freebusy",
+    }
+    _ACTIONS: ClassVar[tuple[str, ...]] = (
+        "list_calendars",
+        "list_events",
+        "get_event",
+        "free_busy",
+    )
+    permissions = (Permission.CALENDAR_READ,)
+    risks: ClassVar[dict[Permission, RiskLevel]] = {Permission.CALENDAR_READ: RiskLevel.MEDIUM}
+
+
+class CalendarWriteTool(_CalendarToolBase):
+    name = "calendar_write"
+    description = (
+        "Create or change a calendar event through a connected calendar. Actions: "
+        "create_event, update_event. Changing a calendar affects other people's "
+        "time and requires human approval bound to the exact event."
+    )
+    _OPERATIONS: ClassVar[dict[str, str]] = {
+        "create_event": "calendar.create",
+        "update_event": "calendar.update",
+    }
+    _ACTIONS: ClassVar[tuple[str, ...]] = ("create_event", "update_event")
+    permissions = (Permission.CALENDAR_WRITE,)
+    risks: ClassVar[dict[Permission, RiskLevel]] = {Permission.CALENDAR_WRITE: RiskLevel.HIGH}
+    side_effecting = True
+
+
+class CalendarDeleteTool(_CalendarToolBase):
+    name = "calendar_delete"
+    description = (
+        "Delete a calendar event through a connected calendar. Deleting an event "
+        "is destructive and notifies attendees, so it always requires human "
+        "approval bound to the exact event."
+    )
+    _OPERATIONS: ClassVar[dict[str, str]] = {"delete_event": "calendar.delete"}
+    _ACTIONS: ClassVar[tuple[str, ...]] = ("delete_event",)
+    permissions = (Permission.CALENDAR_DELETE,)
+    risks: ClassVar[dict[Permission, RiskLevel]] = {Permission.CALENDAR_DELETE: RiskLevel.HIGH}
+    side_effecting = True
+
+
 class ConnectorVerifyTool(_ConnectorTool):
     name = "connector_verify"
     description = (
@@ -521,6 +740,9 @@ CONNECTOR_TOOL_NAMES: frozenset[str] = frozenset(
         "message_send",
         "webhook_send",
         "business_records",
+        "calendar_read",
+        "calendar_write",
+        "calendar_delete",
         "connector_verify",
     }
 )
@@ -533,6 +755,9 @@ CONNECTOR_TOOLS: tuple[type[Tool], ...] = (
     MessageSendTool,
     WebhookSendTool,
     BusinessRecordsTool,
+    CalendarReadTool,
+    CalendarWriteTool,
+    CalendarDeleteTool,
     ConnectorVerifyTool,
 )
 
@@ -540,6 +765,9 @@ __all__ = [
     "CONNECTOR_TOOLS",
     "CONNECTOR_TOOL_NAMES",
     "BusinessRecordsTool",
+    "CalendarDeleteTool",
+    "CalendarReadTool",
+    "CalendarWriteTool",
     "ConnectorListTool",
     "ConnectorVerifyTool",
     "EmailSearchTool",

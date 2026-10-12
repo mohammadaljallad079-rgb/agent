@@ -47,6 +47,7 @@ from arabic_agent.printing.base import (
     PrintColorMode,
     PrintDocument,
     PrintDuplex,
+    PrintJobStatus,
     PrintOptions,
 )
 from arabic_agent.printing.policy import JobBudget, PrintPolicy
@@ -131,6 +132,7 @@ async def test_cups_lists_printers_and_marks_default(tmp_path):
             "lpstat": (0, "printer HP_LaserJet is idle. enabled since now\n", ""),
         }
     )
+
     # Two different lpstat invocations (-p and -d); answer by argument.
     async def run(argv, *, timeout=20.0):  # noqa: ASYNC109
         adapter.calls.append(list(argv))
@@ -325,9 +327,7 @@ async def test_runtime_boundary_denies_offline_remote(tmp_path):
     events = await sink.list_for_run(tenant_id="t", run_id="r")
     assert any(e.type is AuditEventType.PRINT_BOUNDARY_DECISION for e in events)
     # LOCAL routing is always allowed, even offline.
-    decision = boundary.evaluate(
-        boundary=DataBoundary.LOCAL, sensitivity=DataSensitivity.INTERNAL
-    )
+    decision = boundary.evaluate(boundary=DataBoundary.LOCAL, sensitivity=DataSensitivity.INTERNAL)
     assert decision.allowed
 
 
@@ -401,7 +401,18 @@ def _principal() -> Principal:
 
 def test_print_tools_declare_permission():
     assert PrintDocumentTool.permissions == (Permission.PRINT,)
-    assert frozenset({"list_printers", "print_document"}) == PRINT_TOOL_NAMES
+    assert (
+        frozenset(
+            {
+                "list_printers",
+                "print_document",
+                "print_job_status",
+                "list_print_jobs",
+                "cancel_print_job",
+            }
+        )
+        == PRINT_TOOL_NAMES
+    )
 
 
 async def test_print_document_requires_approval_under_default_policy(tmp_path):
@@ -564,3 +575,240 @@ def test_platform_with_printing_builds_runtime_and_tools(tmp_path):
     assert platform.print_runtime is not None
     # On this CI host CUPS is absent, so the backend is honestly unavailable.
     assert platform.print_runtime.available is False
+
+
+# ---------------------------------------------------------------------------
+# Extended printing: capabilities, status, cancel, persisted jobs
+# ---------------------------------------------------------------------------
+
+
+async def test_cups_parses_lpoptions_capabilities():
+    from arabic_agent.printing.backends.cups import _parse_lpoptions
+    from arabic_agent.printing.base import PrintColorMode, PrintDuplex, PrintOrientation
+
+    out = (
+        "PageSize/Page Size: *A4 Letter Legal\n"
+        "ColorModel/Color Mode: *RGB Gray\n"
+        "Duplex/Double-Sided Printing: *None DuplexNoTumble DuplexTumble\n"
+        "Orientation/Output Orientation: *3 4\n"
+    )
+    caps = _parse_lpoptions(out)
+    assert caps.media == ("A4", "Letter", "Legal")
+    assert PrintColorMode.COLOR in caps.color_modes
+    assert PrintColorMode.MONOCHROME in caps.color_modes
+    assert PrintDuplex.ONE_SIDED in caps.duplex_modes
+    assert PrintDuplex.LONG_EDGE in caps.duplex_modes
+    assert PrintDuplex.SHORT_EDGE in caps.duplex_modes
+    assert PrintOrientation.PORTRAIT in caps.orientations
+    assert PrintOrientation.LANDSCAPE in caps.orientations
+
+
+def test_cups_parses_empty_lpoptions_honestly():
+    from arabic_agent.printing.backends.cups import _parse_lpoptions
+
+    caps = _parse_lpoptions("")
+    assert caps.media is None
+    assert caps.color_modes is None
+    assert caps.detail
+
+
+def test_cups_parses_job_state():
+    from arabic_agent.printing.backends.cups import _parse_job_state
+
+    out = "HP-7 user 1024 Thu 01 Jan 2026\n\tjob-state: 5\n"
+    assert _parse_job_state(out, "HP-7") is PrintJobStatus.PRINTING
+    completed = "HP-8 user 1024 Thu 01 Jan 2026\n\tjob-state: 9\n"
+    assert _parse_job_state(completed, "HP-8") is PrintJobStatus.COMPLETED
+    # A job no longer listed is unknown, never assumed complete.
+    assert _parse_job_state(out, "HP-999") is PrintJobStatus.UNKNOWN
+
+
+async def test_cups_orientation_and_capabilities_argv(tmp_path):
+    from arabic_agent.printing.base import PrintOrientation
+
+    doc = tmp_path / "report.pdf"
+    doc.write_bytes(b"%PDF")
+    adapter = _RecordingCupsAdapter(
+        {"lp": (0, "request id is HP-1 (1 file(s))", ""), "lpoptions": (0, "PageSize: *A4\n", "")}
+    )
+    backend = _cups(adapter)
+    backend._lpoptions = "lpoptions"
+    await backend.submit(
+        document=PrintDocument(path=str(doc)),
+        printer_id="HP",
+        options=PrintOptions(orientation=PrintOrientation.LANDSCAPE),
+    )
+    assert "orientation-requested=4" in adapter.calls[0]
+    caps = await backend.printer_capabilities("HP")
+    assert caps is not None and caps.media == ("A4",)
+
+
+async def test_runtime_lists_printers_with_capabilities():
+    from arabic_agent.printing.base import PrinterCapabilities
+
+    caps = PrinterCapabilities(media=("A4",))
+    runtime, _ = _runtime(backend=FakePrintBackend(capabilities=caps))
+    printers = await runtime.list_printers(
+        tenant_id="t", user_id="u", run_id="r", with_capabilities=True
+    )
+    assert printers[0].capabilities is not None
+    assert printers[0].capabilities.media == ("A4",)
+
+
+async def test_runtime_persists_and_observes_job_status(tmp_path):
+    doc = tmp_path / "report.pdf"
+    doc.write_bytes(b"%PDF-1.4 payload")
+    backend = FakePrintBackend(status=PrintJobStatus.COMPLETED)
+    runtime, sink = _runtime(backend=backend)
+    job = await runtime.submit(
+        tenant_id="t",
+        user_id="u",
+        run_id="r",
+        document=PrintDocument(path=str(doc), title="Report"),
+        printer_id="HP_LaserJet",
+        resolved_path=str(doc),
+    )
+    jobs = await runtime.list_jobs(tenant_id="t", run_id="r")
+    assert [j.id for j in jobs] == [job.id]
+    assert jobs[0].size_bytes == len(b"%PDF-1.4 payload")
+    record = await runtime.job_status(tenant_id="t", user_id="u", run_id="r", job_id=job.id)
+    assert record.status is PrintJobStatus.COMPLETED
+    assert record.observed is True
+    events = await sink.list_for_run(tenant_id="t", run_id="r")
+    assert any(e.type is AuditEventType.PRINT_JOB_STATUS for e in events)
+
+
+async def test_runtime_cancel_updates_persisted_record(tmp_path):
+    doc = tmp_path / "report.pdf"
+    doc.write_bytes(b"%PDF")
+    backend = FakePrintBackend(cancel_result=True)
+    runtime, _ = _runtime(backend=backend)
+    job = await runtime.submit(
+        tenant_id="t",
+        user_id="u",
+        run_id="r",
+        document=PrintDocument(path=str(doc)),
+        printer_id="HP",
+        resolved_path=str(doc),
+    )
+    assert await runtime.cancel(tenant_id="t", user_id="u", run_id="r", job_id=job.id)
+    record = await runtime.get_job(tenant_id="t", job_id=job.id)
+    assert record.status is PrintJobStatus.CANCELLED
+
+
+async def test_runtime_job_store_is_tenant_isolated(tmp_path):
+    from arabic_agent.core.errors import NotFoundError
+
+    doc = tmp_path / "report.pdf"
+    doc.write_bytes(b"%PDF")
+    runtime, _ = _runtime()
+    job = await runtime.submit(
+        tenant_id="tnt_a",
+        user_id="u",
+        run_id="r",
+        document=PrintDocument(path=str(doc)),
+        printer_id="HP",
+        resolved_path=str(doc),
+    )
+    with pytest.raises(NotFoundError):
+        await runtime.get_job(tenant_id="tnt_b", job_id=job.id)
+
+
+async def test_print_job_status_tool_through_executor(tmp_path):
+    doc = tmp_path / "invoice.pdf"
+    doc.write_bytes(b"%PDF")
+    executor, _, backend = _executor(tmp_path)
+    backend._status = PrintJobStatus.COMPLETED
+    outcome = await executor.execute(
+        tool_name="print_document",
+        arguments={"path": str(doc)},
+        context=_context(tmp_path),
+        principal=_principal(),
+    )
+    job_id = outcome.result.data["job_id"]  # type: ignore[union-attr]
+    status_outcome = await executor.execute(
+        tool_name="print_job_status",
+        arguments={"job_id": job_id},
+        context=_context(tmp_path),
+        principal=_principal(),
+    )
+    assert status_outcome.kind is ExecutionOutcomeKind.COMPLETED
+    assert status_outcome.result.data["status"] == "completed"
+    assert status_outcome.result.data["observed"] is True
+
+
+async def test_list_print_jobs_tool_reports_submitted(tmp_path):
+    doc = tmp_path / "invoice.pdf"
+    doc.write_bytes(b"%PDF")
+    executor, _, _ = _executor(tmp_path)
+    await executor.execute(
+        tool_name="print_document",
+        arguments={"path": str(doc)},
+        context=_context(tmp_path),
+        principal=_principal(),
+    )
+    outcome = await executor.execute(
+        tool_name="list_print_jobs",
+        arguments={},
+        context=_context(tmp_path),
+        principal=_principal(),
+    )
+    assert outcome.kind is ExecutionOutcomeKind.COMPLETED
+    assert outcome.result.data["count"] == 1
+
+
+async def test_cancel_print_job_requires_approval_under_default_policy(tmp_path):
+    executor, _, _ = _executor(tmp_path, policy=PolicyEngine())
+    outcome = await executor.execute(
+        tool_name="cancel_print_job",
+        arguments={"job_id": "HP-1"},
+        context=_context(tmp_path),
+        principal=_principal(),
+    )
+    assert outcome.kind is ExecutionOutcomeKind.APPROVAL_REQUIRED
+    assert outcome.approval is not None
+    assert outcome.approval.permission is Permission.PRINT
+
+
+async def test_list_print_jobs_is_read_only_allowed(tmp_path):
+    # Listing jobs is read-only and requires no approval.
+    executor, _, _ = _executor(tmp_path, policy=PolicyEngine())
+    outcome = await executor.execute(
+        tool_name="list_print_jobs",
+        arguments={},
+        context=_context(tmp_path),
+        principal=_principal(),
+    )
+    assert outcome.kind is ExecutionOutcomeKind.COMPLETED
+
+
+async def test_durable_print_job_store_survives_restart(tmp_path):
+    from arabic_agent.local.persistence.database import LocalDatabase
+    from arabic_agent.local.persistence.stores import LocalPrintJobStore
+    from arabic_agent.printing.store import PrintJobRecord
+
+    db = LocalDatabase(tmp_path / "local.db")
+    await db.upgrade_async()
+    store = LocalPrintJobStore(db)
+    record = PrintJobRecord(
+        id="HP-1",
+        tenant_id="t",
+        user_id="u",
+        run_id="r",
+        printer_id="HP",
+        title="Invoice",
+        size_bytes=42,
+    )
+    await store.add(record)
+    await db.dispose()
+
+    # Reopen the same file: the job is still there.
+    db2 = LocalDatabase(tmp_path / "local.db")
+    await db2.upgrade_async()
+    store2 = LocalPrintJobStore(db2)
+    fetched = await store2.get("HP-1", tenant_id="t")
+    assert fetched.title == "Invoice"
+    assert fetched.size_bytes == 42
+    recent = await store2.list_recent(tenant_id="t")
+    assert [r.id for r in recent] == ["HP-1"]
+    await db2.dispose()

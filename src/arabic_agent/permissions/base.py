@@ -91,6 +91,13 @@ class Permission(StrEnum):
     MANAGE_WORKFLOW = "MANAGE_WORKFLOW"
     RUN_WORKFLOW = "RUN_WORKFLOW"
 
+    # Calendar (the desktop/connector scheduling surface). Split so reading a
+    # calendar, changing it, and removing events are independent grants: a tenant
+    # can let the agent read availability without letting it move a meeting.
+    CALENDAR_READ = "CALENDAR_READ"
+    CALENDAR_WRITE = "CALENDAR_WRITE"
+    CALENDAR_DELETE = "CALENDAR_DELETE"
+
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.value
 
@@ -141,6 +148,9 @@ _PERMISSION_RISK: dict[Permission, RiskLevel] = {
     Permission.BROWSER_UPLOAD: RiskLevel.HIGH,
     Permission.MANAGE_WORKFLOW: RiskLevel.MEDIUM,
     Permission.RUN_WORKFLOW: RiskLevel.MEDIUM,
+    Permission.CALENDAR_READ: RiskLevel.MEDIUM,
+    Permission.CALENDAR_WRITE: RiskLevel.HIGH,
+    Permission.CALENDAR_DELETE: RiskLevel.HIGH,
 }
 
 

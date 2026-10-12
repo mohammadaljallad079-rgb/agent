@@ -79,6 +79,7 @@ from .local.persistence.stores import (
     LocalApprovalStore,
     LocalAuditSink,
     LocalIdempotencyGuard,
+    LocalPrintJobStore,
     LocalRunStore,
     LocalSyncQueue,
     LocalWorkflowRunStore,
@@ -126,6 +127,7 @@ from .persistence.stores import (
 from .printing.backends import build_print_backend
 from .printing.policy import PrintPolicy
 from .printing.runtime import PrintRuntime
+from .printing.store import InMemoryPrintJobStore, PrintJobStore
 from .runs.store import InMemoryRunStore, RunStore
 from .runtime.boundary import RuntimeProfile
 from .tasks.engine import TaskEngine
@@ -908,11 +910,21 @@ class Platform:
                 max_jobs_per_run=settings.print_max_jobs_per_run,
                 min_job_interval_seconds=settings.print_min_job_interval_seconds,
             )
+            # Job metadata is durable whenever a local SQLite store exists, so a
+            # submitted job can be reviewed, reconciled or cancelled after a
+            # restart. A purely in-memory build (tests without a store) falls
+            # back to the in-memory store.
+            print_store: PrintJobStore = (
+                LocalPrintJobStore(local_database)
+                if local_database is not None
+                else InMemoryPrintJobStore()
+            )
             print_runtime = PrintRuntime(
                 backend=print_backend,
                 policy=print_policy,
                 audit=audit,
                 boundary=boundary,
+                store=print_store,
             )
             logger.info(
                 "print backend: %s (available=%s, reason=%s)",

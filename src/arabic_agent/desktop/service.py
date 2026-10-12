@@ -66,6 +66,10 @@ _SETTINGS_CAPABILITIES: tuple[tuple[str, Permission, str], ...] = (
     ("browser", Permission.BROWSER_READ, "تصفح الويب"),
     ("connectors.read", Permission.CONNECTOR_READ, "قراءة الأنظمة الخارجية"),
     ("connectors.write", Permission.CONNECTOR_WRITE, "الكتابة في الأنظمة الخارجية"),
+    ("calendar.read", Permission.CALENDAR_READ, "قراءة التقويم"),
+    ("calendar.write", Permission.CALENDAR_WRITE, "تعديل التقويم"),
+    ("calendar.delete", Permission.CALENDAR_DELETE, "حذف أحداث التقويم"),
+    ("printing", Permission.PRINT_DOCUMENT, "الطباعة"),
     ("email.send", Permission.SEND_EMAIL, "إرسال البريد"),
     ("network", Permission.NETWORK_ACCESS, "الوصول للشبكة"),
 )
@@ -698,6 +702,55 @@ class DesktopService:
             "keyboard_allowed": enabled and runtime is not None,
         }
 
+    # -- Printing --------------------------------------------------------
+    def printing_view(self) -> dict[str, object]:
+        """Printing availability from real settings, runtime and spooler state.
+
+        Nothing here claims a printer: ``enabled`` reflects the setting, and
+        ``available`` is true only when a real print runtime is wired and its
+        backend reports itself usable. ``unavailable_reason`` carries the
+        backend's honest explanation when it is not.
+        """
+        settings = self._platform.settings
+        runtime = self._platform.print_runtime
+        enabled = bool(settings.printing_enabled)
+        available = bool(runtime is not None and runtime.available)
+        return {
+            "enabled": enabled,
+            "available": available,
+            "backend": runtime.backend.name if runtime is not None else "",
+            "unavailable_reason": (runtime.unavailable_reason if runtime is not None else ""),
+            "max_document_bytes": settings.print_max_document_bytes,
+            "max_jobs_per_run": settings.print_max_jobs_per_run,
+            "min_job_interval_seconds": settings.print_min_job_interval_seconds,
+        }
+
+    async def list_print_jobs(self, *, limit: int = 50) -> dict[str, object]:
+        """Persisted print-job metadata for this tenant, most recent first.
+
+        Returns a real (possibly empty) list from the job store; when printing
+        is disabled there is no store, so the list is honestly empty rather than
+        fabricated. Only safe metadata is returned — never document bytes.
+        """
+        runtime = self._platform.print_runtime
+        if runtime is None:
+            return {"enabled": False, "jobs": [], "count": 0}
+        records = await runtime.list_jobs(tenant_id=self._principal.tenant_id, limit=limit)
+        jobs = [
+            {
+                "job_id": r.id,
+                "printer_id": r.printer_id,
+                "title": r.title,
+                "status": r.status.value,
+                "observed": r.observed,
+                "size_bytes": r.size_bytes,
+                "run_id": r.run_id,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in records
+        ]
+        return {"enabled": True, "jobs": jobs, "count": len(jobs)}
+
     # -- Memory ----------------------------------------------------------
     async def list_memory(self, *, limit: int = 50) -> dict[str, object]:
         """The tenant's stored memory entries, newest first.
@@ -1019,6 +1072,8 @@ class DesktopService:
             "browser_enabled": settings.browser_enabled,
             "browser": self.browser_view(),
             "connectors_enabled": settings.connectors_enabled,
+            "printing_enabled": settings.printing_enabled,
+            "printing": self.printing_view(),
             "tools": self._platform.tools.names(),
             "disk_free_bytes": disk_free,
             "event_subscribers": self._events.subscriber_count,

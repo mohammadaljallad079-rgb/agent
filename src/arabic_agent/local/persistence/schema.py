@@ -304,6 +304,40 @@ class LocalActionLedgerRow(LocalBase):
     )
 
 
+class LocalPrintJobRow(LocalBase):
+    """Durable local print-job metadata.
+
+    A print job is a physical side effect a user may want to review or cancel
+    after an application restart. This row stores only safe metadata — printer,
+    title, status, size and the job's options — never the document bytes or its
+    path. It mirrors the in-memory ``PrintJobRecord`` so the same record
+    round-trips.
+    """
+
+    __tablename__ = "local_print_jobs"
+
+    id: Mapped[str] = mapped_column(sa.String(200), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="", index=True)
+    printer_id: Mapped[str] = mapped_column(sa.String(200), nullable=False)
+    title: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    backend: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="")
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    options: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    observed: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    detail: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+
+    __table_args__ = (
+        sa.Index("ix_local_print_jobs_tenant_run", "tenant_id", "run_id"),
+        sa.Index("ix_local_print_jobs_tenant_created", "tenant_id", "created_at"),
+    )
+
+
 class LocalRunRow(LocalBase):
     """Durable local agent run (desktop sessions/tasks).
 

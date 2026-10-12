@@ -71,7 +71,7 @@ class FakeBackend:
         return {"backend": self.name}
 
 
-def _settings(tmp_path: Path) -> Settings:
+def _settings(tmp_path: Path, *, printing_enabled: bool = False) -> Settings:
     return Settings(
         environment="test",
         require_auth=False,
@@ -84,6 +84,7 @@ def _settings(tmp_path: Path) -> Settings:
         database_url=SecretStr(""),
         redis_url=SecretStr(""),
         execution_mode="inline",
+        printing_enabled=printing_enabled,
     )
 
 
@@ -106,12 +107,14 @@ def _install_fake_model(tmp_path: Path) -> str:
     return str(storage)
 
 
-def _app(tmp_path: Path, *, backend_healthy: bool = True):  # type: ignore[no-untyped-def]
+def _app(tmp_path: Path, *, backend_healthy: bool = True, printing_enabled: bool = False):  # type: ignore[no-untyped-def]
     _install_fake_model(tmp_path)
     registry = ProviderRegistry()
     registry.register(FakeProvider(lambda req, n: text_response("تم")))
     app = build_local_control_app(
-        _settings(tmp_path), provider_registry=registry, default_model="fake/model"
+        _settings(tmp_path, printing_enabled=printing_enabled),
+        provider_registry=registry,
+        default_model="fake/model",
     )
     service = app.state.desktop_service
 
@@ -262,6 +265,76 @@ def test_connectors_and_computer_and_memory_endpoints(tmp_path):
     assert memory["entries"] == []
 
 
+def test_printing_endpoints_report_honest_disabled_state(tmp_path):
+    """With printing off (the default), the surface says so and invents nothing."""
+    app = _app(tmp_path)
+    client = TestClient(app)
+    view = client.get("/desktop/printing", headers=HEADERS).json()
+    assert view["enabled"] is False
+    assert view["available"] is False
+    assert view["backend"] == ""
+    # Policy bounds are still reported from the real settings.
+    assert view["max_jobs_per_run"] >= 1
+    jobs = client.get("/desktop/printing/jobs", headers=HEADERS).json()
+    assert jobs["enabled"] is False
+    assert jobs["jobs"] == []
+    assert jobs["count"] == 0
+
+
+def test_printing_enabled_surface_reports_real_jobs(tmp_path):
+    """With printing on, a real submit appears in the tenant's job list.
+
+    Only the spooler is replaced (a scripted backend); the platform, policy,
+    boundary, job store, audit and HTTP surface are the real ones.
+    """
+    from arabic_agent.printing.base import PrintDocument
+    from arabic_agent.printing.policy import PrintPolicy
+    from arabic_agent.printing.runtime import PrintRuntime
+
+    from .fake_printing import FakePrintBackend
+
+    app = _app(tmp_path, printing_enabled=True)
+    platform = app.state.desktop_service._platform
+    assert platform.print_runtime is not None
+
+    platform.print_runtime = PrintRuntime(
+        backend=FakePrintBackend(), policy=PrintPolicy(), audit=platform.audit
+    )
+
+    document = tmp_path / "approved" / "report.pdf"
+    document.parent.mkdir(parents=True, exist_ok=True)
+    document.write_bytes(b"%PDF-1.4\n" + b"x" * 64)
+
+    import asyncio
+
+    asyncio.run(
+        platform.print_runtime.submit(
+            tenant_id="local",
+            user_id="local",
+            run_id="run-1",
+            document=PrintDocument(
+                path=str(document), title="Report", content_type="application/pdf"
+            ),
+            printer_id="HP",
+            resolved_path=str(document),
+        )
+    )
+
+    client = TestClient(app)
+    view = client.get("/desktop/printing", headers=HEADERS).json()
+    assert view["enabled"] is True
+    assert view["available"] is True
+    assert view["backend"] == "fake"
+    jobs = client.get("/desktop/printing/jobs", headers=HEADERS).json()
+    assert jobs["enabled"] is True
+    assert jobs["count"] == 1
+    job = jobs["jobs"][0]
+    assert job["job_id"] == "HP-1"
+    assert job["title"] == "Report"
+    assert job["status"] == "queued"
+    assert job["size_bytes"] > 0
+
+
 def test_bootstrap_includes_the_extended_surface(tmp_path):
     app = _app(tmp_path)
     client = TestClient(app)
@@ -272,6 +345,7 @@ def test_bootstrap_includes_the_extended_surface(tmp_path):
         "workflows",
         "connectors",
         "computer",
+        "printing",
         "memory",
         "active_model",
     )

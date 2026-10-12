@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -37,16 +38,23 @@ from ..base import (
     PrintColorMode,
     PrintDocument,
     PrintDuplex,
+    PrinterCapabilities,
     PrinterInfo,
     PrintJob,
     PrintJobStatus,
     PrintOptions,
+    PrintOrientation,
 )
 
 logger = logging.getLogger(__name__)
 
 #: Largest chunk written to the spooler at once (1 MiB).
 _CHUNK = 1024 * 1024
+
+#: Win32 ``JOB_STATUS_*`` bits that mean the job is finished/failed.
+_JOB_STATUS_PRINTED = 0x00000080
+_JOB_STATUS_DELETED = 0x00000100
+_JOB_STATUS_ERROR = 0x00000002
 
 
 class WinSpoolAdapter(ABC):
@@ -63,6 +71,14 @@ class WinSpoolAdapter(ABC):
     @abstractmethod
     def cancel(self, *, printer: str, job_id: str) -> bool:
         """Cancel a job; return whether the spooler accepted it."""
+
+    def job_status(self, *, printer: str, job_id: str) -> PrintJobStatus:
+        """Return a job's status; the default cannot observe it."""
+        return PrintJobStatus.UNKNOWN
+
+    def printer_capabilities(self, *, printer: str) -> PrinterCapabilities | None:
+        """Return what a printer reports it can do, or ``None`` if not queryable."""
+        return None
 
 
 class CtypesWinSpoolAdapter(WinSpoolAdapter):
@@ -194,9 +210,7 @@ class CtypesWinSpoolAdapter(WinSpoolAdapter):
 
         handle = wintypes.HANDLE()
         if not winspool.OpenPrinterW(printer, ctypes.byref(handle), None):
-            raise ExternalServiceError(
-                "could not open the printer", details={"printer": printer}
-            )
+            raise ExternalServiceError("could not open the printer", details={"printer": printer})
         try:
             doc = DOC_INFO_1(title, None, "RAW")
             job_id = winspool.StartDocPrinterW(handle, 1, ctypes.byref(doc))
@@ -242,6 +256,200 @@ class CtypesWinSpoolAdapter(WinSpoolAdapter):
         finally:
             winspool.ClosePrinter(handle)
 
+    # -- Status ----------------------------------------------------------
+    def job_status(self, *, printer: str, job_id: str) -> PrintJobStatus:
+        if not self._available:
+            return PrintJobStatus.UNKNOWN
+        return self._job_status_win32(printer=printer, job_id=job_id)
+
+    def _job_status_win32(  # pragma: no cover - Windows only
+        self, *, printer: str, job_id: str
+    ) -> PrintJobStatus:
+        import ctypes
+        from ctypes import wintypes
+
+        winspool = self._spooler()
+
+        class SYSTEMTIME(ctypes.Structure):
+            _fields_ = [
+                ("wYear", wintypes.WORD),
+                ("wMonth", wintypes.WORD),
+                ("wDayOfWeek", wintypes.WORD),
+                ("wDay", wintypes.WORD),
+                ("wHour", wintypes.WORD),
+                ("wMinute", wintypes.WORD),
+                ("wSecond", wintypes.WORD),
+                ("wMilliseconds", wintypes.WORD),
+            ]
+
+        class JOB_INFO_1(ctypes.Structure):
+            _fields_ = [
+                ("JobId", wintypes.DWORD),
+                ("pPrinterName", wintypes.LPWSTR),
+                ("pMachineName", wintypes.LPWSTR),
+                ("pUserName", wintypes.LPWSTR),
+                ("pDocument", wintypes.LPWSTR),
+                ("pDatatype", wintypes.LPWSTR),
+                ("pStatus", wintypes.LPWSTR),
+                ("Status", wintypes.DWORD),
+                ("Priority", wintypes.DWORD),
+                ("Position", wintypes.DWORD),
+                ("TotalPages", wintypes.DWORD),
+                ("PagesPrinted", wintypes.DWORD),
+                ("Submitted", SYSTEMTIME),
+            ]
+
+        handle = wintypes.HANDLE()
+        if not winspool.OpenPrinterW(printer, ctypes.byref(handle), None):
+            return PrintJobStatus.UNKNOWN
+        try:
+            needed = wintypes.DWORD(0)
+            returned = wintypes.DWORD(0)
+            # Level 1, job filter by id: the second parameter is the job id.
+            winspool.GetJobW(
+                handle, int(job_id), 1, None, 0, ctypes.byref(needed), ctypes.byref(returned)
+            )
+            if needed.value == 0:
+                # The job is no longer in the queue: it has left the spooler.
+                # Without history we cannot distinguish printed from deleted, so
+                # report UNKNOWN rather than guess success.
+                return PrintJobStatus.UNKNOWN
+            buffer = ctypes.create_string_buffer(needed.value)
+            if not winspool.GetJobW(
+                handle,
+                int(job_id),
+                1,
+                buffer,
+                needed.value,
+                ctypes.byref(needed),
+                ctypes.byref(returned),
+            ):
+                return PrintJobStatus.UNKNOWN
+            info = ctypes.cast(buffer, ctypes.POINTER(JOB_INFO_1)).contents
+            status = int(info.Status)
+            if status & _JOB_STATUS_ERROR:
+                return PrintJobStatus.FAILED
+            if status & _JOB_STATUS_DELETED:
+                return PrintJobStatus.CANCELLED
+            if status & _JOB_STATUS_PRINTED:
+                return PrintJobStatus.COMPLETED
+            if info.PagesPrinted and info.TotalPages and info.PagesPrinted >= info.TotalPages:
+                return PrintJobStatus.COMPLETED
+            if info.PagesPrinted:
+                return PrintJobStatus.PRINTING
+            return PrintJobStatus.QUEUED
+        finally:
+            winspool.ClosePrinter(handle)
+
+    # -- Capabilities ----------------------------------------------------
+    def printer_capabilities(self, *, printer: str) -> PrinterCapabilities | None:
+        if not self._available:
+            return None
+        return self._printer_capabilities_win32(printer=printer)
+
+    def _printer_capabilities_win32(  # pragma: no cover - Windows only
+        self, *, printer: str
+    ) -> PrinterCapabilities | None:
+        import ctypes
+        from ctypes import wintypes
+
+        winspool = self._spooler()
+
+        class PRINTER_INFO_2(ctypes.Structure):
+            _fields_ = [
+                ("pServerName", wintypes.LPWSTR),
+                ("pPrinterName", wintypes.LPWSTR),
+                ("pShareName", wintypes.LPWSTR),
+                ("pPortName", wintypes.LPWSTR),
+                ("pDriverName", wintypes.LPWSTR),
+                ("pComment", wintypes.LPWSTR),
+                ("pLocation", wintypes.LPWSTR),
+                ("pDevMode", ctypes.c_void_p),
+                ("pSepFile", wintypes.LPWSTR),
+                ("pPrintProcessor", wintypes.LPWSTR),
+                ("pDatatype", wintypes.LPWSTR),
+                ("pParameters", wintypes.LPWSTR),
+                ("pSecurityDescriptor", ctypes.c_void_p),
+                ("Attributes", wintypes.DWORD),
+                ("Priority", wintypes.DWORD),
+                ("DefaultPriority", wintypes.DWORD),
+                ("StartTime", wintypes.DWORD),
+                ("UntilTime", wintypes.DWORD),
+                ("Status", wintypes.DWORD),
+                ("cJobs", wintypes.DWORD),
+                ("AveragePPM", wintypes.DWORD),
+            ]
+
+        # DEVMODE is a variable-length structure; only the fixed prefix through
+        # the capability fields is read. ``dmFields`` bits tell which of the
+        # following fields are meaningful.
+        class DEVMODE(ctypes.Structure):
+            _fields_ = [
+                ("dmDeviceName", wintypes.WCHAR * 32),
+                ("dmSpecVersion", wintypes.WORD),
+                ("dmDriverVersion", wintypes.WORD),
+                ("dmSize", wintypes.WORD),
+                ("dmDriverExtra", wintypes.WORD),
+                ("dmFields", wintypes.DWORD),
+                ("dmOrientation", ctypes.c_short),
+                ("dmPaperSize", ctypes.c_short),
+                ("dmPaperLength", ctypes.c_short),
+                ("dmPaperWidth", ctypes.c_short),
+                ("dmScale", ctypes.c_short),
+                ("dmCopies", ctypes.c_short),
+                ("dmDefaultSource", ctypes.c_short),
+                ("dmPrintQuality", ctypes.c_short),
+                ("dmColor", ctypes.c_short),
+                ("dmDuplex", ctypes.c_short),
+            ]
+
+        DM_ORIENTATION = 0x00000001
+        DM_PAPERSIZE = 0x00000002
+        DM_COPIES = 0x00000100
+        DM_COLOR = 0x00000800
+        DM_DUPLEX = 0x00001000
+
+        handle = wintypes.HANDLE()
+        if not winspool.OpenPrinterW(printer, ctypes.byref(handle), None):
+            return None
+        try:
+            needed = wintypes.DWORD(0)
+            winspool.GetPrinterW(handle, 2, None, 0, ctypes.byref(needed))
+            if needed.value == 0:
+                return None
+            buffer = ctypes.create_string_buffer(needed.value)
+            if not winspool.GetPrinterW(handle, 2, buffer, needed.value, ctypes.byref(needed)):
+                return None
+            info = ctypes.cast(buffer, ctypes.POINTER(PRINTER_INFO_2)).contents
+            if not info.pDevMode:
+                return PrinterCapabilities(detail="the driver reported no DEVMODE")
+            devmode = ctypes.cast(info.pDevMode, ctypes.POINTER(DEVMODE)).contents
+            fields = int(devmode.dmFields)
+            orientations: tuple[PrintOrientation, ...] | None = None
+            if fields & DM_ORIENTATION:
+                orientations = (PrintOrientation.PORTRAIT, PrintOrientation.LANDSCAPE)
+            color_modes: tuple[PrintColorMode, ...] | None = None
+            if fields & DM_COLOR:
+                color_modes = (PrintColorMode.COLOR, PrintColorMode.MONOCHROME)
+            duplex_modes: tuple[PrintDuplex, ...] | None = None
+            if fields & DM_DUPLEX:
+                duplex_modes = (
+                    PrintDuplex.ONE_SIDED,
+                    PrintDuplex.LONG_EDGE,
+                    PrintDuplex.SHORT_EDGE,
+                )
+            max_copies = int(devmode.dmCopies) if fields & DM_COPIES else None
+            detail = "" if fields & DM_PAPERSIZE else "paper size not reported by the driver"
+            return PrinterCapabilities(
+                color_modes=color_modes,
+                duplex_modes=duplex_modes,
+                orientations=orientations,
+                max_copies=max_copies or None,
+                detail=detail,
+            )
+        finally:
+            winspool.ClosePrinter(handle)
+
 
 class WindowsPrintBackend(PrintBackend):
     """A real Windows printing backend, available only on Windows."""
@@ -280,13 +488,12 @@ class WindowsPrintBackend(PrintBackend):
         self.require_available()
         path = Path(document.path)
         if not await asyncio.to_thread(path.is_file):
-            raise NotFoundError(
-                "document to print was not found", details={"path": document.path}
-            )
+            raise NotFoundError("document to print was not found", details={"path": document.path})
         title = document.title or path.name
         # The RAW datatype hands the file to the driver untouched; options that
-        # need driver rendering (duplex/media/copies) are a documented limit of
-        # the raw path and are not silently pretended to be applied.
+        # need driver rendering (duplex/media/copies/orientation) are a
+        # documented limit of the raw path and are not silently pretended to be
+        # applied.
         job_id = await asyncio.to_thread(
             self._adapter.submit_raw, printer=printer_id, title=title, path=str(path)
         )
@@ -297,7 +504,18 @@ class WindowsPrintBackend(PrintBackend):
             status=PrintJobStatus.QUEUED,
             detail="submitted as RAW spool data",
             backend=self.name,
+            submitted_at=time.time(),
         )
+
+    async def job_status(self, job_id: str, *, printer_id: str = "") -> PrintJobStatus:
+        if not self.available:
+            return PrintJobStatus.UNKNOWN
+        return await asyncio.to_thread(self._adapter.job_status, printer=printer_id, job_id=job_id)
+
+    async def printer_capabilities(self, printer_id: str) -> PrinterCapabilities | None:
+        if not self.available:
+            return None
+        return await asyncio.to_thread(self._adapter.printer_capabilities, printer=printer_id)
 
     async def cancel_job(self, job_id: str, *, printer_id: str = "") -> bool:
         if not self.available:
@@ -310,6 +528,6 @@ class WindowsPrintBackend(PrintBackend):
 
 # Colour/duplex are intentionally unused by the raw path; referenced so the
 # imports document the full option vocabulary the interface accepts.
-_ = (PrintColorMode, PrintDuplex)
+_ = (PrintColorMode, PrintDuplex, PrintOrientation)
 
 __all__ = ["CtypesWinSpoolAdapter", "WinSpoolAdapter", "WindowsPrintBackend"]

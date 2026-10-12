@@ -55,6 +55,11 @@ def platform_default_policy() -> PolicySet:
                 permission=Permission.READ_ERP,
                 reason="read-only ERP access",
             ),
+            Rule(
+                effect=PermissionEffect.ALLOW,
+                permission=Permission.CALENDAR_READ,
+                reason="reading calendars and availability is read-only",
+            ),
             # Workflows orchestrate existing tools; they never bypass policy.
             # Defining/publishing a workflow and starting a workflow run are
             # allowed for an authenticated principal, while every *step* that
@@ -134,6 +139,16 @@ def platform_default_policy() -> PolicySet:
                 effect=PermissionEffect.REQUIRES_APPROVAL,
                 permission=Permission.WRITE_ERP,
                 reason="writing to the ERP affects business records",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.CALENDAR_WRITE,
+                reason="creating or changing calendar events affects other people's time",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.CALENDAR_DELETE,
+                reason="deleting a calendar event is destructive and notifies attendees",
             ),
             Rule(
                 effect=PermissionEffect.REQUIRES_APPROVAL,

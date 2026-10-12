@@ -173,8 +173,23 @@ and secrets are reported by kind + locator only, never by value.
 - [ ] PPTX generation (independent tool).
 - [ ] Browser automation tool (sandboxed, permission-gated).
 - [ ] Email tool (IMAP/SMTP + provider APIs), `SEND_EMAIL` gated.
-- [ ] Calendar tool.
-- [ ] Printing tool (`PRINT_DOCUMENT` gated).
+- [x] Calendar tool: provider-neutral `CalendarConnector` (`calendar.py`), read
+      (`calendar_read` / `CALENDAR_READ`), create/update (`calendar_write` /
+      `CALENDAR_WRITE`, approval-bound + verified) and delete (`calendar_delete` /
+      `CALENDAR_DELETE`, approval-bound + verified). Bundled
+      `GoogleCalendarProvider` (Calendar v3 + OAuth refresh); another backend is
+      a new `CalendarProvider`. Tested in `test_calendar.py` against a real local
+      HTTP server.
+- [x] Printing (Phase 11): provider-neutral `PrintBackend` seam over the real OS
+      spooler (CUPS on POSIX via `lp`/`lpstat`/`lpoptions`, Win32 spooler on
+      Windows; macOS honest-unavailable), `PrintPolicy` + per-run `JobBudget`,
+      `PrintRuntime` enforcing size/policy/the data boundary before the spooler
+      is touched, a tenant-isolated durable job-metadata store, and the
+      permission-gated tools `list_printers`, `print_document` (`PRINT`,
+      approval-gated), `print_job_status`, `list_print_jobs` (read-only) and
+      `cancel_print_job` (approval-gated). Paths resolve through the filesystem
+      sandbox; the desktop surface exposes `/desktop/printing` and
+      `/desktop/printing/jobs`. See ARCHITECTURE.md §13f.
 - [ ] Image analysis tool.
 - [ ] Video understanding tool: frames → OCR → speech-to-text → timeline →
       visual events → understanding. Define the interface first; implement

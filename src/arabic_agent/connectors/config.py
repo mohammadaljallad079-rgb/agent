@@ -27,6 +27,7 @@ from ..core.errors import ConfigurationError
 from ..local.sandbox import FilesystemPolicy
 from .base import Connector, ConnectorRegistry
 from .business import BusinessConnector, ResourceMapping
+from .calendar import CalendarConnector, GoogleCalendarProvider
 from .credentials import CredentialRef, CredentialResolver
 from .email import EmailConnector
 from .http import DEFAULT_METHODS, HttpConnector
@@ -79,6 +80,15 @@ class ConnectorSpec(BaseModel):
 
     # -- Business -------------------------------------------------------
     resources: tuple[ResourceMapping, ...] = ()
+
+    # -- Calendar -------------------------------------------------------
+    #: Default calendar id the agent operates on when none is named.
+    calendar_id: str = "primary"
+    #: A refresh token plus client credentials, for unattended renewals. The
+    #: access token itself is taken from the shared ``access_token_env`` above.
+    refresh_token_env: str = ""
+    client_id_env: str = ""
+    client_secret_env: str = ""
 
 
 def parse_connector_specs(raw: str) -> list[ConnectorSpec]:
@@ -238,6 +248,36 @@ def _build_one(
             name=spec.name,
             transport=transport,
             resources=spec.resources,
+        )
+    if spec.kind is ConnectorKind.CALENDAR:
+        # The provider is selected by name so a second calendar backend adds no
+        # connector logic. Only the official Google adapter ships here.
+        provider_name = spec.provider or "google_calendar"
+        if provider_name != "google_calendar":
+            raise ConfigurationError(
+                f"unknown calendar provider: {provider_name!r}",
+                details={"connector": spec.name},
+            )
+        calendar_provider = GoogleCalendarProvider(
+            access_token=_credential_ref(
+                spec.access_token_env, description="google oauth access token", required=False
+            ),
+            refresh_token=_credential_ref(
+                spec.refresh_token_env, description="google oauth refresh token", required=False
+            ),
+            client_id=_credential_ref(
+                spec.client_id_env, description="google oauth client id", required=False
+            ),
+            client_secret=_credential_ref(
+                spec.client_secret_env, description="google oauth client secret", required=False
+            ),
+            credentials=credentials,
+            retry=retry,
+        )
+        return CalendarConnector(
+            name=spec.name,
+            provider=calendar_provider,
+            default_calendar=spec.calendar_id or "primary",
         )
     raise ConfigurationError(
         f"unsupported connector kind: {spec.kind.value!r}", details={"connector": spec.name}

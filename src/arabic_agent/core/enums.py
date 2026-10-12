@@ -336,6 +336,7 @@ class ConnectorKind(StrEnum):
     MESSAGING = "messaging"
     WEBHOOK = "webhook"
     BUSINESS = "business"
+    CALENDAR = "calendar"
 
 
 class ConnectorState(StrEnum):

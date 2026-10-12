@@ -135,6 +135,7 @@ class AuditEventType(StrEnum):
     # document name, page count and policy decision — never the document bytes.
     PRINT_PRINTERS_LISTED = "print.printers_listed"
     PRINT_JOB_SUBMITTED = "print.job_submitted"
+    PRINT_JOB_STATUS = "print.job_status"
     PRINT_JOB_FAILED = "print.job_failed"
     PRINT_JOB_CANCELLED = "print.job_cancelled"
     PRINT_BOUNDARY_DECISION = "print.boundary_decision"

@@ -137,6 +137,7 @@ def create_desktop_app(
             "artifacts": await service.list_artifacts(),
             "connectors": service.connectors_view(),
             "computer": service.computer_view(),
+            "printing": service.printing_view(),
             "workflows": await service.list_workflows(),
             "memory": await service.list_memory(),
             "diagnostics": service.diagnostics(),
@@ -341,6 +342,15 @@ def create_desktop_app(
     @app.get("/desktop/computer")
     async def get_computer(_: None = Depends(authorize)) -> dict[str, object]:
         return service.computer_view()
+
+    # -- Printing --------------------------------------------------------
+    @app.get("/desktop/printing")
+    async def get_printing(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.printing_view()
+
+    @app.get("/desktop/printing/jobs")
+    async def get_print_jobs(limit: int = 50, _: None = Depends(authorize)) -> dict[str, object]:
+        return await service.list_print_jobs(limit=limit)
 
     # -- Memory ----------------------------------------------------------
     @app.get("/desktop/memory")
