@@ -344,12 +344,14 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   `scripts/build_windows.ps1` (same flow as `.github/workflows/windows.yml`). See
   ARCHITECTURE.md §18a, `docs/WINDOWS_ACCEPTANCE.md` and TODO.md.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
-  PPTX generation, image/video tools, social connectors, printing/calendar
-  tools, and a cloud web UI (the Arabic-first desktop UI exists inside the
-  pywebview shell; a browser-served multi-tenant frontend does not). Document
-  *generation* is now implemented for PDF/DOCX/XLSX/CSV/Markdown/HTML/JSON (see
-  `documents/generation.py` and the `generate_document` / `create_spreadsheet`
-  tools).
+  image/video tools, social connectors, and a cloud web UI (the Arabic-first
+  desktop UI exists inside the pywebview shell and now includes a printing
+  panel; a browser-served multi-tenant frontend does not). Document *generation*
+  is implemented for PDF/DOCX/PPTX/XLSX/CSV/Markdown/HTML/JSON (see
+  `documents/generation.py` and the `generate_document` / `create_spreadsheet` /
+  `create_presentation` tools). Printing (Phase 11) and calendar (Phase 9)
+  tools are implemented and permission-gated; see ARCHITECTURE.md §13f and the
+  connector/tool suites.
 - Connectors (Phase 9) reach *remote* systems, so unlike the local-only
   computer/browser tools they are available in a cloud runtime too; they are
   still opt-in (`AAP_CONNECTORS_ENABLED`) and every write/send is

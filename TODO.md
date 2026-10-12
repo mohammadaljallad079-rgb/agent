@@ -169,10 +169,16 @@ and secrets are reported by kind + locator only, never by value.
       actually produce. Arabic is first-class: PDF shapes it with a resolved
       Unicode font, DOCX/HTML are written RTL-aware and UTF-8, and CSV carries a
       BOM so Excel opens Arabic correctly. Writes are `WRITE_FILE` gated and
-      approval-aware. PPTX generation remains planned.
-- [ ] PPTX generation (independent tool).
-- [ ] Browser automation tool (sandboxed, permission-gated).
-- [ ] Email tool (IMAP/SMTP + provider APIs), `SEND_EMAIL` gated.
+      approval-aware.
+- [x] PPTX generation (independent tool): `create_presentation` writes a real
+      `.pptx` (python-pptx), marks Arabic paragraphs right-to-left, and reports
+      the real byte size; a format whose library is absent is refused, not faked.
+- [x] Browser automation tool (sandboxed, permission-gated): `browser_*` tools
+      over the Playwright backend. Registered only when the browser runtime is
+      available; the backend reports itself honestly unavailable otherwise.
+- [x] Email tool (IMAP/SMTP + provider APIs), `SEND_EMAIL` gated: `email_send`
+      and `email_search` over the provider-neutral SMTP/IMAP connector; sending
+      is `CONSEQUENTIAL_WRITE` and bound to the message digest at approval.
 - [x] Calendar tool: provider-neutral `CalendarConnector` (`calendar.py`), read
       (`calendar_read` / `CALENDAR_READ`), create/update (`calendar_write` /
       `CALENDAR_WRITE`, approval-bound + verified) and delete (`calendar_delete` /
