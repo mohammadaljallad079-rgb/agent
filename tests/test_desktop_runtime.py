@@ -314,6 +314,32 @@ def test_ui_has_a_real_provider_surface():
     assert "اختبار الاتصال" in html
 
 
+def test_ui_has_a_real_printing_surface():
+    """The printing section renders the real runtime state, not a placeholder."""
+    html = _load_index_html()
+    assert 'id="s-printing"' in html
+    assert 'id="printing"' in html
+    assert 'id="printJobs"' in html
+    # Reachable from navigation and fed from the bootstrap payload.
+    assert '"printing"' in html
+    assert "boot.printing" in html and "boot.printJobs" in html
+    # Arabic strings are present for the surface.
+    assert "الطباعة" in html
+    assert "مهام الطباعة" in html
+
+
+async def test_bridge_printing_surface_over_real_http(live_desktop: str):
+    bridge = DesktopBridge(base_url=live_desktop, token=TOKEN)
+    try:
+        view = await bridge.printing()
+        assert "enabled" in view and "available" in view
+        jobs = await bridge.print_jobs()
+        assert jobs["enabled"] is False  # printing stays off in the test env
+        assert jobs["jobs"] == []
+    finally:
+        await bridge.aclose()
+
+
 def test_load_index_html_missing_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     import arabic_agent.desktop.shell as shell
 

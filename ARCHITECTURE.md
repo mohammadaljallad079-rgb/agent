@@ -1275,9 +1275,10 @@ assumed complete.
 `/desktop/printing` reports `enabled` / `available` / `backend` /
 `unavailable_reason` from real settings and runtime state (never a claimed
 printer), and `/desktop/printing/jobs` returns the tenant's persisted job
-metadata, most recent first. Both are included in `/desktop/bootstrap` and in
-`/desktop/diagnostics`; the capability catalogue lists printing under
-`PRINT_DOCUMENT`.
+metadata, most recent first. Both are included in `/desktop/bootstrap` (as
+`printing` and `printJobs`) and in `/desktop/diagnostics`; the native shell
+renders them in an Arabic-first "الطباعة" panel, and the capability catalogue
+lists printing under `PRINT_DOCUMENT`.
 
 ---
 

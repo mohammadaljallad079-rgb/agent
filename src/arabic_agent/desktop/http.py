@@ -138,6 +138,7 @@ def create_desktop_app(
             "connectors": service.connectors_view(),
             "computer": service.computer_view(),
             "printing": service.printing_view(),
+            "printJobs": await service.list_print_jobs(),
             "workflows": await service.list_workflows(),
             "memory": await service.list_memory(),
             "diagnostics": service.diagnostics(),

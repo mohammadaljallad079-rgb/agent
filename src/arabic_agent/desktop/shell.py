@@ -174,6 +174,12 @@ class DesktopBridge:
     async def computer(self) -> Any:
         return await self._get("/desktop/computer")
 
+    async def printing(self) -> Any:
+        return await self._get("/desktop/printing")
+
+    async def print_jobs(self) -> Any:
+        return await self._get("/desktop/printing/jobs")
+
     async def memory(self) -> Any:
         return await self._get("/desktop/memory")
 

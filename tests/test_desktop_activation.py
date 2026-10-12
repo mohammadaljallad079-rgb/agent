@@ -346,6 +346,7 @@ def test_bootstrap_includes_the_extended_surface(tmp_path):
         "connectors",
         "computer",
         "printing",
+        "printJobs",
         "memory",
         "active_model",
     )

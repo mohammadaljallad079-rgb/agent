@@ -158,6 +158,16 @@
       <div class="card"><div id="computer" class="muted"></div></div>
     </section>
 
+    <section id="s-printing">
+      <h2 data-i18n="printing">الطباعة</h2>
+      <div class="card"><div id="printing" class="muted"></div></div>
+      <div class="card">
+        <h3 data-i18n="printJobs">مهام الطباعة</h3>
+        <div class="muted" id="printJobsCount"></div>
+        <div id="printJobs"></div>
+      </div>
+    </section>
+
     <section id="s-memory">
       <h2 data-i18n="memory">الذاكرة</h2>
       <div id="memory"></div>
@@ -223,6 +233,9 @@
         providers:"مزوّدو الذكاء السحابي", testConnection:"اختبار الاتصال", defaultProvider:"المزوّد الافتراضي",
         noProviders:"لا يوجد مزوّد مهيّأ",
         tools:"الأدوات", workflows:"سير العمل", connectors:"الموصّلات", computer:"التحكم بالحاسوب",
+        printing:"الطباعة", printJobs:"مهام الطباعة", noPrintJobs:"لا توجد مهام طباعة",
+        available:"متاح", unavailable:"غير متاح", backend:"الخلفية", reason:"السبب",
+        printer:"الطابعة", jobId:"معرّف المهمة", created:"أُنشئت",
         memory:"الذاكرة", readyState:"جاهز للتشغيل", notReady:"غير جاهز", activate:"تنشيط",
         activeModel:"النموذج النشط", noActiveModel:"لا يوجد نموذج نشط", readiness:"الجاهزية",
         setupNeeded:"يلزم الإعداد", firstRun:"الإعداد الأولي", runSetup:"إعداد النموذج",
@@ -248,6 +261,9 @@
         providers:"Cloud providers", testConnection:"Test connection", defaultProvider:"Default provider",
         noProviders:"No provider configured",
         tools:"Tools", workflows:"Workflows", connectors:"Connectors", computer:"Computer control",
+        printing:"Printing", printJobs:"Print jobs", noPrintJobs:"No print jobs",
+        available:"available", unavailable:"unavailable", backend:"Backend", reason:"Reason",
+        printer:"Printer", jobId:"Job id", created:"Created",
         memory:"Memory", readyState:"Ready to run", notReady:"Not ready", activate:"Activate",
         activeModel:"Active model", noActiveModel:"No active model", readiness:"Readiness",
         setupNeeded:"Setup required", firstRun:"First-run setup", runSetup:"Set up a model",
@@ -282,7 +298,7 @@
     }
 
     // ---- navigation ----
-    const SECTIONS = ["workspace","approvals","models","providers","tools","artifacts","workflows","connectors","computer","memory","browser","settings","diagnostics"];
+    const SECTIONS = ["workspace","approvals","models","providers","tools","artifacts","workflows","connectors","computer","printing","memory","browser","settings","diagnostics"];
     function buildNav() {
       const nav = $("nav"); nav.replaceChildren();
       SECTIONS.forEach(s => {
@@ -498,6 +514,32 @@
       ];
       rows.forEach(([k, v]) => { const d = el("div", k + ": " + v); box.appendChild(d); });
     }
+    function renderPrinting(p, jobs) {
+      const box = $("printing"); box.replaceChildren();
+      const rows = [
+        [t("enabled"), p && p.enabled ? t("yes") : t("no")],
+        [t("available"), p && p.available ? t("yes") : t("no")],
+        [t("backend"), (p && p.backend) || "—"],
+      ];
+      if (p && p.unavailable_reason) rows.push([t("reason"), p.unavailable_reason]);
+      rows.forEach(([k, v]) => { const d = el("div", k + ": " + v); box.appendChild(d); });
+
+      const listBox = $("printJobs"); listBox.replaceChildren();
+      const items = (jobs && jobs.jobs) || [];
+      $("printJobsCount").textContent = (jobs && jobs.count != null ? jobs.count : items.length) + "";
+      if (!items.length) { const d = el("div", t("noPrintJobs")); d.className = "empty"; listBox.appendChild(d); return; }
+      items.forEach(j => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", j.title || j.job_id));
+        const st = el("span", j.status); st.className = "pill"; head.appendChild(st);
+        if (!j.observed) { const s = el("span", t("unavailable")); s.className = "pill warn"; head.appendChild(s); }
+        card.appendChild(head);
+        const meta = el("div", `${t("printer")}: ${j.printer_id} · ${t("jobId")}: ${j.job_id} · ${t("size")}: ${j.size_bytes} B`);
+        meta.className = "muted"; card.appendChild(meta);
+        listBox.appendChild(card);
+      });
+    }
     function renderMemory(data) {
       const box = $("memory"); box.replaceChildren();
       const items = (data && data.entries) || [];
@@ -625,6 +667,7 @@
         renderTools(boot.tools); renderWorkflows(boot.workflows);
         renderArtifacts(boot.artifacts);
         renderConnectors(boot.connectors); renderComputer(boot.computer);
+        renderPrinting(boot.printing, boot.printJobs);
         renderMemory(boot.memory);
         renderPrivacy(boot.modes.privacy); renderPermissions(boot.permissions);
         renderModes(boot.modes); renderSettings(boot.settings); renderDiagnostics(boot.diagnostics);
