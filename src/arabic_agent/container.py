@@ -123,6 +123,9 @@ from .persistence.stores import (
     PostgresWorkflowStore,
     PostgresWorkflowVersionStore,
 )
+from .printing.backends import build_print_backend
+from .printing.policy import PrintPolicy
+from .printing.runtime import PrintRuntime
 from .runs.store import InMemoryRunStore, RunStore
 from .runtime.boundary import RuntimeProfile
 from .tasks.engine import TaskEngine
@@ -135,6 +138,7 @@ from .tools.builtin import (
     DOCUMENT_GENERATION_TOOLS,
     DOCUMENT_TOOLS,
     EXTENDED_FILESYSTEM_TOOLS,
+    PRINT_TOOLS,
     PROJECT_TOOLS,
     EchoTool,
     ListDirectoryTool,
@@ -209,6 +213,7 @@ class Platform:
         local_model_provider: LocalBackendProvider | None = None,
         computer_runtime: ComputerRuntime | None = None,
         browser_runtime: BrowserRuntime | None = None,
+        print_runtime: PrintRuntime | None = None,
         connector_runtime: ConnectorRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
@@ -249,6 +254,7 @@ class Platform:
         self.local_model_provider = local_model_provider
         self.computer_runtime = computer_runtime
         self.browser_runtime = browser_runtime
+        self.print_runtime = print_runtime
         self.connector_runtime = connector_runtime
         self.attachment_provider = attachment_provider
         self.database = database
@@ -362,6 +368,7 @@ class Platform:
         local_runtime: LocalRuntime | None = None,
         computer_runtime: ComputerRuntime | None = None,
         browser_runtime: BrowserRuntime | None = None,
+        print_runtime: PrintRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
@@ -595,6 +602,15 @@ class Platform:
             if is_local and settings.browser_enabled
             else []
         )
+        # Phase 11: printing. Local-only and opt-in — printing is a physical
+        # side effect. On a cloud build, or when printing is disabled, the tools
+        # do not exist, so the model cannot even name them. Every job is still
+        # permission- and approval-gated once they do exist.
+        print_tools = (
+            [tool_cls() for tool_cls in PRINT_TOOLS]
+            if is_local and settings.printing_enabled
+            else []
+        )
         # Phase 9: external connectors and real-world actions. Opt-in. On a
         # cloud build the tools still exist (the cloud reaches SaaS APIs), but
         # only when connectors are enabled; every write/send is approval-gated.
@@ -616,6 +632,7 @@ class Platform:
                 *local_tools,
                 *computer_tools,
                 *browser_tools,
+                *print_tools,
                 *connector_tools,
                 *(extra_tools or []),
             ]
@@ -878,6 +895,34 @@ class Platform:
                         destination_is_remote=not gateway.default_is_local(),
                     )
 
+        # --- Printing (Phase 11) ---------------------------------------
+        # Real spooler integration (CUPS on POSIX, the Win32 spooler on
+        # Windows). Local-only and opt-in: printing is a physical side effect.
+        # The runtime enforces policy, a per-run job budget, the data boundary
+        # and audit; it is injected into every tool context, exactly like the
+        # computer and browser runtimes.
+        if is_local and print_runtime is None and settings.printing_enabled:
+            print_backend = build_print_backend(platform=detect_platform())
+            print_policy = PrintPolicy(
+                max_document_bytes=settings.print_max_document_bytes,
+                max_jobs_per_run=settings.print_max_jobs_per_run,
+                min_job_interval_seconds=settings.print_min_job_interval_seconds,
+            )
+            print_runtime = PrintRuntime(
+                backend=print_backend,
+                policy=print_policy,
+                audit=audit,
+                boundary=boundary,
+            )
+            logger.info(
+                "print backend: %s (available=%s, reason=%s)",
+                print_backend.name,
+                print_backend.available,
+                print_backend.unavailable_reason or "-",
+            )
+        if print_runtime is not None:
+            tool_metadata["print_runtime"] = print_runtime
+
         # --- External connectors (Phase 9) -----------------------------
         # Built from declarative configuration. The runtime enforces the data
         # boundary, approval binding, the idempotency ledger and verification;
@@ -992,6 +1037,7 @@ class Platform:
             local_model_provider=local_model_provider,
             computer_runtime=computer_runtime,
             browser_runtime=browser_runtime,
+            print_runtime=print_runtime,
             connector_runtime=connector_runtime,
             attachment_provider=attachment_provider,
             database=database,

@@ -415,6 +415,7 @@ def build_local_runtime(
         capabilities=LocalCapabilityRegistry(
             computer_control=settings.computer_control_enabled,
             browser=settings.browser_enabled,
+            printing=settings.printing_enabled,
         ),
         devices=devices,
         sync=sync,

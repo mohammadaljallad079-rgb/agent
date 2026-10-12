@@ -78,7 +78,7 @@ class LocalCapability(BaseModel):
 
 
 def default_local_capabilities(
-    *, computer_control: bool = False, browser: bool = False
+    *, computer_control: bool = False, browser: bool = False, printing: bool = False
 ) -> tuple[LocalCapability, ...]:
     """The capability catalogue for this build.
 
@@ -89,7 +89,8 @@ def default_local_capabilities(
     explicitly enables computer control (a local runtime only), screen capture
     and synthetic input become implemented, since the real tools are registered.
     Likewise, the browser capability becomes implemented only when browsing is
-    explicitly enabled and a backend is available.
+    explicitly enabled and a backend is available, and the print capability only
+    when printing is explicitly enabled.
     """
     return (
         LocalCapability(
@@ -421,12 +422,14 @@ def default_local_capabilities(
         LocalCapability(
             id="print.document",
             name="Print document",
-            description="Send a document to a printer.",
+            description="Send a document to a printer through the local spooler.",
+            tool_name="print_document",
             risk=CapabilityRisk.MODERATE_RISK,
             permissions=(Permission.PRINT,),
             requires_approval=True,
             data_boundary=DataBoundary.LOCAL,
-            implemented=False,
+            audit_events=("print.printers_listed", "print.job_submitted"),
+            implemented=printing,
         ),
         LocalCapability(
             id="browser.control",
@@ -468,11 +471,14 @@ class LocalCapabilityRegistry:
         *,
         computer_control: bool = False,
         browser: bool = False,
+        printing: bool = False,
     ) -> None:
         items = (
             capabilities
             if capabilities is not None
-            else default_local_capabilities(computer_control=computer_control, browser=browser)
+            else default_local_capabilities(
+                computer_control=computer_control, browser=browser, printing=printing
+            )
         )
         self._by_id: dict[str, LocalCapability] = {}
         for capability in items:

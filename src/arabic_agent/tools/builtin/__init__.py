@@ -12,6 +12,7 @@ from .documents import DOCUMENT_TOOLS
 from .echo import EchoTool
 from .filesystem import ListDirectoryTool, ReadFileTool, WriteFileTool
 from .filesystem_extra import EXTENDED_FILESYSTEM_TOOLS
+from .printing import PRINT_TOOLS
 from .project import PROJECT_TOOLS
 from .shell import ShellCommandTool
 
@@ -22,6 +23,7 @@ __all__ = [
     "DOCUMENT_GENERATION_TOOLS",
     "DOCUMENT_TOOLS",
     "EXTENDED_FILESYSTEM_TOOLS",
+    "PRINT_TOOLS",
     "PROJECT_TOOLS",
     "EchoTool",
     "ListDirectoryTool",

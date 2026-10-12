@@ -197,6 +197,22 @@ class Settings(BaseSettings):
     computer_max_keyboard_actions: int = Field(default=60, ge=1)
     computer_max_captures: int = Field(default=40, ge=1)
 
+    # --- Printing (Phase 11) -----------------------------------------------
+    #: Whether the local runtime may send documents to a printer. Off by
+    #: default: printing is a physical side effect and opt-in. Even when on,
+    #: every job is permission- and approval-gated.
+    printing_enabled: bool = False
+    #: Which printing backend to use. ``auto`` picks the platform backend (CUPS
+    #: on POSIX, the Win32 spooler on Windows); an unavailable backend is
+    #: reported honestly.
+    print_backend: str = "auto"
+    #: Largest document (bytes) that may be submitted in one job.
+    print_max_document_bytes: int = Field(default=100 * 1024 * 1024, ge=1)
+    #: Per-run cap on submitted print jobs (anti-runaway).
+    print_max_jobs_per_run: int = Field(default=25, ge=1)
+    #: Minimum seconds between two print jobs.
+    print_min_job_interval_seconds: float = Field(default=0.0, ge=0.0)
+
     # --- Browser / web (Phase 8) -------------------------------------------
     #: Whether the agent may use the web through the browser tools. Off by
     #: default; when on, every action is still permission- and approval-gated.

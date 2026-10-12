@@ -131,6 +131,13 @@ class AuditEventType(StrEnum):
     COMPUTER_ACTION_THROTTLED = "computer.action_throttled"
     COMPUTER_OBSERVATION_STALE = "computer.observation_stale"
     COMPUTER_BOUNDARY_DECISION = "computer.boundary_decision"
+    # Printing (Phase 11). These record *metadata* only — a printer id, job id,
+    # document name, page count and policy decision — never the document bytes.
+    PRINT_PRINTERS_LISTED = "print.printers_listed"
+    PRINT_JOB_SUBMITTED = "print.job_submitted"
+    PRINT_JOB_FAILED = "print.job_failed"
+    PRINT_JOB_CANCELLED = "print.job_cancelled"
+    PRINT_BOUNDARY_DECISION = "print.boundary_decision"
     # Browser / web (Phase 8). These record *metadata* only — a URL, title,
     # element counts, action kind and policy decision — never the raw page text,
     # a typed secret value, or a screenshot.
