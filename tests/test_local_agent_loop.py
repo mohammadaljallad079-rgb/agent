@@ -15,6 +15,7 @@ Two layers:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from pydantic import SecretStr
 from arabic_agent.container import Platform
 from arabic_agent.context.budget import estimate_tokens, estimate_tool_schema
 from arabic_agent.core.config import Settings
-from arabic_agent.core.enums import OperatingMode, RunStatus, RuntimeKind
+from arabic_agent.core.enums import ApprovalStatus, OperatingMode, RunStatus, RuntimeKind
 from arabic_agent.core.errors import ValidationError
 from arabic_agent.local.inference import (
     LlamaCppBackend,
@@ -403,6 +404,66 @@ async def test_real_model_arabic_agent_loop(tmp_path: Path):
         event_types = {event.type.value for event in history}
         assert "tool.called" in event_types
         assert "run.completed" in event_types
+    finally:
+        await platform.aclose()
+
+
+@pytest.mark.local_model
+@requires_model
+async def test_real_model_autonomously_uses_the_document_tool(tmp_path: Path):
+    """A real local model autonomously produces a PDF through the real tool.
+
+    The whole point of the platform is that the model *chooses* a tool and the
+    runtime *executes* it, not that a plan is injected. Given an Arabic goal to
+    produce a PDF and the real registry, a real Qwen2.5-3B run must end up
+    calling ``generate_document`` and writing a real PDF whose bytes start with
+    ``%PDF`` — through the permission gate, the approval pause, and the audit
+    trail. No FakeProvider, no injected plan, no injected ToolCall.
+
+    The planner's ``tool_hint`` is deliberately not asserted: a 3B model's step
+    hints are not stable run to run. What must hold is the observable outcome —
+    the right tool is what actually ran.
+    """
+    platform = Platform.build(_local_settings(tmp_path))
+    await platform.initialize()
+    workspace = str(tmp_path / "ws")
+    try:
+        runner = platform.build_runner()
+        principal = Principal(tenant_id="tnt_1", user_id="usr_1")
+        goal = "أنشئ ملف PDF باسم report.pdf يحتوي على عنوان التقرير وفقرة نصية قصيرة."
+
+        result = await runner.run(principal=principal, goal=goal, workspace_dir=workspace)
+        while result.status is RunStatus.WAITING_APPROVAL:
+            assert result.pending_approval_id is not None
+            approval = await platform.approvals.resolve(
+                result.pending_approval_id,
+                tenant_id="tnt_1",
+                status=ApprovalStatus.APPROVED,
+                resolved_by="usr_1",
+            )
+            result = await runner.resume_after_approval(
+                principal=principal,
+                approval=approval,
+                run_id=result.run_id,
+                workspace_dir=workspace,
+            )
+
+        assert result.status is RunStatus.COMPLETED, result.error
+
+        # The document tool is what actually ran — the model's own choice.
+        history = await platform.audit.history(tenant_id="tnt_1", run_id=result.run_id)
+        called = [event.data.get("tool") for event in history if event.type.value == "tool.called"]
+        assert "generate_document" in called, f"document tool never ran: {called}"
+
+        # A real PDF exists, with real PDF bytes.
+        written = await asyncio.to_thread(lambda: list(Path(workspace).rglob("*.pdf")))
+        assert written, "no PDF was produced by the run"
+        first_bytes = await asyncio.to_thread(written[0].read_bytes)
+        assert first_bytes.startswith(b"%PDF")
+
+        # Nothing left the machine: the run stayed on the local model.
+        assert platform.gateway.stats.local_requests >= 1
+        assert platform.gateway.stats.remote_requests == 0
     finally:
         await platform.aclose()
 

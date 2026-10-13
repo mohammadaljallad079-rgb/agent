@@ -68,6 +68,18 @@ if it makes a demo look better.
   headroom above the inference backend's own output guard, and the runner asks
   for a matching `max_tokens`. A budget that is documented but not tied to the
   model is not a control — the call fails at the last moment with an overflow.
+- **A small model gets a relevant tool catalogue, not the whole registry.**
+  When the active model's window is small (below
+  `runner._RETRIEVAL_WINDOW_THRESHOLD`), the runner advertises a goal-ranked
+  subset (`tools/retrieval.py::select_relevant_tools`) instead of all ~37 tool
+  schemas — for the planner and for a step that named no tool. A weak model
+  choosing between thirty-odd tools drifts to the first generic tool it
+  recognises (a PDF goal became `write_file`); retrieval keeps the specialised
+  tool in front of it. This is a hint, never a gate: the executor still resolves
+  any registered tool name, and a large-window model keeps the full registry.
+  The ranker is lexical and dependency-free, with an Arabic-first intent lexicon
+  so English tool descriptions match Arabic goals. Do not make it call out to a
+  model or an embedding service.
 
 ## 4. Coding standards
 

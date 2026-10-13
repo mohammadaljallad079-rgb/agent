@@ -70,7 +70,7 @@ layer imports a higher one.
 | `tenancy` | Tenant / User / Role / AgentProfile identity model |
 | `i18n` | Locale, text direction, message catalog (Arabic-first) |
 | `permissions` | Permission enum, Principal, Rule, PolicySet, PolicyEngine, Approvals |
-| `tools` | Tool abstraction, registry, built-in tools |
+| `tools` | Tool abstraction, registry, built-in tools, goal-aware retrieval |
 | `models` | Provider abstraction, gateway (retry/fallback/usage), registry |
 | `memory` | Memory entries, store abstraction, write/retention policy |
 | `tasks` | Task plans/steps, durable store, TaskEngine transitions |
@@ -188,6 +188,18 @@ Key invariants:
   step's planned tool (`tool_hint`) plus the always-available core tools, so an
   unrelated tool is never dangled in front of a small local model, and the
   prompt stays inside the window.
+- **A small model gets a relevant catalogue, not the whole registry.**
+  `tools/retrieval.py` ranks the registry against the goal (or a step's own
+  description when the planner named no tool) and returns the few tools worth
+  advertising. A weak model choosing between thirty-odd tools drifts to whichever
+  generic tool it recognises first — a PDF task becomes `write_file` rather than
+  `generate_document`. The ranking is IDF-weighted lexical overlap expanded by an
+  Arabic-first intent lexicon, so it is cross-lingual (English tool descriptions,
+  Arabic goals) and dependency-free. It is a hint, never a gate: a step whose
+  hint is `None` still reaches the full registry for a large-window model, and
+  the executor falls back to the registry for any name the ranker did not
+  surface. This is what lets a real Qwen2.5-3B run autonomously call
+  `generate_document` for an Arabic "make me a PDF" goal.
 - **Sensitive operations pause.** When policy returns `REQUIRES_APPROVAL`, the
   runner persists an `Approval` and returns a `PENDING_APPROVAL` result instead
   of executing. `resume_after_approval()` continues exactly where it stopped.

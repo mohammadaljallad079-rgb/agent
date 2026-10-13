@@ -160,6 +160,16 @@ and secrets are reported by kind + locator only, never by value.
 - [x] Per-step tool advertisement: a step with a `tool_hint` sees only that tool
       plus the core set, keeping the prompt small and a small local model on the
       planned tool.
+- [x] Goal-aware tool retrieval (`tools/retrieval.py`): on a small-window model
+      the runner advertises a goal-ranked subset of the registry instead of all
+      ~37 schemas — for the planner and for a step whose hint is `None`. A weak
+      model choosing among every tool drifts to the first generic one it
+      recognises (a PDF goal became `write_file`); ranking by IDF-weighted
+      lexical overlap, expanded by an Arabic-first intent lexicon, keeps
+      `generate_document` in front of it. Proven end to end with a real
+      Qwen2.5-3B: an Arabic "make me a PDF" goal autonomously calls the document
+      tool and writes a real `%PDF` file
+      (`test_real_model_autonomously_uses_the_document_tool`).
 
 ## Phase 3 — Tools & documents
 

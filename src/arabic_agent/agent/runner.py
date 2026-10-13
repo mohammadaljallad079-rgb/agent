@@ -39,6 +39,7 @@ from ..tasks.base import TaskPlan, TaskStep
 from ..tasks.engine import TaskEngine
 from ..tools.base import ToolContext
 from ..tools.registry import ToolRegistry
+from ..tools.retrieval import select_relevant_tools
 from .base import AgentRunResult, RecoveryAction
 from .executor import ExecutionOutcomeKind, ToolExecutor
 from .loops import LoopGuard
@@ -50,6 +51,9 @@ logger = logging.getLogger(__name__)
 
 FINISH_TOOL = "finish"
 _HISTORY_WINDOW = 30
+# Below this context window a model is treated as "small": it gets a
+# goal-ranked subset of the registry rather than every tool at once.
+_RETRIEVAL_WINDOW_THRESHOLD = 16_384
 
 StepAction = Literal["continue", "replan", "finish"]
 
@@ -129,6 +133,36 @@ class AgentRunner:
         except PlatformError:
             return None
         return provider.context_window
+
+    def _planning_tools(self, goal: str) -> tuple[ToolSpec, ...]:
+        """The tools worth advertising to the planner for this goal.
+
+        A weak local model cannot choose well between thirty-odd tools; ranking
+        the registry against the goal keeps the choice set small and relevant
+        (see :mod:`arabic_agent.tools.retrieval`). Cloud models with a large
+        window keep the whole registry, because breadth is useful there and the
+        context can hold it.
+        """
+        specs = self._tools.specs()
+        window = self._active_window()
+        if window is None or window >= _RETRIEVAL_WINDOW_THRESHOLD:
+            return specs
+        return select_relevant_tools(goal, specs)
+
+    def _planning_tool_budget(self) -> int | None:
+        """A character budget for the tool catalogue in the planning prompt.
+
+        A fixed-window local model must not receive a tool list that alone
+        approaches its context; the planner's own instructions and the goal need
+        room too. Budget the catalogue at a quarter of the model's window
+        (~4 chars/token), leaving three quarters for the instructions, the goal
+        and the JSON reply. Cloud/unknown windows return ``None`` (no cap): the
+        configured budget already bounds the request.
+        """
+        window = self._active_window()
+        if not window:
+            return None
+        return max(600, (window // 4) * 4)
 
     async def run(
         self,
@@ -628,6 +662,8 @@ class AgentRunner:
             user_id=principal.user_id,
             run_id=run_id,
             goal=goal,
+            tool_specs=self._planning_tools(goal),
+            tool_char_budget=self._planning_tool_budget(),
         )
         return await self._tasks.create_plan(plan)
 
@@ -647,6 +683,8 @@ class AgentRunner:
             user_id=principal.user_id,
             run_id=run_id,
             goal=plan.goal,
+            tool_specs=self._planning_tools(plan.goal),
+            tool_char_budget=self._planning_tool_budget(),
         )
         return await self._tasks.replan(plan, new_steps=list(fresh.steps), reason="recovery replan")
 
@@ -759,13 +797,21 @@ class AgentRunner:
         always-available core tools (so the agent can read/write, run the step,
         and call ``finish``). This keeps the prompt small and, on a small local
         model, stops an irrelevant tool from being chosen over the planned one.
-        With no hint, advertise everything and let the context budget trim.
+
+        When the planner named nothing, a small model is still choosing — and
+        handing it the whole registry is what lets it drift to a generic tool.
+        So the step's own description is used to retrieve a relevant subset, the
+        same way the goal ranks the planning catalogue. A large-window model
+        keeps the full registry, where breadth is affordable.
         """
         specs = self._tools.specs()
         hint = step.tool_hint
-        if not hint or hint not in {spec.name for spec in specs}:
+        if hint and hint in {spec.name for spec in specs}:
+            return tuple(spec for spec in specs if spec.name == hint or spec.name in CORE_TOOLS)
+        window = self._active_window()
+        if window is None or window >= _RETRIEVAL_WINDOW_THRESHOLD:
             return specs
-        return tuple(spec for spec in specs if spec.name == hint or spec.name in CORE_TOOLS)
+        return select_relevant_tools(step.description, specs)
 
     def _prepare_workspace(self, workspace_dir: str | None, run_id: str) -> str:
         base = (

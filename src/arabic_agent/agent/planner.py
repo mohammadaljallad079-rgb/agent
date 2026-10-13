@@ -12,11 +12,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from ..core.enums import Locale
 from ..core.errors import PlatformError
-from ..models.base import ChatMessage, ModelRequest
+from ..models.base import ChatMessage, ModelRequest, ToolSpec
 from ..models.gateway import ModelGateway
 from ..tasks.base import TaskPlan
 from .prompts import planning_prompt
@@ -34,8 +35,19 @@ class Planner:
         self._gateway = gateway
         self._locale = locale
 
-    async def plan(self, *, tenant_id: str, user_id: str, run_id: str, goal: str) -> TaskPlan:
-        descriptions, hints = await self._ask_model(goal)
+    async def plan(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        goal: str,
+        tool_specs: Sequence[ToolSpec] = (),
+        tool_char_budget: int | None = None,
+    ) -> TaskPlan:
+        descriptions, hints = await self._ask_model(
+            goal, tool_specs=tool_specs, tool_char_budget=tool_char_budget
+        )
         return TaskPlan.from_descriptions(
             tenant_id=tenant_id,
             user_id=user_id,
@@ -45,11 +57,24 @@ class Planner:
             tool_hints=hints,
         )
 
-    async def _ask_model(self, goal: str) -> tuple[list[str], list[str | None]]:
+    async def _ask_model(
+        self,
+        goal: str,
+        *,
+        tool_specs: Sequence[ToolSpec] = (),
+        tool_char_budget: int | None = None,
+    ) -> tuple[list[str], list[str | None]]:
         request = ModelRequest(
             messages=(
                 ChatMessage.system("You are a planning module. Output JSON only."),
-                ChatMessage.user(planning_prompt(self._locale, goal)),
+                ChatMessage.user(
+                    planning_prompt(
+                        self._locale,
+                        goal,
+                        tool_specs=tool_specs,
+                        max_tool_chars=tool_char_budget,
+                    )
+                ),
             ),
             temperature=0.0,
         )
@@ -59,13 +84,18 @@ class Planner:
             logger.warning("planning model call failed: %s", exc.message)
             return [goal], [None]
 
-        parsed = self._parse(response.content)
+        parsed = self._parse(
+            response.content,
+            valid_tools={s.name for s in tool_specs} if tool_specs else None,
+        )
         if parsed is None:
             return [goal], [None]
         return parsed
 
     @staticmethod
-    def _parse(content: str) -> tuple[list[str], list[str | None]] | None:
+    def _parse(
+        content: str, *, valid_tools: set[str] | None = None
+    ) -> tuple[list[str], list[str | None]] | None:
         match = _JSON_OBJECT_RE.search(content or "")
         if not match:
             return None
@@ -88,7 +118,15 @@ class Planner:
                     continue
                 descriptions.append(description)
                 hint = item.get("tool_hint")
-                hints.append(str(hint) if hint else None)
+                hint = str(hint) if hint else None
+                # A hint naming a tool that does not exist is dropped, not
+                # trusted: advertising a fabricated tool would make the step
+                # fall back to the full registry, and the runner would later
+                # treat the plan as authoritative. No hint is the honest state.
+                if hint is not None and valid_tools is not None and hint not in valid_tools:
+                    logger.debug("planner produced unknown tool hint %r; dropping it", hint)
+                    hint = None
+                hints.append(hint)
         if not descriptions:
             return None
         return descriptions, hints
