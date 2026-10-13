@@ -149,10 +149,13 @@ ignore_missing_imports = true
 
 # llama-cpp-python (and the numpy it pulls in) are optional, lazily-imported
 # dependencies of the local model runtime. Their third-party stubs are not part
-# of this project's type surface, so mypy does not follow them.
+# of this project's type surface, so mypy does not follow them. They may be
+# absent on a machine that never runs a local model, so a missing module is not
+# an error here.
 [[tool.mypy.overrides]]
 module = ["llama_cpp.*", "numpy.*"]
 follow_imports = "skip"
+ignore_missing_imports = true
 
 # Document parsers (Phase 6) are optional, lazily-imported dependencies with no
 # first-party stubs; mypy neither follows nor requires stubs for them.
@@ -183,4 +186,11 @@ ignore_missing_imports = true
 # baseline install, so mypy must not require it to be present.
 [[tool.mypy.overrides]]
 module = ["playwright.*"]
+ignore_missing_imports = true
+
+# pywebview is the optional native desktop shell (the window that hosts the UI).
+# It is installed only for the desktop product and ships no stubs, so a missing
+# module must not fail the type check of the rest of the platform.
+[[tool.mypy.overrides]]
+module = ["webview.*"]
 ignore_missing_imports = true

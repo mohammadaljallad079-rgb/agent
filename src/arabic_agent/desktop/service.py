@@ -1133,7 +1133,13 @@ def _launch_with_system(path: Path) -> bool:
         if sys.platform.startswith("win"):
             import os
 
-            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606 - user-opened artifact
+            # ``os.startfile`` exists only on Windows; resolving it via
+            # ``getattr`` keeps the behaviour identical without a platform-
+            # specific ignore that POSIX mypy would flag as unused.
+            startfile = getattr(os, "startfile", None)
+            if startfile is None:
+                return False
+            startfile(str(path))
             return True
         opener = "open" if sys.platform == "darwin" else "xdg-open"
         subprocess.Popen(  # noqa: S603 - fixed opener, no shell, sandbox-resolved path

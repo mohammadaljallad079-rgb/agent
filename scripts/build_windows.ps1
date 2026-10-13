@@ -46,16 +46,16 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
     Invoke-Step "Install build dependencies (project + packaging + desktop)" {
-        uv pip install --system -e ".[dev,desktop,packaging]"
+        uv sync --extra dev --extra desktop --extra packaging
     }
 
     Invoke-Step "Generate packaging inputs" {
-        python -m arabic_agent.desktop.packaging $OutputDir
+        uv run python -m arabic_agent.desktop.packaging $OutputDir
     }
 
     if (-not $SkipFreeze) {
         Invoke-Step "Freeze the product with PyInstaller" {
-            pyinstaller --clean --noconfirm (Join-Path $OutputDir "ArabicAIAgent.spec")
+            uv run pyinstaller --clean --noconfirm (Join-Path $OutputDir "ArabicAIAgent.spec")
         }
 
         Invoke-Step "Smoke-test the frozen executable" {

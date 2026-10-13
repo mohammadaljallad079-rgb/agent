@@ -228,6 +228,9 @@ class CtypesWin32Adapter(Win32Adapter):
         from ctypes import wintypes
 
         assert self._user32 is not None
+        # Bind to a local so the type is narrowed inside the callback closure;
+        # mypy does not carry an attribute's narrowing into a nested function.
+        user32 = self._user32
 
         class MONITORINFOEXW(ctypes.Structure):
             _fields_ = [
@@ -251,7 +254,7 @@ class CtypesWin32Adapter(Win32Adapter):
         def _callback(handle: Any, _hdc: Any, _rect: Any, _data: Any) -> bool:
             info = MONITORINFOEXW()
             info.cbSize = ctypes.sizeof(MONITORINFOEXW)
-            if self._user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+            if user32.GetMonitorInfoW(handle, ctypes.byref(info)):
                 scale = self._dpi_scale(handle)
                 results.append(
                     MonitorInfo(
@@ -313,6 +316,7 @@ class CtypesWin32Adapter(Win32Adapter):
 
         assert self._user32 is not None
         foreground = self._user32.GetForegroundWindow()
+        user32 = self._user32  # narrowed for the nested callback below
         results: list[WindowInfo] = []
 
         EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -320,15 +324,15 @@ class CtypesWin32Adapter(Win32Adapter):
         def _callback(hwnd: Any, _data: Any) -> bool:
             if len(results) >= MAX_WINDOWS:
                 return False
-            if not self._user32.IsWindowVisible(hwnd):
+            if not user32.IsWindowVisible(hwnd):
                 return True
-            length = self._user32.GetWindowTextLengthW(hwnd)
+            length = user32.GetWindowTextLengthW(hwnd)
             if length <= 0:
                 return True
             buffer = ctypes.create_unicode_buffer(length + 1)
-            self._user32.GetWindowTextW(hwnd, buffer, length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
             rect = wintypes.RECT()
-            self._user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
             results.append(
                 WindowInfo(
                     id=str(int(hwnd)),

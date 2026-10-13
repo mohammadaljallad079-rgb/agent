@@ -114,7 +114,11 @@ def _ram_bytes() -> tuple[int | None, int | None]:
 
             status = _MemoryStatusEx()
             status.dwLength = ctypes.sizeof(_MemoryStatusEx)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+            # ``ctypes.windll`` only exists on Windows; resolving it through
+            # ``getattr`` keeps the same behaviour while remaining type-safe on
+            # POSIX, where the attribute is genuinely absent.
+            windll = getattr(ctypes, "windll", None)
+            if windll is not None and windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
                 return int(status.ullTotalPhys), int(status.ullAvailPhys)
         except Exception:  # detection must never crash the runtime
             return None, None
