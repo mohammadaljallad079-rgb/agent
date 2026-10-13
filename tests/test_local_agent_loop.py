@@ -22,6 +22,7 @@ import pytest
 from pydantic import SecretStr
 
 from arabic_agent.container import Platform
+from arabic_agent.context.budget import estimate_tokens, estimate_tool_schema
 from arabic_agent.core.config import Settings
 from arabic_agent.core.enums import OperatingMode, RunStatus, RuntimeKind
 from arabic_agent.core.errors import ValidationError
@@ -142,6 +143,78 @@ def test_context_guard_allows_a_fitting_prompt():
     backend = _stub_backend(context_window=2048)
     request = ModelRequest(messages=(ChatMessage.user("Say hello."),), max_tokens=16)
     backend._guard_context(request)  # must not raise
+
+
+def _many_tool_specs(n: int):
+    from arabic_agent.models.base import ToolSpec
+
+    return tuple(
+        ToolSpec(
+            name=f"tool_{i}",
+            description="A tool with a deliberately verbose schema for budget tests. " * 3,
+            parameters={
+                "type": "object",
+                "properties": {f"arg_{j}": {"type": "string"} for j in range(6)},
+            },
+        )
+        for i in range(n)
+    )
+
+
+def test_context_manager_sizes_to_a_small_window_not_the_configured_budget():
+    """A fixed local window caps the budget below the (cloud-sized) default.
+
+    This is the regression for a real defect: the context manager planned for
+    ``max_context_tokens`` (16k by default) regardless of a local model's n_ctx,
+    so an agent step advertised all tool schemas and the request was rejected at
+    call time with "exceeds the model context window".
+    """
+    from arabic_agent.context.manager import ContextManager
+
+    settings = Settings(
+        environment="test",
+        require_auth=False,
+        max_context_tokens=16_000,
+    )
+    manager = ContextManager(settings)
+    package = manager.build(
+        system_prompt="You are a careful agent.",
+        goal="Use the tools.",
+        plan=None,
+        recent_messages=(ChatMessage.user("hi"),),
+        tool_specs=_many_tool_specs(40),
+        window=2048,
+    )
+    # Never more than the window, and the over-large optional tools are dropped
+    # rather than silently overflowing at call time.
+    assert package.budget["total"] <= 2048
+    assert package.truncated
+    assert any(item.startswith("tool:") for item in package.dropped)
+    advertised = (
+        sum(
+            estimate_tool_schema(spec.name, spec.description, spec.parameters)
+            for spec in package.tools
+        )
+        + estimate_tokens("You are a careful agent.")
+        + estimate_tokens("Use the tools.")
+    )
+    assert advertised <= package.budget["total"]
+
+
+def test_context_manager_without_a_window_keeps_the_configured_budget():
+    from arabic_agent.context.manager import ContextManager
+
+    settings = Settings(environment="test", require_auth=False, max_context_tokens=16_000)
+    manager = ContextManager(settings)
+    package = manager.build(
+        system_prompt="sys",
+        goal="g",
+        plan=None,
+        recent_messages=(ChatMessage.user("hi"),),
+        tool_specs=_many_tool_specs(3),
+        window=None,
+    )
+    assert package.budget["total"] > 2048
 
 
 # --------------------------------------------------------------------------
@@ -282,7 +355,10 @@ async def test_real_model_never_leaks_raw_tool_block_as_text(tmp_path: Path):
     platform = Platform.build(_local_settings(tmp_path))
     await platform.initialize()
     try:
-        tools = platform.tools.specs()
+        # Advertise the tools the request actually names, as the context manager
+        # does for a real step — handing a 0.5B model all ~37 schemas overflows
+        # a 4096-token window before it can answer.
+        tools = tuple(spec for spec in platform.tools.specs() if spec.name in {"echo", "finish"})
         response = await platform.gateway.complete(
             ModelRequest(
                 messages=(ChatMessage.user("Echo the text HELLO-42 using the echo tool."),),

@@ -755,6 +755,38 @@ binary; not implementable in this environment):
   as historical; this closeout section and the suite counts above are the
   current source of truth.
 
+## Local-model production-pass closeout
+
+- The full suite is green — **977 passed, 55 skipped, 0 failed** — plus the
+  opt-in real-GGUF integration tests (4 passed, 18 deselected) run with
+  `AAP_TEST_MODEL_PATH`. `ruff` is clean and `mypy --strict` reports no issues
+  in 229 source files; the wheel and sdist build.
+- Two real defects were found by driving a real 0.5B local model through the
+  full platform and fixed, both with regression tests:
+  1. **The context budget ignored the local model's window.** The context
+     manager sized every prompt to `max_context_tokens` (16k by default) even
+     when the active model was a fixed-window local model, so an agent step
+     advertised all ~37 tool schemas and the inference backend rightly refused
+     the request at call time (`local model request exceeds the model context
+     window`). The agent — and a plain chat request against a fresh install —
+     could not run at all with a small model. Fix: `ModelProvider` now exposes a
+     `context_window`; the local provider sets it from the model descriptor; the
+     runner passes it into the context manager, which caps the budget to the
+     window, drops optional tools that do not fit, reserves headroom for the
+     backend's own output guard, and asks for a matching `max_tokens`
+     (`models/base.py`, `local/model.py`, `context/manager.py`, `agent/runner.py`).
+  2. **The plan was rendered into the system message even when the budget
+     dropped it.** A failed plan reservation charged no budget yet still emitted
+     the plan text, silently pushing a composed prompt past the window. The plan
+     is now omitted from the system message whenever its reservation fails.
+- Demonstrated end to end, offline, with the real model: an Arabic goal
+  (`أنشئ ملف PDF ...`) is planned, the model emits a real tool call, the run
+  pauses for a real Human-in-the-Loop approval (`create_file` / `WRITE_FILE`),
+  and after the approval is granted (with a fresh resolved record) the approved
+  tool runs, `report.pdf` is written to the workspace, the step completes,
+  verification passes, the run is marked `completed`, and the outcome is written
+  to memory. No FakeProvider, no injected tool call.
+
 ## Verification commands
 
 ```bash

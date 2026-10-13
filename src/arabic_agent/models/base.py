@@ -188,6 +188,13 @@ class ModelProvider(ABC):
     #: this ``False``; the local runtime sets it ``True``. Used for cost
     #: accounting and routing without importing a concrete provider.
     is_local: bool = False
+    #: The model's hard input+output token window when it is a fixed-size local
+    #: model (e.g. llama.cpp ``n_ctx``). ``None`` means "no fixed window the
+    #: platform is aware of" — a cloud model or an unknown remote endpoint — so
+    #: the platform keeps its configured context budget. Local providers set
+    #: this so the context manager never plans a prompt larger than the window
+    #: it will actually be sent to.
+    context_window: int | None = None
 
     @abstractmethod
     async def complete(self, request: ModelRequest) -> ModelResponse:

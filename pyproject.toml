@@ -70,6 +70,15 @@ browser = [
 computer = [
     "pillow>=10,<13",
 ]
+# Local model inference (Phase 5). Optional: the runtime and its tests are
+# deterministic without it, and the backend reports itself unavailable
+# (honestly, with a reason) when the native library is absent — a model file
+# existing is not the same as being able to load it. `llama-cpp-python` builds
+# against the platform's C toolchain; on Windows a prebuilt wheel is used. This
+# extra is what makes genuine offline inference possible.
+local_model = [
+    "llama-cpp-python>=0.2.90,<1",
+]
 # Desktop shell (Phase 10). Optional: the runtime and the desktop HTTP surface
 # work headless without it; only the native window (`agent-shell`) needs
 # pywebview and a system web engine (WebView2 on Windows).

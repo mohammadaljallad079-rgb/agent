@@ -95,9 +95,23 @@ class ContextManager:
         locale: Locale = Locale.AR,
         attachments: Sequence[ContextAttachment] = (),
         allow_images: bool = False,
+        window: int | None = None,
     ) -> ContextPackage:
+        # A fixed-size local model (*window*) caps the budget to its real token
+        # limit, regardless of the (cloud-sized) configured default. Nothing is
+        # ever planned beyond what the provider can accept, so a small n_ctx is
+        # used to its full extent instead of failing the call at the last moment.
         total = self._settings.max_context_tokens
+        if window is not None and window > 0:
+            total = min(total, int(window))
         output_reserve = int(total * _OUTPUT_RESERVE)
+        if window is not None and window > 0:
+            # A fixed local window is guarded by the inference backend, which
+            # refuses a prompt unless ``prompt + reserved_output < window`` with
+            # ``reserved_output = max(64, window // 8)``. Reserve at least that
+            # much _plus_ framing margin, so the message overhead the estimator
+            # does not itemise can never push a composed prompt over the guard.
+            output_reserve = max(output_reserve, window // 8 + 128)
         budget = TokenBudget(total=total - output_reserve)
         dropped: list[str] = []
         truncated = False
@@ -137,9 +151,15 @@ class ContextManager:
         # 3. Goal + current plan.
         goal_text = normalize_text(goal)
         budget.force_reserve("goal", estimate_tokens(goal_text))
+        include_plan = plan is not None
         if plan is not None:
             plan_text = normalize_text(plan.render())
             if not budget.reserve("plan", estimate_tokens(plan_text)):
+                # The reservation failed, so the plan is not part of the budget.
+                # It must also be omitted from the composed system message —
+                # otherwise it is charged once for nothing while still consuming
+                # real tokens, silently pushing the request past the window.
+                include_plan = False
                 dropped.append("plan")
                 truncated = True
 
@@ -187,7 +207,13 @@ class ContextManager:
 
         messages: list[ChatMessage] = [
             ChatMessage.system(
-                self._compose_system(system_text, goal_text, plan, memory_lines, locale)
+                self._compose_system(
+                    system_text,
+                    goal_text,
+                    plan if include_plan else None,
+                    memory_lines,
+                    locale,
+                )
             )
         ]
         messages.extend(kept)

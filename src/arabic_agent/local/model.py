@@ -195,6 +195,10 @@ class LocalBackendProvider(LocalModelProvider):
         self._backend = backend
         self._timeout = timeout
         self.capabilities = frozenset(descriptor.capabilities)
+        self.is_local = True
+        # A local model has a hard, known token window; the context manager uses
+        # it to size prompts so a small n_ctx is never overflowed at call time.
+        self.context_window = int(descriptor.context_window) or None
         self.available = False
 
     @property

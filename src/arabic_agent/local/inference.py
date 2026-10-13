@@ -255,7 +255,8 @@ class LlamaCppBackend:
                 from llama_cpp import Llama  # imported lazily: optional dependency
             except ImportError as exc:  # pragma: no cover - depends on install
                 raise ResourceExhaustedError(
-                    "llama-cpp-python is not installed; install it to use a local model",
+                    "llama-cpp-python is not installed; install the 'local_model' extra "
+                    "to use a local model",
                     details={"backend": self.name},
                 ) from exc
             kwargs: dict[str, Any] = {

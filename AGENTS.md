@@ -60,6 +60,14 @@ if it makes a demo look better.
   count must be passed to the policy — a control that is documented but always
   called with zero is not a control. Failed jobs requeue with backoff, never in
   a tight loop.
+- **A model's real window bounds the prompt.** The context manager must never
+  plan a prompt larger than the active model can accept. When a provider reports
+  a fixed `context_window` (local models do; cloud providers leave it `None` and
+  keep `max_context_tokens`), the runner passes it to `ContextManager.build`,
+  which caps the budget to it, drops optional tools that do not fit, reserves
+  headroom above the inference backend's own output guard, and the runner asks
+  for a matching `max_tokens`. A budget that is documented but not tied to the
+  model is not a control — the call fails at the last moment with an overflow.
 
 ## 4. Coding standards
 
@@ -343,6 +351,23 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   tray/background runtime and notifications. Build with
   `scripts/build_windows.ps1` (same flow as `.github/workflows/windows.yml`). See
   ARCHITECTURE.md §18a, `docs/WINDOWS_ACCEPTANCE.md` and TODO.md.
+- Local-model production pass: a real 0.5B GGUF model now drives the full
+  platform end to end. `ModelProvider.context_window` is set by the local
+  provider from the model descriptor, and `AgentRunner` passes it to
+  `ContextManager.build`, which caps the budget to the model's real window,
+  drops optional tools that do not fit, reserves headroom above the inference
+  backend's output guard, and asks for a matching `max_tokens`. Before this, the
+  context manager sized prompts to `max_context_tokens` (16k) regardless of a
+  small n_ctx, so an agent step advertised all ~37 tool schemas and the request
+  was refused at call time with `local model request exceeds the model context
+  window` — the agent could not run with a small model at all. The plan is also
+  no longer rendered into the system message when its budget reservation fails.
+  Verified offline with a real model: an Arabic goal is planned, the model emits
+  a real tool call, the run pauses for a real HITL approval (`create_file` /
+  `WRITE_FILE`), and after the approval is granted the tool runs, `report.pdf`
+  is written, the run completes and the outcome is stored to memory. Regression
+  tests: `test_context_manager_sizes_to_a_small_window_not_the_configured_budget`,
+  `test_context_manager_without_a_window_keeps_the_configured_budget`.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   image/video tools, social connectors, and a cloud web UI (the Arabic-first
   desktop UI exists inside the pywebview shell and now includes a printing

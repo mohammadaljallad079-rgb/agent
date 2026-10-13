@@ -117,6 +117,19 @@ class AgentRunner:
         #: when the active model can see them.
         self._attachments = attachment_provider
 
+    def _active_window(self) -> int | None:
+        """The fixed token window of the active model, or ``None``.
+
+        Read from the resolved provider so the context manager sizes prompts to
+        the model the agent will actually call. ``None`` for a cloud/unknown
+        model, which keeps the configured (larger) budget.
+        """
+        try:
+            provider, _ = self._gateway.registry.resolve(self._gateway.default_model)
+        except PlatformError:
+            return None
+        return provider.context_window
+
     async def run(
         self,
         *,
@@ -257,6 +270,7 @@ class AgentRunner:
             attempt += 1
             memories = await self._recall(principal)
             attachments = await self._collect_attachments(run_id)
+            window = self._active_window()
             package = self._context.build(
                 system_prompt=system_prompt(self._locale),
                 goal=plan.goal,
@@ -268,8 +282,16 @@ class AgentRunner:
                 locale=self._locale,
                 attachments=attachments,
                 allow_images=self._gateway.default_supports(ModelCapability.VISION),
+                window=window,
             )
-            request = ModelRequest(messages=package.messages, tools=package.tools)
+            # A fixed-window local model must be asked for an output smaller than
+            # the headroom the context manager reserved, or the request would
+            # exceed n_ctx and fail closed. 1/8 of the window keeps a comfortable
+            # margin below the 15% the budget reserves.
+            max_tokens = max(64, window // 8) if window else None
+            request = ModelRequest(
+                messages=package.messages, tools=package.tools, max_tokens=max_tokens
+            )
             try:
                 response = await self._gateway.complete(request)
             except PlatformError as exc:
