@@ -34,6 +34,10 @@ class Route:
     body: bytes = b"{}"
     content_type: str = "application/json"
     headers: dict[str, str] = field(default_factory=dict)
+    #: When set, the response streams this file from disk instead of ``body``.
+    #: Used to serve a real, large artifact (e.g. a model) without holding it
+    #: in memory, so the installer's streaming/resume path is exercised for real.
+    file: str | None = None
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -41,6 +45,32 @@ class _Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *args: object) -> None:
         return
+
+    def _send_file(self, route: Route) -> None:
+        import os
+
+        assert route.file is not None
+        size = os.path.getsize(route.file)
+        start = 0
+        range_header = self.headers.get("range")
+        if range_header and range_header.startswith("bytes="):
+            start = int(range_header[len("bytes=") :].split("-")[0] or 0)
+        self.send_response(206 if start else route.status)
+        self.send_header("Content-Type", route.content_type)
+        for key, value in route.headers.items():
+            self.send_header(key, value)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(size - start))
+        if start:
+            self.send_header("Content-Range", f"bytes {start}-{size - 1}/{size}")
+        self.end_headers()
+        with open(route.file, "rb") as handle:
+            handle.seek(start)
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def _handle(self) -> None:
         length = int(self.headers.get("content-length") or 0)
@@ -55,6 +85,9 @@ class _Handler(BaseHTTPRequestHandler):
         route = self.server.routes.get(self.path)  # type: ignore[attr-defined]
         if route is None:
             route = self.server.default  # type: ignore[attr-defined]
+        if route.file is not None:
+            self._send_file(route)
+            return
         self.send_response(route.status)
         self.send_header("Content-Type", route.content_type)
         for key, value in route.headers.items():
@@ -97,6 +130,14 @@ class FakeHTTPServer:
     ) -> None:
         payload = body.encode("utf-8") if isinstance(body, str) else body
         self._server.routes[path] = Route(status=status, body=payload, **kwargs)  # type: ignore[attr-defined]
+
+    def route_file(
+        self, path: str, file_path: str, *, content_type: str = "application/octet-stream"
+    ) -> None:
+        """Serve a real file from disk (streamed, with Range support)."""
+        self._server.routes[path] = Route(  # type: ignore[attr-defined]
+            content_type=content_type, file=file_path
+        )
 
     def set_default(self, *, status: int = 200, body: bytes | str = b"{}", **kwargs: Any) -> None:
         payload = body.encode("utf-8") if isinstance(body, str) else body
