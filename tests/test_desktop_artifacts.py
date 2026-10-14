@@ -151,6 +151,9 @@ def test_open_artifact_launches_the_sandbox_resolved_file(tmp_path, monkeypatch)
 
 
 def test_open_artifact_refuses_a_path_outside_the_workspace(tmp_path):
+    # The setup runs a real presentation write, which needs python-pptx; skip
+    # honestly when the documents extra is absent rather than fail on setup.
+    pytest.importorskip("pptx")
     client = TestClient(_app(tmp_path))
     workspace = tmp_path / "ws"
     run_id = _run_to_completion(client, workspace)

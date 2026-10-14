@@ -797,6 +797,33 @@ binary; not implementable in this environment):
   verification passes, the run is marked `completed`, and the outcome is written
   to memory. No FakeProvider, no injected tool call.
 
+## Windows-readiness closeout
+
+- The full suite is green — **961 passed, 59 skipped, 0 failed** — and the same
+  suite on a checkout *without* the optional `documents`/`docgen` extras is
+  **919 passed, 101 skipped, 0 failed** (the extra tests skip honestly; they do
+  not error). `ruff` is clean and `mypy --strict` reports no issues in 230
+  source files.
+- Windows-only defects found from the `windows-latest` CI run and fixed at root
+  cause, each with a regression test (detail in `docs/WINDOWS_ACCEPTANCE.md` §2):
+  1. **PyInstaller spec embedded OS-native separators.** `str(Path)` produced
+     backslashes on Windows; the spec now emits every path via `Path.as_posix()`
+     and the packaging test asserts no backslash remains, so a spec generated on
+     one platform builds on the other.
+  2. **cp1252 mojibaked an Arabic round-trip.** A workflow test read a UTF-8 file
+     with the platform default codec; it now reads `encoding="utf-8"`.
+  3. **Optional-dependency gaps surfaced as errors, not skips.** python-pptx
+     (which imports Pillow) and reportlab tests now skip when their extra is
+     absent, keeping a bare checkout green.
+  4. **Frozen install could not generate documents.** The spec now collects the
+     document/model packages' modules and data files when present, and the
+     Windows build installs the `documents` and `docgen` extras, so a packaged
+     product generates Arabic PDFs instead of reporting them unavailable.
+- Tool-retrieval quality was tightened: file/directory intent tokens
+  (ملف/ملفات/مجلد/مجلدات) map to the file tools and a stopword bug that hid
+  read/delete intents was fixed (`tools/retrieval.py`), covered by
+  `tests/test_tool_retrieval.py`.
+
 ## Verification commands
 
 ```bash

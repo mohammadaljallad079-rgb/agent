@@ -197,6 +197,9 @@ async def test_document_generation_round_trips_through_executor(tmp_path):
     from arabic_agent.permissions.base import Principal
     from arabic_agent.tools.base import ToolContext
 
+    # The tool itself reports PDF generation unavailable without reportlab; the
+    # round-trip can only be asserted when the docgen extra is installed.
+    pytest.importorskip("reportlab")
     platform = _build_local(tmp_path)
     workspace = tmp_path / "approved"
     workspace.mkdir(parents=True, exist_ok=True)

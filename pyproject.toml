@@ -27,6 +27,11 @@ dependencies = [
     "aiosqlite>=0.20,<1",
     # Ephemeral coordination (rate limiting, job queue, locks, idempotency)
     "redis>=5.0,<6",
+    # IANA timezone database. Present on Linux/macOS via the OS, but Windows
+    # ships none, so `zoneinfo.ZoneInfo("UTC")` raises there. Declared as a
+    # core dependency (it is pure data, tiny) so cron/event triggers work on
+    # every platform instead of failing only on Windows.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +49,9 @@ documents = [
     "python-docx>=1.1,<2",
     "openpyxl>=3.1,<4",
     "python-pptx>=0.6.23,<2",
+    # python-pptx imports Pillow itself; declaring it keeps the pptx parser
+    # working even if a resolver does not pull it transitively.
+    "pillow>=10,<13",
     "beautifulsoup4>=4.12,<5",
 ]
 # Document *generation* (write-side). Optional and separate from ingestion: PDF

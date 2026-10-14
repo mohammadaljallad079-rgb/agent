@@ -10,6 +10,8 @@ These are unit tests over the real ranker with real registry specs.
 
 from __future__ import annotations
 
+import pytest
+
 from arabic_agent.models.base import ToolSpec
 from arabic_agent.tools.retrieval import select_relevant_tools
 
@@ -93,3 +95,75 @@ def test_selection_is_stable_and_bounded():
     second = select_relevant_tools("أنشئ ملف PDF", tools, max_tools=5)
     assert first == second
     assert len(first) <= 5
+
+
+# ---------------------------------------------------------------------------
+# The whole real registry, not a hand-picked slice
+# ---------------------------------------------------------------------------
+def _real_specs() -> list[ToolSpec]:
+    """Every spec the product actually registers for a local run."""
+    from arabic_agent.container import Platform
+    from arabic_agent.core.config import Settings
+    from arabic_agent.core.enums import OperatingMode, RuntimeKind
+    from arabic_agent.models.registry import ProviderRegistry
+
+    from .helpers import FakeProvider, text_response
+
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(lambda req, n: text_response("ok")))
+    settings = Settings(
+        environment="test",
+        require_auth=False,
+        runtime_kind=RuntimeKind.LOCAL,
+        local_store_dir="/tmp/aap-retrieval",
+        local_mode=OperatingMode.OFFLINE,
+        local_control_token="control-secret",
+        database_url="",
+        redis_url="",
+        execution_mode="inline",
+        browser_enabled=True,
+        printing_enabled=True,
+        computer_control_enabled=True,
+        connectors_enabled=True,
+    )
+    platform = Platform.build(settings, provider_registry=registry, default_model="fake/model")
+    return list(platform.tools.specs())
+
+
+@pytest.fixture(scope="module")
+def real_specs() -> list[ToolSpec]:
+    specs = _real_specs()
+    assert len(specs) > 30  # the point of retrieval is that this is large
+    return specs
+
+
+@pytest.mark.parametrize(
+    ("goal", "expected"),
+    [
+        ("أنشئ تقرير PDF باسم report.pdf فيه عنوان وفقرة.", "generate_document"),
+        ("جهّز عرضًا تقديميًا من 3 شرائح واحفظه pptx.", "create_presentation"),
+        ("أنشئ جدول اكسل للمبيعات الشهرية.", "create_spreadsheet"),
+        ("افتح صفحة الويب https://example.com واقرأ محتواها.", "browser_navigate"),
+        ("اطبع ملف التقرير على الطابعة الافتراضية.", "print_document"),
+        ("أرسل بريدًا إلكترونيًا للعميل بخصوص الفاتورة.", "email_send"),
+        ("أضف موعدًا في التقويم غدًا الساعة العاشرة.", "calendar_write"),
+        ("اقرأ الملف notes.txt كاملًا.", "read_file"),
+        ("انشئ مجلدًا باسم archive داخل مساحة العمل.", "make_directory"),
+        ("احذف الملف old.txt من مساحة العمل.", "delete_file"),
+    ],
+)
+def test_real_registry_surfaces_the_right_tool_for_each_goal(
+    real_specs: list[ToolSpec], goal: str, expected: str
+) -> None:
+    selected = select_relevant_tools(goal, real_specs, max_tools=8)
+    names = _names(selected)
+    assert expected in names, f"{expected} missing for goal {goal!r}: {sorted(names)}"
+    assert "finish" in names  # the control tool is never dropped
+
+
+def test_real_registry_selection_stays_bounded_and_includes_finish(
+    real_specs: list[ToolSpec],
+) -> None:
+    selected = select_relevant_tools("أنشئ تقرير PDF", real_specs, max_tools=8)
+    assert len(selected) <= 8
+    assert "finish" in _names(selected)

@@ -9,6 +9,8 @@ covered separately by the E2E suite.
 
 from __future__ import annotations
 
+import pytest
+
 from arabic_agent.computer.base import (
     CapturedImage,
     ComputerBackend,
@@ -22,11 +24,23 @@ from arabic_agent.computer.ocr import OcrResult, OcrWord
 from arabic_agent.core.enums import PlatformKind
 
 
+def _pil_image():
+    """Import Pillow, or skip the test honestly when the extra is absent.
+
+    Pillow is the optional ``computer`` extra and supplies the real pixels for
+    capture. Without it a capture-dependent test cannot run at all, so it is
+    skipped with a reason rather than erroring on import.
+    """
+    try:
+        from PIL import Image
+    except ImportError as exc:  # pragma: no cover - depends on the install
+        pytest.skip(f"Pillow (computer extra) not installed: {exc}")
+    return Image
+
+
 def make_image(width: int = 64, height: int = 48, color: tuple[int, int, int] = (0, 0, 0)):
     """A tiny in-memory PIL image."""
-    from PIL import Image
-
-    return Image.new("RGB", (width, height), color)
+    return _pil_image().new("RGB", (width, height), color)
 
 
 def make_pattern_image(width: int = 64, height: int = 48) -> object:
@@ -35,9 +49,9 @@ def make_pattern_image(width: int = 64, height: int = 48) -> object:
     A uniform image hashes identically under a difference hash (adjacent pixels
     are equal), so change-detection tests need real structure to compare.
     """
-    from PIL import Image, ImageDraw
+    from PIL import ImageDraw
 
-    image = Image.new("RGB", (width, height), (0, 0, 0))
+    image = _pil_image().new("RGB", (width, height), (0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, width // 2, height], fill=(255, 255, 255))
     return image

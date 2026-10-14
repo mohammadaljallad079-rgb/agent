@@ -363,6 +363,27 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   tray/background runtime and notifications. Build with
   `scripts/build_windows.ps1` (same flow as `.github/workflows/windows.yml`). See
   ARCHITECTURE.md §18a, `docs/WINDOWS_ACCEPTANCE.md` and TODO.md.
+- Windows-readiness closeout: real Windows-only defects from the
+  `windows-latest` run are fixed at root cause with regression tests, and the
+  packaging path is now proven end to end by an actual PyInstaller freeze on a
+  Linux host (not just a generated-spec check): (1) the spec embedded
+  `str(Path)` values, so it contained backslashes on Windows — every path is now
+  emitted via `Path.as_posix()` and the packaging test asserts the spec has no
+  backslash at all, so a spec generated on one platform builds on the other;
+  (2) a workflow test read a UTF-8 file with the host locale codec (cp1252 on
+  Windows), mojibaking Arabic — it now reads `encoding="utf-8"`; (3) tests that
+  need python-pptx (which imports Pillow) or reportlab now skip when the
+  `documents`/`docgen` extras are absent instead of erroring, so a bare checkout
+  is green (skips) rather than red; (4) the `documents` extra now declares
+  `pillow`, which `python-pptx` imports directly. The spec also collects the
+  optional document/model packages (modules *and* data files, each only when
+  importable) and `scripts/build_windows.ps1` installs the `documents`+`docgen`
+  extras, so the frozen installer really carries the document pipeline
+  (verified: a local freeze bundles `reportlab` fonts and the `pptx`/`docx`/
+  `pypdf`/`bs4`/`openpyxl`/`arabic_reshaper`/`bidi` modules and runs
+  `ArabicAIAgent version` → `0.1.0`). Test baseline: **960 passed, 59 skipped,
+  0 failed** with extras, **919 passed, 101 skipped, 0 failed** without them;
+  `ruff` clean, `mypy --strict` clean (230 source files).
 - Local-model production pass: a real 0.5B GGUF model now drives the full
   platform end to end. `ModelProvider.context_window` is set by the local
   provider from the model descriptor, and `AgentRunner` passes it to

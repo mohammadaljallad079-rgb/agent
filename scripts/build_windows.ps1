@@ -45,8 +45,14 @@ function Invoke-Step {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
-    Invoke-Step "Install build dependencies (project + packaging + desktop)" {
-        uv sync --extra dev --extra desktop --extra packaging
+    Invoke-Step "Install build dependencies (project + packaging + desktop + documents + docgen)" {
+        # The documents/docgen extras are what make document parsing and Arabic
+        # PDF generation real in the frozen install; without them the packaged
+        # product would honestly report those formats unsupported. local_model
+        # is deliberately excluded: llama-cpp-python has no prebuilt Windows
+        # wheel, so the frozen installer ships a real cloud path and downloads
+        # the local runtime from the app rather than bundling it.
+        uv sync --extra dev --extra desktop --extra packaging --extra documents --extra docgen
     }
 
     Invoke-Step "Generate packaging inputs" {

@@ -65,6 +65,28 @@ requires_postgres = pytest.mark.skipif(
 requires_redis = pytest.mark.skipif(not TEST_REDIS_URL, reason="AAP_TEST_REDIS_URL not set")
 
 
+def _has_module(name: str) -> bool:
+    from importlib.util import find_spec
+
+    try:
+        return find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# Pillow supplies the real pixels for the computer/screen perception tests. It
+# is an optional extra, so a minimal install skips those tests honestly instead
+# of erroring on import.
+requires_pillow = pytest.mark.skipif(
+    not _has_module("PIL"), reason="Pillow (computer extra) not installed"
+)
+# The document parsers are optional extras; a minimal install cannot read the
+# format at all, so tests that exercise the parser skip rather than error.
+requires_html_parser = pytest.mark.skipif(
+    not _has_module("bs4"), reason="beautifulsoup4 (documents extra) not installed"
+)
+
+
 @pytest.fixture()
 async def postgres_database():
     """A fresh schema in the test database, dropped when the test finishes."""

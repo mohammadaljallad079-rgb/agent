@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import ipaddress
 from enum import StrEnum
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
@@ -176,7 +176,20 @@ class UrlPolicy(BaseModel):
                 return UrlDecision.block(reason="file URLs are not permitted", scheme=scheme)
             from pathlib import Path
 
-            target = Path(parts.path).expanduser()
+            # ``urlsplit`` leaves the path percent-encoded and (on Windows) with
+            # a leading slash before the drive letter. ``as_uri()`` never emits
+            # backslashes, so a backslash here is an untrusted alias we refuse
+            # rather than let it evade the root check below.
+            path_text = parts.path
+            if "\\" in path_text:
+                return UrlDecision.block(
+                    reason="file URL contains a backslash and is not canonical",
+                    scheme=scheme,
+                )
+            decoded = unquote(path_text)
+            if len(decoded) >= 3 and decoded[0] == "/" and decoded[2] == ":":
+                decoded = decoded[1:]
+            target = Path(decoded).expanduser()
             resolved = target.resolve()
             roots = [Path(root).expanduser().resolve() for root in self.allowed_file_roots]
             if not any(resolved == root or root in resolved.parents for root in roots):

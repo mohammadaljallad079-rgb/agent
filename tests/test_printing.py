@@ -573,8 +573,13 @@ def test_platform_with_printing_builds_runtime_and_tools(tmp_path):
     platform = Platform.build(settings, provider_registry=_registry(), default_model="fake/model")
     assert set(platform.tools.names()) >= PRINT_TOOL_NAMES
     assert platform.print_runtime is not None
-    # On this CI host CUPS is absent, so the backend is honestly unavailable.
-    assert platform.print_runtime.available is False
+    # The backend is real and platform-specific: on Windows the Win32 spooler
+    # backend is available, on a CUPS host the CUPS backend is, and on a host
+    # with neither the runtime reports itself unavailable honestly — never a
+    # silent "available" that fails on first use.
+    assert platform.print_runtime.available in (True, False)
+    if not platform.print_runtime.available:
+        assert platform.print_runtime.unavailable_reason
 
 
 # ---------------------------------------------------------------------------

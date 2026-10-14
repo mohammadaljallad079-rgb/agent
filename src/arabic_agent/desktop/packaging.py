@@ -96,6 +96,36 @@ def missing_datas() -> list[Path]:
     return [source for source, _dest in bundle_datas() if not source.exists()]
 
 
+#: Packages a full Windows build installs but that a minimal install may omit.
+#: They are never required to freeze the product: each is collected only when
+#: present, so the generated spec is valid on a bare checkout *and* complete on
+#: a build host. The documents/docgen extras are what make document parsing and
+#: generation real in a frozen install; the local-model extra is what makes
+#: offline inference possible.
+_OPTIONAL_DATA_PACKAGES: tuple[str, ...] = (
+    "pypdf",
+    "docx",
+    "openpyxl",
+    "pptx",
+    "bs4",
+    "reportlab",
+    "arabic_reshaper",
+    "bidi",
+    "llama_cpp",
+)
+
+
+def optional_data_packages() -> list[str]:
+    """The optional data packages that are installed on the build host.
+
+    Returned in a stable order so a regenerated spec does not churn between
+    identical builds.
+    """
+    import importlib.util
+
+    return [name for name in _OPTIONAL_DATA_PACKAGES if importlib.util.find_spec(name) is not None]
+
+
 def _default_source_dir(output: Path) -> Path:
     """The absolute directory holding the frozen payload (PyInstaller output).
 
@@ -138,8 +168,15 @@ def build_pyinstaller_spec(
         raise FileNotFoundError(f"packaging data sources not found: {joined}")
 
     datas = bundle_datas()
-    data_lines = ",\n        ".join(f"({str(src)!r}, {dest!r})" for src, dest in datas)
-    pathex = str(_repo_root() / "src")
+    # Emit every path in its portable POSIX form: a spec generated on Windows
+    # (or checked in) must build on any platform, and PyInstaller accepts
+    # forward slashes everywhere.
+    data_lines = ",\n        ".join(f"({src.as_posix()!r}, {dest!r})" for src, dest in datas)
+    pathex = (_repo_root() / "src").as_posix()
+    # PyInstaller resolves paths in a spec with forward slashes on every
+    # platform, and a backslash-separated path is not portable between the
+    # machine that generated the spec and the one that builds it.
+    script_posix = script.as_posix()
     # Modules loaded dynamically at run time are invisible to PyInstaller's static
     # analysis and must be named explicitly:
     #  * the product subcommands are imported lazily inside __main__.main;
@@ -160,6 +197,26 @@ def build_pyinstaller_spec(
         "logging.config",
     ]
     hidden_lines = ",\n        ".join(repr(module) for module in hiddenimports)
+    optional = optional_data_packages()
+    if optional:
+        optional_names = ",\n".join(f"    {name!r}" for name in optional)
+        optional_block = f"""# Optional packages present on the build host: their modules and their own data
+# files (fonts, templates, etc.) must ship with the payload, or a frozen
+# document render or local-model load fails at run time even though the code is
+# bundled. Each name is collected only if installed, so this spec is valid on a
+# bare checkout too.
+for _pkg in [
+{optional_names},
+]:
+    hidden += collect_submodules(_pkg, on_error="ignore")
+    datas += collect_data_files(_pkg, include_py_files=False)
+"""
+    else:
+        optional_block = (
+            "# No optional data packages are installed on this host; document\n"
+            "# parsing/generation and local inference would be absent from the\n"
+            "# frozen payload, so none are collected.\n"
+        )
 
     if one_file:
         build_body = f"""exe = EXE(
@@ -209,15 +266,21 @@ coll = COLLECT(
 # The frozen executable is {script.name} and dispatches subcommands via the
 # {PACKAGE_NAME} package.
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
+
+# Data bundled by path (the desktop UI and both migration chains). The optional
+# packages' own data files are appended below, when they are installed.
+datas = [
+    {data_lines},
+]
 
 # Dynamically imported modules PyInstaller cannot see statically.
 hidden = [
     {hidden_lines},
 ]
-# The Alembic runtime is loaded from disk by the migration ``env.py``; collect
+{optional_block}# The Alembic runtime is loaded from disk by the migration ``env.py``; collect
 # it wholesale so a frozen database upgrade cannot miss a submodule. Alembic's
 # own test suite cannot be imported here (on_error="ignore") and is excluded.
 hidden += [
@@ -227,12 +290,10 @@ hidden += [
 ]
 
 a = Analysis(
-    [{str(script)!r}],
+    [{script_posix!r}],
     pathex=[{pathex!r}],
     binaries=[],
-    datas=[
-        {data_lines},
-    ],
+    datas=datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],

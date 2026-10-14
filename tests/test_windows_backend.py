@@ -62,7 +62,10 @@ class FakeWin32Adapter(Win32Adapter):
 
     def capture(self, region: Rect | None) -> CapturedImage:
         self._record("capture", region)
-        from PIL import Image
+        try:
+            from PIL import Image
+        except ImportError as exc:  # pragma: no cover - depends on the install
+            pytest.skip(f"Pillow (computer extra) not installed: {exc}")
 
         width = region.width if region else 3840
         height = region.height if region else 1080

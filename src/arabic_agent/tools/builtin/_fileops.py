@@ -173,6 +173,10 @@ def read_text_file(path: Path, *, max_bytes: int = DEFAULT_MAX_READ_BYTES) -> Re
     encoding = detect_encoding(raw)
     truncated = len(raw) > max_bytes
     text = raw[:max_bytes].decode(encoding, errors="replace")
+    # Normalise line endings: a tool result is consumed as text by the model,
+    # so a file written on Windows must read back the same as on Linux rather
+    # than leaking ``\r\n`` into every downstream comparison and prompt.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     total_lines = text.count("\n") + (0 if text.endswith("\n") or not text else 1)
     return ReadResult(
         text=text,
@@ -212,7 +216,7 @@ def read_line_range(
     truncated = False
     has_more = False
     last_line = start_line - 1
-    with path.open("r", encoding=encoding, errors="replace", newline="") as handle:
+    with path.open("r", encoding=encoding, errors="replace", newline=None) as handle:
         for line_no, line in enumerate(handle, start=1):
             if line_no < start_line:
                 continue

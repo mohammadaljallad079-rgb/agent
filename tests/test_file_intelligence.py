@@ -137,6 +137,19 @@ async def test_read_file_range_tool(tmp_path: Path) -> None:
     assert result.data["has_more"] is True
 
 
+async def test_read_file_range_tool_normalises_windows_line_endings(tmp_path: Path) -> None:
+    # A file written on Windows has CRLF endings; the tool result is text the
+    # model consumes, so it must read back identically on every platform.
+    path = tmp_path / "win.txt"
+    path.write_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\n")
+    result = await ReadFileRangeTool().run(
+        {"path": "win.txt", "start_line": 2, "end_line": 3}, _ctx(tmp_path)
+    )
+    assert result.ok
+    assert result.data["content"] == "two\nthree\n"
+    assert result.data["has_more"] is True
+
+
 async def test_edit_file_tool(tmp_path: Path) -> None:
     path = tmp_path / "code.py"
     path.write_text("VALUE = 1\n", encoding="utf-8")

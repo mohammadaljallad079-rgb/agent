@@ -81,6 +81,30 @@ for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
 4. **Code signing, tray/background runtime, Windows notifications** are not
    implemented (unchanged).
 
+### Windows defects found and fixed at root cause (with regression tests)
+
+These were genuine Windows-only failures, each fixed in the product/test and
+guarded so they cannot silently return:
+
+- **PyInstaller spec used OS-native path separators.** The spec embedded
+  `str(Path)` values, which are backslash-separated on Windows. The spec now
+  emits every path with `Path.as_posix()`, and
+  `tests/test_desktop_packaging.py::test_pyinstaller_spec_collects_data_and_entry`
+  asserts the spec contains no backslash at all, so a spec generated on one
+  platform builds on the other.
+- **Windows locale (cp1252) mojibaked Arabic on read.** A workflow test read a
+  file written as UTF-8 with the platform default codec, so the Arabic round-trip
+  failed on Windows. The test now reads with `encoding="utf-8"`; the product's
+  own reader/writer already used UTF-8 and were unchanged.
+- **Optional dependency gaps surfaced as errors instead of skips.** Tests that
+  exercise python-pptx (which itself imports Pillow) or reportlab now
+  `importorskip`/`skipif` when the `documents`/`docgen` extras are absent, so a
+  bare checkout is green (skips) rather than red (errors).
+- **Frozen install could not generate documents.** The spec now bundles the
+  document/model packages' modules and data files when present, and the Windows
+  build installs the `documents` and `docgen` extras, so a packaged product has
+  real document generation rather than a runtime "not available" message.
+
 ---
 
 ## 3. Prerequisites for a clean Windows machine
@@ -108,13 +132,15 @@ Run in PowerShell from the repository root.
 ```powershell
 # 0. Environment
 uv venv --python 3.13
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev,documents,docgen]"
 
 # 1. Quality gates (must be green before packaging)
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
-uv run pytest                      # expect: 784 passed, 55 skipped, 0 failed
+uv run pytest                      # expect: 961 passed, 59 skipped, 0 failed
+# On a bare checkout without the documents/docgen extras the same suite is
+# 919 passed, 101 skipped, 0 failed — the extra tests skip, they do not fail.
 
 # 2. Build the wheel (contains the desktop UI asset and the packaged
 #    migration chain arabic_agent/_migrations_local)
@@ -150,13 +176,21 @@ cannot drift:
 which expands to exactly:
 
 ```powershell
-uv pip install --system -e ".[dev,desktop,packaging]"
+uv pip install --system -e ".[dev,desktop,packaging,documents,docgen]"
 python -m arabic_agent.desktop.packaging dist   # writes ArabicAIAgent.spec + ArabicAIAgent.iss
 pyinstaller --clean --noconfirm dist\ArabicAIAgent.spec
 dist\ArabicAIAgent\ArabicAIAgent.exe version    # smoke test
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\ArabicAIAgent.iss
 Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256
 ```
+
+The `documents` and `docgen` extras are installed so the frozen payload
+contains working document parsing and Arabic PDF generation; the spec collects
+their modules and data files automatically (each package only if installed, so
+the spec still generates on a bare checkout). `local_model` is deliberately not
+installed: `llama-cpp-python` has no prebuilt Windows wheel, so the installer
+ships a real cloud path and the app downloads the local runtime on demand
+rather than bundling a compiler-dependent native extension.
 
 `desktop/packaging.py` produces:
 
@@ -168,8 +202,15 @@ Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256
   `migrations_local/` → `arabic_agent/_migrations_local` and `migrations/` →
   `arabic_agent/_migrations_cloud`. Every `datas` source is verified to exist
   before the spec is written, so the "Unable to find …" freeze failure cannot
-  recur. The frozen runtime resolves these via `arabic_agent.core.resources`,
-  which addresses them relative to the importable package (no cwd assumption).
+  recur. All paths in the spec are emitted in POSIX form (`Path.as_posix()`), so
+  a spec generated on Windows is byte-identical in path terms to one generated
+  on Linux and can be built on either. Optional document/model packages present
+  on the build host are collected (modules *and* data files) via
+  `collect_submodules`/`collect_data_files`, each only when importable, so a
+  frozen install can generate Arabic PDFs while a bare checkout still produces a
+  valid spec. The frozen runtime resolves these via
+  `arabic_agent.core.resources`, which addresses them relative to the importable
+  package (no cwd assumption).
 - **`ArabicAIAgent.iss`** — an Inno Setup script installing per-user into
   `{localappdata}\ArabicAIAgent` with `PrivilegesRequired=lowest` (no UAC),
   Start-menu/desktop icons, an opt-in Startup entry, and an uninstall that
