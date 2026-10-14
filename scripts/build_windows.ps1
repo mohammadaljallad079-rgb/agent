@@ -87,6 +87,9 @@ try {
             if ($proc.ExitCode -ne 0) {
                 throw "self-check failed (exit $($proc.ExitCode))"
             }
+            if (-not (Test-Path $report)) {
+                throw "self-check exited 0 but wrote no report to $report"
+            }
             Get-Content $report -Raw
         }
     }

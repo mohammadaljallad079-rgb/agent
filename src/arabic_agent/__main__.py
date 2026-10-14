@@ -79,10 +79,10 @@ def _print_version() -> int:
     return 0
 
 
-def _run_selfcheck() -> int:
+def _run_selfcheck(argv: list[str]) -> int:
     from arabic_agent.desktop.selfcheck import main as selfcheck_main
 
-    return selfcheck_main([])
+    return selfcheck_main(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "uninstall":
         return _run_uninstall()
     if command == "selfcheck":
-        return _run_selfcheck()
+        return _run_selfcheck(args[1:])
     if command in {"version", "--version", "-V"}:
         return _print_version()
 

@@ -60,3 +60,33 @@ def test_unknown_command_is_an_error(capsys):
 def test_short_version_flags():
     assert entry.main(["--version"]) == 0
     assert entry.main(["-V"]) == 0
+
+
+def test_selfcheck_forwards_its_flags(monkeypatch):
+    """Regression: the dispatcher must pass ``selfcheck``'s own flags through.
+
+    The packaged build runs ``ArabicAIAgent.exe selfcheck --report <path>`` and
+    reads that file; dropping the arguments left no report behind and failed the
+    installer build.
+    """
+    captured: list[list[str]] = []
+
+    def fake_selfcheck(argv):
+        captured.append(list(argv))
+        return 0
+
+    monkeypatch.setattr("arabic_agent.desktop.selfcheck.main", fake_selfcheck)
+    assert entry.main(["selfcheck", "--report", "out.json", "--json"]) == 0
+    assert captured == [["--report", "out.json", "--json"]]
+
+
+def test_selfcheck_with_no_flags(monkeypatch):
+    captured: list[list[str]] = []
+
+    def fake_selfcheck(argv):
+        captured.append(list(argv))
+        return 1
+
+    monkeypatch.setattr("arabic_agent.desktop.selfcheck.main", fake_selfcheck)
+    assert entry.main(["selfcheck"]) == 1
+    assert captured == [[]]
