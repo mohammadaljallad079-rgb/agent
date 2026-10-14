@@ -523,12 +523,15 @@ in-memory in the local runtime are made durable here.
 - [ ] Packaged/signed binary distribution (PyInstaller/MSIX) and an auto-update
       mechanism. The wheel ships the UI asset and both console scripts.
 
-## Phase 10W — Real Windows acceptance & installer verification (blocked)
+## Phase 10W — Real Windows acceptance & installer verification (in progress)
 
-Acceptance must run on **actual Windows**. The current development host is a
-headless Linux container (Debian 13, no Windows, no Wine, no `/dev/kvm`, no
-display), so no Windows acceptance flow can be executed here and none is
-claimed. See ARCHITECTURE.md §18a for the full status.
+Acceptance must run on **actual Windows**. The development host is a headless
+Linux container (Debian 13, no Windows, no Wine, no `/dev/kvm`, no display), so
+no *interactive* Windows acceptance gate is executed here and none is claimed.
+What is now real is the **automated** Windows half: `.github/workflows/windows.yml`
+runs the full suite on real `windows-latest` (3.11/3.12/3.13), builds the binary
+installer, and verifies it end to end before uploading. See ARCHITECTURE.md §18a
+and `docs/WINDOWS_ACCEPTANCE.md`.
 
 Two genuine defects found by a static audit + clean-venv install (both are
 host-independent and were fixed with regression tests):
@@ -587,11 +590,22 @@ binary; not implementable in this environment):
       `/desktop/browser{,/provision,/progress,/cancel}` and the desktop UI
       section let the product install/verify the Chromium runtime with real
       progress and audit, instead of telling the user to run `playwright install`.
+- [x] Automated Windows verification of the built installer:
+      `ArabicAIAgent.exe selfcheck` verifies the *packaged* product through real
+      code paths (bundled UI + both migration chains, real Arabic PDF/DOCX/PPTX/
+      XLSX writes, a real SQLite migration and a real authenticated loopback
+      request). `scripts/build_windows.ps1` runs it on the frozen payload and,
+      after compiling the installer, silently installs it, self-checks the
+      *installed* executable and uninstalls — so a broken package fails CI
+      instead of being uploaded. The installer `ArabicAIAgent-Setup-*.exe` and
+      its SHA-256 are produced by the Windows job and uploaded as an artifact.
+      Tests: `tests/test_selfcheck.py`.
 - [ ] Code signing certificate and signing.
 - [ ] Tray/background runtime and Windows notifications (not implemented).
-- [ ] Run the full acceptance matrix on real Windows (install, first run, real
-      GGUF model, real Agent file/browser/computer tasks, Arabic, approval,
-      emergency stop, offline `remote_requests == 0`, crash/restart, uninstall).
+- [ ] Interactive acceptance gates on a real logged-in Windows desktop (first-run
+      wizard, real GGUF model, real Agent file/browser/computer tasks, Arabic
+      input, approval UX, emergency stop, offline `remote_requests == 0`,
+      crash/restart). The automated gates above do not cover a live desktop.
 
 ## Phase 7 — Product surface
 
