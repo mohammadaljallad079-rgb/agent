@@ -96,7 +96,9 @@ def test_pyinstaller_entry_is_a_real_script_path(tmp_path):
     assert script.parent.name == "arabic_agent"
 
     text = build_pyinstaller_spec(output=tmp_path / "ArabicAIAgent.spec").read_text("utf-8")
-    assert f"Analysis(\n    [{str(script)!r}]" in text
+    # The entry is emitted in POSIX form so a spec generated on one platform
+    # builds on another (``str(Path)`` would embed backslashes on Windows).
+    assert f"Analysis(\n    [{script.as_posix()!r}]" in text
     # The old, broken module-name form must not come back.
     assert "Analysis(['arabic_agent.__main__']" not in text
     assert "'arabic_agent.__main__'" not in text

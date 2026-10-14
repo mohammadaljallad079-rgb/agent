@@ -134,12 +134,22 @@ def test_open_artifact_launches_the_sandbox_resolved_file(tmp_path, monkeypatch)
     launched: list[list[str]] = []
 
     import subprocess
+    import sys
 
     def fake_popen(args, **kwargs):  # type: ignore[no-untyped-def]
         launched.append(list(args))
         return object()
 
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    # The real opener is platform-specific: Windows hands the file to the shell
+    # via ``os.startfile`` (no subprocess at all), while macOS/Linux exec an
+    # opener binary. Patch whichever one this platform actually uses so the test
+    # verifies the resolved path is what gets launched everywhere.
+    if sys.platform.startswith("win"):
+        import os
+
+        monkeypatch.setattr(os, "startfile", lambda p: launched.append([str(p)]), raising=False)
+    else:
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
     resp = client.post(
         f"/desktop/runs/{run_id}/artifacts/open",
         json={"path": "deck.pptx"},
