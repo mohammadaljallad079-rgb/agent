@@ -9,6 +9,7 @@ executable does from its first argument:
     ArabicAIAgent.exe runtime         -> run the local control-plane runtime
     ArabicAIAgent.exe install         -> install for the current user
     ArabicAIAgent.exe uninstall       -> remove the installed app
+    ArabicAIAgent.exe selfcheck       -> verify this install works end to end
     ArabicAIAgent.exe version         -> print the product version
 
 The same dispatch works unfrozen (``python -m arabic_agent runtime``), so the
@@ -32,12 +33,13 @@ from __future__ import annotations
 import sys
 
 _USAGE = (
-    "usage: ArabicAIAgent [shell|runtime|install|uninstall|version]\n"
+    "usage: ArabicAIAgent [shell|runtime|install|uninstall|selfcheck|version]\n"
     "  (no argument)  open the desktop shell\n"
     "  shell          open the desktop shell\n"
     "  runtime        run the local control-plane runtime\n"
     "  install        install for the current user\n"
     "  uninstall      remove the installed app\n"
+    "  selfcheck      verify this install works end to end\n"
     "  version        print the product version\n"
 )
 
@@ -77,6 +79,12 @@ def _print_version() -> int:
     return 0
 
 
+def _run_selfcheck() -> int:
+    from arabic_agent.desktop.selfcheck import main as selfcheck_main
+
+    return selfcheck_main([])
+
+
 def main(argv: list[str] | None = None) -> int:
     """Dispatch the product entry point; return a process exit code."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -91,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_install()
     if command == "uninstall":
         return _run_uninstall()
+    if command == "selfcheck":
+        return _run_selfcheck()
     if command in {"version", "--version", "-V"}:
         return _print_version()
 

@@ -52,8 +52,9 @@ for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
    stale-observation) now have an implementation to exercise, but still need a
    real interactive Windows desktop to be marked PASS.
 
-2. **Binary Windows installer — build inputs implemented, artifact not yet
-   built.** `desktop/packaging.py` generates the two inputs a binary build needs:
+2. **Binary Windows installer — build inputs implemented; the artifact is built
+   by CI on real Windows and now gated by a self-check.** `desktop/packaging.py`
+   generates the two inputs a binary build needs:
    a one-folder PyInstaller spec (a windowed `ArabicAIAgent.exe` whose `Analysis`
    entry is the real script path `src/arabic_agent/__main__.py`, bundling the
    desktop UI and **both** migration chains — `migrations_local/` →
@@ -63,9 +64,12 @@ for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
    Start-menu/desktop icons, opt-in startup entry). One script drives the whole
    documented flow — `scripts/build_windows.ps1` — which also runs in
    `.github/workflows/windows.yml` on `windows-latest` and uploads
-   `ArabicAIAgent-Setup-*.exe`. Gates 3/4/73 (installer build, SHA-256) still need
-   a real Windows build to produce the artifact and its hash. The script installer
-   in `desktop/installer.py` remains as the developer install path.
+   `ArabicAIAgent-Setup-*.exe`. The build now runs
+   `ArabicAIAgent.exe selfcheck` on both the frozen payload and the *installed*
+   executable before uploading, so a broken package fails the build instead of
+   shipping. Gates 3/4/73 (installer build, SHA-256) are produced and checked by
+   that job; the interactive gates still need a real logged-in desktop. The
+   script installer in `desktop/installer.py` remains the developer install path.
 
 3. **Browser runtime — provisioning implemented.** `browser/provisioning.py` is
    a real provisioner (probe → install → verify → state machine with cancel),
@@ -176,13 +180,29 @@ cannot drift:
 which expands to exactly:
 
 ```powershell
-uv pip install --system -e ".[dev,desktop,packaging,documents,docgen]"
+uv sync --extra dev --extra desktop --extra packaging --extra documents --extra docgen
 python -m arabic_agent.desktop.packaging dist   # writes ArabicAIAgent.spec + ArabicAIAgent.iss
 pyinstaller --clean --noconfirm dist\ArabicAIAgent.spec
-dist\ArabicAIAgent\ArabicAIAgent.exe version    # smoke test
+# smoke test + full self-check of the frozen payload (exit code is the verdict)
+dist\ArabicAIAgent\ArabicAIAgent.exe version
+dist\ArabicAIAgent\ArabicAIAgent.exe selfcheck --report dist\selfcheck.json
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\ArabicAIAgent.iss
 Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256
+# install the produced setup, self-check the installed app, then uninstall
+ArabicAIAgent-Setup-*.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+"%LOCALAPPDATA%\ArabicAIAgent\ArabicAIAgent.exe" selfcheck --report dist\installed-selfcheck.json
+"%LOCALAPPDATA%\ArabicAIAgent\unins000.exe" /VERYSILENT
 ```
+
+`ArabicAIAgent.exe selfcheck` is the product verifying *itself* through real
+code paths: it resolves the bundled desktop UI and both migration chains exactly
+as the frozen runtime does, writes a real Arabic PDF plus DOCX/PPTX/XLSX,
+migrates a throwaway SQLite store to head and confirms its schema, and answers a
+real authenticated request on the loopback control API. Each check is `ok`,
+`failed` or `skipped` (a missing optional extra is an honest skip, never a
+hidden pass); the exit code is non-zero iff anything `failed`. Because the
+frozen build is windowed (`console=False`) it has no stdout, so the build script
+runs it with `Start-Process -Wait` and reads the JSON `--report` file.
 
 The `documents` and `docgen` extras are installed so the frozen payload
 contains working document parsing and Arabic PDF generation; the spec collects

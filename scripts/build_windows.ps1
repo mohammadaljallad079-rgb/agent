@@ -65,7 +65,29 @@ try {
         }
 
         Invoke-Step "Smoke-test the frozen executable" {
-            & (Join-Path $OutputDir "ArabicAIAgent\ArabicAIAgent.exe") version
+            # The frozen build is windowed (console=False); PowerShell's call
+            # operator does not wait for a GUI executable, so use Start-Process
+            # -Wait and check the real exit code.
+            $exe = Join-Path $OutputDir "ArabicAIAgent\ArabicAIAgent.exe"
+            $proc = Start-Process -FilePath $exe -ArgumentList "version" -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+                throw "frozen executable returned exit $($proc.ExitCode)"
+            }
+        }
+
+        Invoke-Step "Self-check the frozen executable (assets, documents, database, API)" {
+            # A windowed build has no stdout: the report goes to a file and the
+            # exit code is the verdict. This exercises the *packaged* product —
+            # bundled migrations and UI, real document writes, a real SQLite
+            # migration and a real HTTP request — so a broken payload fails the
+            # build instead of shipping.
+            $exe = Join-Path $OutputDir "ArabicAIAgent\ArabicAIAgent.exe"
+            $report = Join-Path $OutputDir "selfcheck.json"
+            $proc = Start-Process -FilePath $exe -ArgumentList "selfcheck", "--report", $report -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+                throw "self-check failed (exit $($proc.ExitCode))"
+            }
+            Get-Content $report -Raw
         }
     }
 
@@ -81,6 +103,33 @@ try {
         Invoke-Step "Hash the installer" {
             Get-FileHash (Join-Path $OutputDir "ArabicAIAgent-Setup-*.exe") -Algorithm SHA256 |
                 Format-List
+        }
+
+        Invoke-Step "Install, verify and uninstall the real installer" {
+            # The strongest gate short of a human clicking through: run the
+            # produced setup silently, self-check the *installed* executable
+            # (proving the installer's file layout, not just the PyInstaller
+            # payload, is correct), then remove it so the runner is left clean.
+            $setup = (Get-Item (Join-Path $OutputDir "ArabicAIAgent-Setup-*.exe")).FullName
+            $installDir = Join-Path $env:LOCALAPPDATA "ArabicAIAgent"
+            $installed = Join-Path $installDir "ArabicAIAgent.exe"
+            $proc = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+                throw "installer returned exit $($proc.ExitCode)"
+            }
+            if (-not (Test-Path $installed)) {
+                throw "installer did not place $installed"
+            }
+            $report = Join-Path $OutputDir "installed-selfcheck.json"
+            $proc = Start-Process -FilePath $installed -ArgumentList "selfcheck", "--report", $report -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+                throw "installed self-check failed (exit $($proc.ExitCode))"
+            }
+            Get-Content $report -Raw
+            $uninstaller = Join-Path $installDir "unins000.exe"
+            if (Test-Path $uninstaller) {
+                Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+            }
         }
     }
 

@@ -189,12 +189,17 @@ def build_pyinstaller_spec(
         f"{PACKAGE_NAME}.local.main",
         f"{PACKAGE_NAME}.desktop.shell",
         f"{PACKAGE_NAME}.desktop.installer",
+        f"{PACKAGE_NAME}.desktop.selfcheck",
         f"{PACKAGE_NAME}.api.app",
         f"{PACKAGE_NAME}.worker.main",
         f"{PACKAGE_NAME}.local.persistence.schema",
         "aiosqlite",
         "sqlalchemy.dialects.sqlite.aiosqlite",
         "logging.config",
+        # Used only by the frozen ``selfcheck`` subcommand (in-process HTTP
+        # probe); named explicitly so the packaged build can always self-check.
+        "fastapi.testclient",
+        "httpx",
     ]
     hidden_lines = ",\n        ".join(repr(module) for module in hiddenimports)
     optional = optional_data_packages()
