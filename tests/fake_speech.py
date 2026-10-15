@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import wave
+from collections.abc import Callable
 from pathlib import Path
 
 from arabic_agent.core.enums import PlatformKind
@@ -56,6 +57,7 @@ class FakeAudioBackend(AudioBackend):
         devices: list[AudioDevice] | None = None,
         fail_record: bool = False,
         fail_play: bool = False,
+        block_until_cancelled: bool = False,
     ) -> None:
         self._devices = devices or [
             AudioDevice(id="default", name="Default Mic", kind="input", is_default=True),
@@ -63,8 +65,41 @@ class FakeAudioBackend(AudioBackend):
         ]
         self._fail_record = fail_record
         self._fail_play = fail_play
+        #: Model a real blocking device loop: ``record``/``play`` hold until the
+        #: cancellation callable returns True, then raise ``CancelledError``. Runs
+        #: in a worker thread (like the POSIX/Windows adapters) so the event loop
+        #: stays free for the stop request to arrive.
+        self._block_until_cancelled = block_until_cancelled
         self.recorded: list[tuple[str, float]] = []
         self.played: list[str] = []
+
+    def _poll_cancel(self, should_cancel: Callable[[], bool] | None) -> None:
+        # Mirrors the real backend loops: consult the cancellation callable and
+        # raise the same ``CancelledError`` the runtime translates into a
+        # ``cancelled`` speech action.
+        if should_cancel is not None and should_cancel():
+            from arabic_agent.speech.cancel import CancelledError
+
+            raise CancelledError("stopped by the test")
+
+    @staticmethod
+    def _block(should_cancel: Callable[[], bool] | None) -> None:
+        import time
+
+        from arabic_agent.speech.cancel import CancelledError
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if should_cancel is not None and should_cancel():
+                raise CancelledError("stopped by the test")
+            time.sleep(0.005)
+        raise AssertionError("the test never cancelled the blocked operation")
+
+    async def _maybe_block(self, should_cancel: Callable[[], bool] | None) -> None:
+        if self._block_until_cancelled:
+            import asyncio
+
+            await asyncio.to_thread(self._block, should_cancel)
 
     async def list_devices(self) -> list[AudioDevice]:
         return list(self._devices)
@@ -77,10 +112,13 @@ class FakeAudioBackend(AudioBackend):
         seconds: float = 5.0,
         sample_rate_hz: int = 16000,
         channels: int = 1,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
         self.require_available()
         if self._fail_record:
             raise ExternalServiceError("the microphone could not be opened")
+        self._poll_cancel(should_cancel)
+        await self._maybe_block(should_cancel)
         size = _write_wav(
             output_path, seconds=seconds, sample_rate=sample_rate_hz, channels=channels
         )
@@ -96,10 +134,18 @@ class FakeAudioBackend(AudioBackend):
             engine=self.name,
         )
 
-    async def play(self, *, clip_path: str, device_id: str = "") -> None:
+    async def play(
+        self,
+        *,
+        clip_path: str,
+        device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self.require_available()
         if self._fail_play:
             raise ExternalServiceError("the speaker could not be opened")
+        self._poll_cancel(should_cancel)
+        await self._maybe_block(should_cancel)
         if not _file_exists(clip_path):
             from arabic_agent.core.errors import NotFoundError
 
@@ -124,11 +170,18 @@ class FakeUnavailableAudioBackend(AudioBackend):
         seconds: float = 5.0,
         sample_rate_hz: int = 16000,
         channels: int = 1,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
         self.require_available()
         raise AssertionError("unreachable")
 
-    async def play(self, *, clip_path: str, device_id: str = "") -> None:
+    async def play(
+        self,
+        *,
+        clip_path: str,
+        device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self.require_available()
         raise AssertionError("unreachable")
 

@@ -36,11 +36,16 @@ from ..container import Platform
 from ..core.errors import ConfigurationError, PermissionDeniedError, ValidationError
 from ..core.ids import PREFIX_RUN, new_id
 from ..permissions.base import Permission, Principal, default_permission_risk
+from ..speech.cancel import CancelledError, CancelToken
 from ..speech.character import SUPER_AI_CHARACTER
 from ..speech.model_store import SpeechModelStore
 from ..speech.runtime import SpeechRuntime
 
 logger = logging.getLogger(__name__)
+
+#: Operation kinds that can be cancelled while in flight.
+OP_RECORD = "record"
+OP_PLAY = "play"
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,50 @@ class DesktopVoiceService:
             storage_dir=platform.settings.local_model_storage_dir
             or str(Path(platform.settings.local_store_dir) / "models")
         )
+        #: One cancellation token per in-flight operation kind, so the UI's stop
+        #: button can interrupt a recording or a playback that is already running.
+        self._cancels: dict[str, CancelToken] = {}
+
+    # -- Cancellation ----------------------------------------------------
+    def _begin(self, op: str) -> CancelToken:
+        """Start an operation, replacing (and stopping) any previous one of its kind."""
+        previous = self._cancels.get(op)
+        if previous is not None and not previous.cancelled:
+            previous.cancel("superseded by a new request")
+        token = CancelToken()
+        self._cancels[op] = token
+        return token
+
+    def _end(self, op: str, token: CancelToken) -> None:
+        if self._cancels.get(op) is token:
+            self._cancels.pop(op, None)
+
+    def _cancel(self, op: str) -> bool:
+        token = self._cancels.get(op)
+        if token is None or token.cancelled:
+            return False
+        token.cancel(f"the user stopped {op}")
+        return True
+
+    def stop(self, *, op: str | None = None) -> dict[str, object]:
+        """Stop an in-flight recording and/or playback.
+
+        Returns which operations were actually cancelled so the UI can say
+        "stopped" truthfully instead of claiming a stop that had nothing to stop.
+        """
+        stopped: list[str] = []
+        for kind in (OP_RECORD, OP_PLAY) if op is None else (op,):
+            if self._cancel(kind):
+                stopped.append(kind)
+        return {"stopped": stopped, "cancelled": bool(stopped)}
+
+    @property
+    def active(self) -> dict[str, bool]:
+        """Whether a recording / playback is currently in flight."""
+        return {
+            OP_RECORD: OP_RECORD in self._cancels,
+            OP_PLAY: OP_PLAY in self._cancels,
+        }
 
     @property
     def _runtime(self) -> SpeechRuntime | None:
@@ -120,12 +169,16 @@ class DesktopVoiceService:
                     "playback_allowed": False,
                     "playback_reason": "",
                     "devices": [],
+                    "recording": False,
+                    "playing": False,
+                    "voice": SUPER_AI_CHARACTER.voice.preferred_voice,
                 }
             )
             return base
         caps = runtime.capabilities()
         record_allowed, record_reason = self._decision(Permission.MICROPHONE_RECORD)
         play_allowed, play_reason = self._decision(Permission.SPEAKER_PLAYBACK)
+        active = self.active
         base.update(
             {
                 "available": bool(caps.can_record or caps.can_play or caps.can_synthesize),
@@ -144,6 +197,9 @@ class DesktopVoiceService:
                 "playback_allowed": play_allowed,
                 "playback_reason": play_reason,
                 "devices": [_device_dict(d) for d in caps.devices],
+                "recording": active[OP_RECORD],
+                "playing": active[OP_PLAY],
+                "voice": SUPER_AI_CHARACTER.voice.preferred_voice,
             }
         )
         return base
@@ -260,10 +316,26 @@ class DesktopVoiceService:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
+    def _scratch_dir(self) -> Path:
+        """A voice directory for a capture with no run (used before a run exists).
+
+        Lives under the local store, never an arbitrary host path, so the same
+        "audio stays inside the sandbox" rule holds for a preview recording.
+        """
+        directory = (
+            Path(self._platform.settings.local_store_dir)
+            / self._platform.settings.speech_workspace_subdir
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    async def _audio_dir(self, run_id: str | None) -> Path:
+        return await self._voice_dir(run_id) if run_id else self._scratch_dir()
+
     async def transcribe(
         self,
         *,
-        run_id: str,
+        run_id: str | None = None,
         seconds: float = 5.0,
         device_id: str = "",
         language: str = "ar",
@@ -274,6 +346,11 @@ class DesktopVoiceService:
         Requires ``MICROPHONE_RECORD`` to be allowed; under the default policy it
         requires approval, so this refuses with a structured reason rather than
         recording ambient audio the user did not authorise.
+
+        The recording is cancellable: a stop from the UI ends it promptly and the
+        result carries ``cancelled: True`` instead of raising, because a
+        deliberate stop is not a failure. Any audio captured before the stop is
+        still transcribed, so a clipped command is not thrown away.
         """
         runtime = self._runtime
         if runtime is None:
@@ -284,19 +361,36 @@ class DesktopVoiceService:
                 reason or "microphone recording is not permitted",
                 details={"permission": Permission.MICROPHONE_RECORD.value},
             )
-        directory = await self._voice_dir(run_id)
+        directory = await self._audio_dir(run_id)
         output = str(directory / f"cmd-{new_id(PREFIX_RUN)}.wav")
-        clip, result = await runtime.listen(
-            tenant_id=self._principal.tenant_id,
-            user_id=self._principal.user_id,
-            run_id=run_id,
-            output_path=output,
-            seconds=seconds,
-            device_id=device_id,
-            language=language,
-            keep_text=keep_text,
-        )
+        token = self._begin(OP_RECORD)
+        try:
+            clip, result = await runtime.listen(
+                tenant_id=self._principal.tenant_id,
+                user_id=self._principal.user_id,
+                run_id=run_id or "voice-preview",
+                output_path=output,
+                seconds=seconds,
+                device_id=device_id,
+                language=language,
+                keep_text=keep_text,
+                should_cancel=token.should_cancel,
+            )
+        except CancelledError:
+            return {
+                "cancelled": True,
+                "text": "",
+                "language": language,
+                "confidence": None,
+                "duration_seconds": 0.0,
+                "engine": runtime.transcription.name,
+                "audio_path": "",
+                "segments": [],
+            }
+        finally:
+            self._end(OP_RECORD, token)
         return {
+            "cancelled": False,
             "text": result.text,
             "language": result.language or language,
             "confidence": result.confidence,
@@ -309,10 +403,55 @@ class DesktopVoiceService:
             ],
         }
 
+    async def synthesize(
+        self,
+        *,
+        run_id: str | None = None,
+        text: str,
+        voice: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        """Synthesize a reply to an audio file without playing it.
+
+        The counterpart to :meth:`speak` for a caller that wants the audio (a
+        preview, a download, or a "read this aloud later" action). Gated by
+        ``SPEAKER_PLAYBACK`` because it produces the agent's voice.
+        """
+        runtime = self._runtime
+        if runtime is None:
+            raise ConfigurationError("voice is not available in this runtime")
+        allowed, reason = self._decision(Permission.SPEAKER_PLAYBACK)
+        if not allowed:
+            raise PermissionDeniedError(
+                reason or "speech synthesis is not permitted",
+                details={"permission": Permission.SPEAKER_PLAYBACK.value},
+            )
+        if not text or not text.strip():
+            raise ValidationError("there is nothing to say")
+        directory = await self._audio_dir(run_id)
+        output = str(directory / f"reply-{new_id(PREFIX_RUN)}.wav")
+        result = await runtime.synthesize(
+            tenant_id=self._principal.tenant_id,
+            user_id=self._principal.user_id,
+            run_id=run_id or "voice-preview",
+            text=text,
+            output_path=output,
+            voice=voice or SUPER_AI_CHARACTER.voice.preferred_voice,
+            language=language,
+        )
+        return {
+            "cancelled": False,
+            "voice": result.voice,
+            "engine": result.engine,
+            "language": result.language,
+            "audio_path": result.clip.path,
+            "duration_seconds": result.clip.duration_seconds,
+        }
+
     async def speak(
         self,
         *,
-        run_id: str,
+        run_id: str | None = None,
         text: str,
         voice: str = "",
         language: str = "ar",
@@ -321,6 +460,8 @@ class DesktopVoiceService:
         """Synthesize and play a reply — the "answer by voice" half.
 
         Requires ``SPEAKER_PLAYBACK`` to be allowed (approval-gated by default).
+        Playback is cancellable: a stop ends it promptly and the result carries
+        ``cancelled: True`` (the synthesized audio is still on disk).
         """
         runtime = self._runtime
         if runtime is None:
@@ -333,25 +474,89 @@ class DesktopVoiceService:
             )
         if not text or not text.strip():
             raise ValidationError("there is nothing to say")
-        directory = await self._voice_dir(run_id)
+        directory = await self._audio_dir(run_id)
         output = str(directory / f"reply-{new_id(PREFIX_RUN)}.wav")
-        result = await runtime.speak(
+        synthesized = await runtime.synthesize(
             tenant_id=self._principal.tenant_id,
             user_id=self._principal.user_id,
-            run_id=run_id,
+            run_id=run_id or "voice-preview",
             text=text,
             output_path=output,
-            voice=voice,
+            voice=voice or SUPER_AI_CHARACTER.voice.preferred_voice,
             language=language,
-            device_id=device_id,
         )
+        token = self._begin(OP_PLAY)
+        try:
+            await runtime.play(
+                tenant_id=self._principal.tenant_id,
+                user_id=self._principal.user_id,
+                run_id=run_id or "voice-preview",
+                clip_path=synthesized.clip.path,
+                device_id=device_id,
+                language=language,
+                should_cancel=token.should_cancel,
+            )
+        except CancelledError:
+            return {
+                "cancelled": True,
+                "voice": synthesized.voice,
+                "engine": synthesized.engine,
+                "language": synthesized.language,
+                "audio_path": synthesized.clip.path,
+                "duration_seconds": synthesized.clip.duration_seconds,
+            }
+        finally:
+            self._end(OP_PLAY, token)
         return {
-            "voice": result.voice,
-            "engine": result.engine,
-            "language": result.language,
-            "audio_path": result.clip.path,
-            "duration_seconds": result.clip.duration_seconds,
+            "cancelled": False,
+            "voice": synthesized.voice,
+            "engine": synthesized.engine,
+            "language": synthesized.language,
+            "audio_path": synthesized.clip.path,
+            "duration_seconds": synthesized.clip.duration_seconds,
         }
+
+    async def play_file(
+        self,
+        *,
+        run_id: str | None = None,
+        path: str,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        """Replay a clip that already lives in the voice workspace.
+
+        The path is resolved inside the run's (or the scratch) voice directory so
+        a caller can never ask the speaker to play an arbitrary host file.
+        Cancellable like :meth:`speak`.
+        """
+        runtime = self._runtime
+        if runtime is None:
+            raise ConfigurationError("voice is not available in this runtime")
+        allowed, reason = self._decision(Permission.SPEAKER_PLAYBACK)
+        if not allowed:
+            raise PermissionDeniedError(
+                reason or "speaker playback is not permitted",
+                details={"permission": Permission.SPEAKER_PLAYBACK.value},
+            )
+        directory = await self._audio_dir(run_id)
+        clip_path = _resolve_voice_clip(directory, path)
+        token = self._begin(OP_PLAY)
+        try:
+            await runtime.play(
+                tenant_id=self._principal.tenant_id,
+                user_id=self._principal.user_id,
+                run_id=run_id or "voice-preview",
+                clip_path=str(clip_path),
+                device_id=device_id,
+                language=language,
+                should_cancel=token.should_cancel,
+            )
+        except CancelledError:
+            return {"cancelled": True, "audio_path": str(clip_path)}
+        finally:
+            self._end(OP_PLAY, token)
+        return {"cancelled": False, "audio_path": str(clip_path)}
 
     async def list_actions(
         self, *, run_id: str | None = None, limit: int = 50
@@ -369,6 +574,7 @@ class DesktopVoiceService:
                 {
                     "id": r.id,
                     "kind": r.kind.value,
+                    "state": r.state.value,
                     "engine": r.engine,
                     "language": r.language,
                     "duration_seconds": r.duration_seconds,
@@ -395,6 +601,23 @@ def _device_dict(d: object) -> dict[str, object]:
         "available": d.available,
         "unavailable_reason": d.unavailable_reason,
     }
+
+
+def _resolve_voice_clip(directory: Path, path: str) -> Path:
+    """Resolve a requested clip to a file inside ``directory`` only.
+
+    A bare filename is joined to the directory; an absolute or relative path is
+    resolved and then checked to be inside it. This is what stops a caller from
+    asking the speaker to play an arbitrary host file (``../../etc/passwd``).
+    """
+    candidate = Path(path)
+    resolved = (candidate if candidate.is_absolute() else directory / candidate).resolve()
+    root = directory.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValidationError("the audio file is outside the voice workspace")
+    if not resolved.is_file():
+        raise ValidationError("the audio file does not exist")
+    return resolved
 
 
 __all__ = ["DesktopVoiceService", "VoicePrincipal"]

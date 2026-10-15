@@ -25,7 +25,7 @@ from pydantic import SecretStr
 from arabic_agent.container import Platform
 from arabic_agent.core.config import Settings
 from arabic_agent.core.enums import Locale, OperatingMode, PermissionEffect, RuntimeKind
-from arabic_agent.core.errors import ConfigurationError, PermissionDeniedError
+from arabic_agent.core.errors import ConfigurationError, PermissionDeniedError, ValidationError
 from arabic_agent.desktop.events import DesktopEventBroker
 from arabic_agent.desktop.http import create_desktop_app
 from arabic_agent.desktop.service import DesktopService, build_model_manager
@@ -242,6 +242,134 @@ async def test_voice_actions_are_persisted_metadata_only(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Cancellation: a voice turn can be stopped mid-recording / mid-playback
+# ---------------------------------------------------------------------------
+
+
+def _install_blocking_runtime(platform: Platform) -> FakeAudioBackend:
+    """A runtime whose audio backend blocks until cancelled, like real hardware."""
+    backend = FakeAudioBackend(block_until_cancelled=True)
+    platform.speech_runtime = SpeechRuntime(
+        backend=backend,
+        transcription=FakeTranscriber(text="افتح التقرير"),
+        synthesis=FakeSynthesizer(),
+        policy=SpeechPolicy(),
+        audit=platform.audit,
+    )
+    return backend
+
+
+async def test_transcribe_can_be_stopped_mid_recording(tmp_path: Path):
+    platform = _platform(tmp_path)
+    _install_blocking_runtime(platform)
+    _allow_speech_policy(platform)
+    service = DesktopVoiceService(platform=platform)
+    started = await service.start_voice_run(goal="قل مرحبا")
+    run_id = str(started["run_id"])
+
+    task = asyncio.create_task(service.transcribe(run_id=run_id, seconds=30.0))
+    # Let the recording reach the blocking device loop, then stop it.
+    for _ in range(200):
+        await asyncio.sleep(0.005)
+        if service.active["record"]:
+            break
+    assert service.active["record"] is True
+    stopped = service.stop(op="record")
+    assert stopped == {"stopped": ["record"], "cancelled": True}
+
+    result = await asyncio.wait_for(task, timeout=5.0)
+    # A deliberate stop is reported as cancelled, not raised as a failure.
+    assert result["cancelled"] is True
+    assert result["text"] == ""
+    assert service.active["record"] is False
+
+    # The stop is durable: a cancelled recording action is persisted and audited.
+    actions = await service.list_actions(run_id=run_id)
+    assert any(a["kind"] == "recording" and a["state"] == "cancelled" for a in actions["actions"])
+
+
+def test_speak_can_be_stopped_mid_playback(tmp_path: Path):
+    platform = _platform(tmp_path)
+    _install_blocking_runtime(platform)
+    _allow_speech_policy(platform)
+    service = DesktopVoiceService(platform=platform)
+
+    async def _run() -> tuple[dict[str, object], dict[str, object]]:
+        started = await service.start_voice_run(goal="قل مرحبا")
+        run_id = str(started["run_id"])
+        task = asyncio.create_task(service.speak(run_id=run_id, text="تم إنشاء ٤٢ فاتورة"))
+        for _ in range(200):
+            await asyncio.sleep(0.005)
+            if service.active["play"]:
+                break
+        assert service.active["play"] is True
+        service.stop(op="play")
+        result = await asyncio.wait_for(task, timeout=5.0)
+        actions = await service.list_actions(run_id=run_id)
+        return result, actions
+
+    result, actions = asyncio.run(_run())
+    assert result["cancelled"] is True
+    # The audio was still synthesized to disk before playback was stopped.
+    assert Path(str(result["audio_path"])).is_file()
+    assert any(a["kind"] == "playback" and a["state"] == "cancelled" for a in actions["actions"])
+
+
+def test_stop_with_nothing_running_is_honest(tmp_path: Path):
+    platform = _platform(tmp_path)
+    _install_fake_runtime(platform)
+    _allow_speech_policy(platform)
+    service = DesktopVoiceService(platform=platform)
+    # Nothing in flight: the service must not claim it stopped something.
+    assert service.stop() == {"stopped": [], "cancelled": False}
+
+
+def test_transcribe_without_a_run_records_a_preview(tmp_path: Path):
+    platform = _platform(tmp_path)
+    _install_fake_runtime(platform, text="مرحبا")
+    _allow_speech_policy(platform)
+    service = DesktopVoiceService(platform=platform)
+
+    async def _run() -> dict[str, object]:
+        # No run_id: a preview capture still works and lands under the local store.
+        return await service.transcribe(seconds=1.0)
+
+    result = asyncio.run(_run())
+    assert result["cancelled"] is False
+    assert result["text"] == "مرحبا"
+    assert Path(str(result["audio_path"])).is_file()
+
+
+def test_synthesize_without_playback(tmp_path: Path):
+    platform = _platform(tmp_path)
+    _install_fake_runtime(platform)
+    _allow_speech_policy(platform)
+    service = DesktopVoiceService(platform=platform)
+
+    async def _run() -> dict[str, object]:
+        return await service.synthesize(text="تم")
+
+    result = asyncio.run(_run())
+    assert result["engine"] == "fake-tts"
+    assert Path(str(result["audio_path"])).is_file()
+    # Synthesis alone must not touch the speaker.
+    runtime = platform.speech_runtime
+    assert runtime is not None
+    assert runtime._backend.played == []
+
+
+async def test_play_file_refuses_a_path_outside_the_voice_workspace(tmp_path: Path):
+    platform = _platform(tmp_path)
+    _install_fake_runtime(platform)
+    _allow_speech_policy(platform)
+    service = DesktopVoiceService(platform=platform)
+    outside = tmp_path / "secret.wav"
+    outside.write_bytes(b"RIFF")
+    with pytest.raises(ValidationError):
+        await service.play_file(path=str(outside))
+
+
+# ---------------------------------------------------------------------------
 # Speech model catalogue
 # ---------------------------------------------------------------------------
 
@@ -403,3 +531,30 @@ def test_http_voice_transcribe_denied_under_default_policy(tmp_path: Path):
     run_id = started.json()["run_id"]
     denied = client.post("/desktop/voice/transcribe", json={"run_id": run_id})
     assert denied.status_code == 403
+
+
+def test_http_voice_synthesize_and_play(tmp_path: Path):
+    client = TestClient(_voice_app(tmp_path))
+    synthesized = client.post("/desktop/voice/synthesize", json={"text": "تم"})
+    assert synthesized.status_code == 200
+    body = synthesized.json()
+    assert body["engine"] == "fake-tts"
+    assert body["cancelled"] is False
+    # A synthesized clip can be replayed by name (resolved inside the workspace).
+    played = client.post("/desktop/voice/play", json={"path": body["audio_path"]})
+    assert played.status_code == 200
+    assert played.json()["cancelled"] is False
+
+
+def test_http_voice_stop_reports_what_it_stopped(tmp_path: Path):
+    client = TestClient(_voice_app(tmp_path))
+    # Nothing in flight: the endpoint says so honestly.
+    idle = client.post("/desktop/voice/stop", json={})
+    assert idle.status_code == 200
+    assert idle.json() == {"stopped": [], "cancelled": False}
+
+
+def test_http_voice_play_refuses_path_escape(tmp_path: Path):
+    client = TestClient(_voice_app(tmp_path))
+    escape = client.post("/desktop/voice/play", json={"path": "../../etc/passwd"})
+    assert escape.status_code == 422

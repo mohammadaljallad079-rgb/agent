@@ -44,6 +44,7 @@ from arabic_agent.local.boundary import DataBoundaryPolicy
 from arabic_agent.permissions.approvals import InMemoryApprovalStore
 from arabic_agent.permissions.base import Permission, PolicySet, Principal, Rule
 from arabic_agent.permissions.policy import PolicyEngine
+from arabic_agent.speech.cancel import CancelledError
 from arabic_agent.speech.policy import SpeechPolicy
 from arabic_agent.speech.runtime import SpeechRuntime
 from arabic_agent.speech.store import (
@@ -266,6 +267,33 @@ async def test_runtime_speak_synthesizes_then_plays(tmp_path):
     events = await sink.list_for_run(tenant_id="t", run_id="r")
     assert any(e.type is AuditEventType.SPEECH_SYNTHESIZED for e in events)
     assert any(e.type is AuditEventType.SPEECH_PLAYED for e in events)
+
+
+async def test_runtime_cancelled_recording_is_persisted_and_audited(tmp_path):
+    store = InMemorySpeechStore()
+    runtime, sink = _runtime(store=store)
+    # ``should_cancel`` is already true, so the backend raises before writing.
+    clip_path = tmp_path / "a.wav"
+
+    def _cancel() -> bool:
+        return True
+
+    with pytest.raises(CancelledError):
+        await runtime.record(
+            tenant_id="t",
+            user_id="u",
+            run_id="r",
+            output_path=str(clip_path),
+            should_cancel=_cancel,
+        )
+    records = await store.list_for_run(tenant_id="t", run_id="r")
+    assert records[-1].kind is SpeechActionKind.RECORDING
+    assert records[-1].state.value == "cancelled"
+    events = await sink.list_for_run(tenant_id="t", run_id="r")
+    cancelled = [e for e in events if e.type is AuditEventType.SPEECH_CANCELLED]
+    assert len(cancelled) == 1
+    # A stopped recording is not also reported as successfully recorded.
+    assert not any(e.type is AuditEventType.SPEECH_RECORDED for e in events)
 
 
 async def test_runtime_listen_records_then_transcribes(tmp_path):

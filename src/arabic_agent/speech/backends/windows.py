@@ -37,6 +37,7 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -79,12 +80,21 @@ class WinAudioAdapter(ABC):
 
     @abstractmethod
     def capture(
-        self, *, device: str, seconds: float, sample_rate: int, channels: int, path: str
+        self,
+        *,
+        device: str,
+        seconds: float,
+        sample_rate: int,
+        channels: int,
+        path: str,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
         """Record to ``path`` as a WAV file."""
 
     @abstractmethod
-    def playback(self, *, device: str, path: str) -> None:
+    def playback(
+        self, *, device: str, path: str, should_cancel: Callable[[], bool] | None = None
+    ) -> None:
         """Play the WAV file at ``path``."""
 
 
@@ -275,7 +285,14 @@ class CtypesWinAudioAdapter(WinAudioAdapter):
         return header
 
     def capture(
-        self, *, device: str, seconds: float, sample_rate: int, channels: int, path: str
+        self,
+        *,
+        device: str,
+        seconds: float,
+        sample_rate: int,
+        channels: int,
+        path: str,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:  # pragma: no cover - Windows only
         if self._winmm is None:
             raise ExternalServiceError("the Windows audio API is only available on Windows")
@@ -311,16 +328,35 @@ class CtypesWinAudioAdapter(WinAudioAdapter):
             if winmm.waveInStart(handle) != 0:
                 raise ExternalServiceError("could not start recording")
             deadline = time.monotonic() + seconds + _COMPLETION_GRACE
+            cancelled = False
             while time.monotonic() < deadline:
                 if header.dwFlags & WHDR_DONE:
+                    break
+                if should_cancel is not None and should_cancel():
+                    cancelled = True
                     break
                 time.sleep(0.02)
             winmm.waveInStop(handle)
             winmm.waveInReset(handle)
+            recorded = int(header.dwBytesRecorded)
+            if cancelled:
+                # Keep whatever was captured before the stop, then report the
+                # cancellation — a deliberate stop is not a failure.
+                from ..cancel import CancelledError
+
+                if recorded:
+                    _write_wav(
+                        path, buffer.raw[:recorded], sample_rate=sample_rate, channels=channels
+                    )
+                raise CancelledError("recording was stopped")
             if not header.dwFlags & WHDR_DONE:
                 raise ExternalServiceError("the microphone produced no audio before the time limit")
-            recorded = int(header.dwBytesRecorded) or length
-            _write_wav(path, buffer.raw[:recorded], sample_rate=sample_rate, channels=channels)
+            _write_wav(
+                path,
+                buffer.raw[: (recorded or length)],
+                sample_rate=sample_rate,
+                channels=channels,
+            )
         finally:
             try:
                 winmm.waveInUnprepareHeader(handle, ctypes.byref(header), ctypes.sizeof(header))
@@ -329,7 +365,13 @@ class CtypesWinAudioAdapter(WinAudioAdapter):
             winmm.waveInClose(handle)
 
     # -- Playback --------------------------------------------------------
-    def playback(self, *, device: str, path: str) -> None:  # pragma: no cover - Windows only
+    def playback(
+        self,
+        *,
+        device: str,
+        path: str,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:  # pragma: no cover - Windows only
         if self._winmm is None:
             raise ExternalServiceError("the Windows audio API is only available on Windows")
         self._configure()
@@ -383,6 +425,12 @@ class CtypesWinAudioAdapter(WinAudioAdapter):
             while time.monotonic() < deadline:
                 if header.dwFlags & WHDR_DONE:
                     break
+                if should_cancel is not None and should_cancel():
+                    # waveOutReset stops playback immediately; a stop is not a failure.
+                    from ..cancel import CancelledError
+
+                    winmm.waveOutReset(handle_out)
+                    raise CancelledError("playback was stopped")
                 time.sleep(0.02)
             winmm.waveOutReset(handle_out)
         finally:
@@ -460,6 +508,7 @@ class WindowsAudioBackend(AudioBackend):
         seconds: float = 5.0,
         sample_rate_hz: int = 16000,
         channels: int = 1,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
         self.require_available()
         if not self._can_record:
@@ -475,6 +524,7 @@ class WindowsAudioBackend(AudioBackend):
             sample_rate=sample_rate_hz,
             channels=channels,
             path=output_path,
+            should_cancel=should_cancel,
         )
         if not _file_exists(output_path):
             raise ExternalServiceError("the recorder produced no file")
@@ -482,7 +532,13 @@ class WindowsAudioBackend(AudioBackend):
             output_path, engine=self.name, sample_rate=sample_rate_hz, channels=channels
         )
 
-    async def play(self, *, clip_path: str, device_id: str = "") -> None:
+    async def play(
+        self,
+        *,
+        clip_path: str,
+        device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self.require_available()
         if not self._can_play:
             raise ExternalServiceError(
@@ -491,7 +547,12 @@ class WindowsAudioBackend(AudioBackend):
             )
         if not _file_exists(clip_path):
             raise NotFoundError("the audio file to play does not exist")
-        await asyncio.to_thread(self._adapter.playback, device=device_id, path=clip_path)
+        await asyncio.to_thread(
+            self._adapter.playback,
+            device=device_id,
+            path=clip_path,
+            should_cancel=should_cancel,
+        )
 
 
 def _file_exists(path: str) -> bool:

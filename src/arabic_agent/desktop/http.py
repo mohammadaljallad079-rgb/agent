@@ -94,18 +94,38 @@ class VoiceStartRequest(BaseModel):
 
 
 class VoiceTranscribeRequest(BaseModel):
-    run_id: str = Field(min_length=1, max_length=200)
+    #: Optional run; omitted records a preview clip under the local store.
+    run_id: str | None = Field(default=None, max_length=200)
     seconds: float = Field(default=5.0, gt=0, le=120)
     device_id: str = Field(default="", max_length=200)
     language: str = Field(default="ar", max_length=16)
 
 
+class VoiceSynthesizeRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    text: str = Field(min_length=1, max_length=5000)
+    voice: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
 class VoiceSpeakRequest(BaseModel):
-    run_id: str = Field(min_length=1, max_length=200)
+    run_id: str | None = Field(default=None, max_length=200)
     text: str = Field(min_length=1, max_length=5000)
     voice: str = Field(default="", max_length=200)
     language: str = Field(default="ar", max_length=16)
     device_id: str = Field(default="", max_length=200)
+
+
+class VoicePlayRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    path: str = Field(min_length=1, max_length=1000)
+    device_id: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceStopRequest(BaseModel):
+    #: ``record`` or ``play``; omitted stops both.
+    op: str | None = Field(default=None, max_length=16)
 
 
 def create_desktop_app(
@@ -434,6 +454,17 @@ def create_desktop_app(
             language=payload.language,
         )
 
+    @app.post("/desktop/voice/synthesize")
+    async def voice_synthesize(
+        payload: VoiceSynthesizeRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_synthesize(
+            run_id=payload.run_id,
+            text=payload.text,
+            voice=payload.voice,
+            language=payload.language,
+        )
+
     @app.post("/desktop/voice/speak")
     async def voice_speak(
         payload: VoiceSpeakRequest, _: None = Depends(authorize)
@@ -445,6 +476,23 @@ def create_desktop_app(
             language=payload.language,
             device_id=payload.device_id,
         )
+
+    @app.post("/desktop/voice/play")
+    async def voice_play(
+        payload: VoicePlayRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_play(
+            run_id=payload.run_id,
+            path=payload.path,
+            device_id=payload.device_id,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/stop")
+    async def voice_stop(
+        payload: VoiceStopRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return service.voice_stop(op=payload.op)
 
     # -- Memory ----------------------------------------------------------
     @app.get("/desktop/memory")

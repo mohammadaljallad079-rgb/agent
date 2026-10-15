@@ -27,8 +27,11 @@ import asyncio
 import logging
 import os
 import shutil
+import signal
+import subprocess
 import wave
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 from ...core.enums import PlatformKind
@@ -58,12 +61,21 @@ class PosixAudioAdapter(ABC):
 
     @abstractmethod
     def capture(
-        self, *, device: str, seconds: float, sample_rate: int, channels: int, path: str
+        self,
+        *,
+        device: str,
+        seconds: float,
+        sample_rate: int,
+        channels: int,
+        path: str,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
         """Record ``seconds`` of audio to ``path``."""
 
     @abstractmethod
-    def playback(self, *, device: str, path: str) -> None:
+    def playback(
+        self, *, device: str, path: str, should_cancel: Callable[[], bool] | None = None
+    ) -> None:
         """Play the audio file at ``path``."""
 
 
@@ -91,7 +103,14 @@ class AlsaAudioAdapter(PosixAudioAdapter):
         return devices
 
     def capture(
-        self, *, device: str, seconds: float, sample_rate: int, channels: int, path: str
+        self,
+        *,
+        device: str,
+        seconds: float,
+        sample_rate: int,
+        channels: int,
+        path: str,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
         argv = [
             "arecord",
@@ -108,36 +127,78 @@ class AlsaAudioAdapter(PosixAudioAdapter):
             str(int(seconds)),
             path,
         ]
-        _run(argv)
+        _run(argv, should_cancel=should_cancel)
 
-    def playback(self, *, device: str, path: str) -> None:
+    def playback(
+        self, *, device: str, path: str, should_cancel: Callable[[], bool] | None = None
+    ) -> None:
         argv = ["aplay", "-q", "-D", device or "default", path]
-        _run(argv)
+        _run(argv, should_cancel=should_cancel)
 
 
-def _run(argv: list[str]) -> None:
-    import subprocess
+def _run(argv: list[str], *, should_cancel: Callable[[], bool] | None = None) -> None:
+    """Run an audio command, polling ``should_cancel`` so a stop is prompt.
+
+    A stop terminates the process group (``arecord``/``aplay`` write partial
+    output first, so the recording made so far is kept) and raises
+    :class:`CancelledError` rather than a generic failure — a deliberate stop is
+    not an error.
+    """
+    from ..cancel import CancelledError
 
     try:
         # No shell, fixed program, validated arguments — a device name cannot
-        # inject a command.
-        result = subprocess.run(  # noqa: S603
-            argv, capture_output=True, timeout=300, check=False
+        # inject a command. A new process group lets a stop kill the whole tree.
+        process = subprocess.Popen(  # noqa: S603
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
         )
     except FileNotFoundError as exc:
         raise ExternalServiceError(
             "the audio command is not installed", details={"program": argv[0]}
         ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise ExternalServiceError(
-            "the audio command timed out", details={"program": argv[0]}
-        ) from exc
-    if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="ignore").strip()
+    try:
+        while True:
+            try:
+                _stdout, stderr = process.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                if should_cancel is not None and should_cancel():
+                    _terminate_group(process)
+                    process.communicate()
+                    raise CancelledError("the audio operation was stopped") from None
+    except Exception:
+        if process.poll() is None:
+            _terminate_group(process)
+            process.communicate()
+        raise
+    if process.returncode != 0:
+        stderr_text = stderr.decode("utf-8", errors="ignore").strip()
         raise ExternalServiceError(
             "the audio command failed",
-            details={"program": argv[0], "returncode": result.returncode, "stderr": stderr[:500]},
+            details={
+                "program": argv[0],
+                "returncode": process.returncode,
+                "stderr": stderr_text[:500],
+            },
         )
+
+
+def _terminate_group(process: subprocess.Popen[bytes]) -> None:
+    """Stop an audio process and its children, tolerating an already-dead one."""
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            process.kill()
 
 
 class PosixAudioBackend(AudioBackend):
@@ -184,6 +245,7 @@ class PosixAudioBackend(AudioBackend):
         seconds: float = 5.0,
         sample_rate_hz: int = 16000,
         channels: int = 1,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
         self.require_available()
         if not self._can_record:
@@ -199,6 +261,7 @@ class PosixAudioBackend(AudioBackend):
             sample_rate=sample_rate_hz,
             channels=channels,
             path=output_path,
+            should_cancel=should_cancel,
         )
         if not _file_exists(output_path):
             raise ExternalServiceError("the recorder produced no file")
@@ -209,7 +272,13 @@ class PosixAudioBackend(AudioBackend):
             channels=channels,
         )
 
-    async def play(self, *, clip_path: str, device_id: str = "") -> None:
+    async def play(
+        self,
+        *,
+        clip_path: str,
+        device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self.require_available()
         if not self._can_play:
             raise ExternalServiceError(
@@ -218,7 +287,12 @@ class PosixAudioBackend(AudioBackend):
             )
         if not _file_exists(clip_path):
             raise NotFoundError("the audio file to play does not exist")
-        await asyncio.to_thread(self._adapter.playback, device=device_id, path=clip_path)
+        await asyncio.to_thread(
+            self._adapter.playback,
+            device=device_id,
+            path=clip_path,
+            should_cancel=should_cancel,
+        )
 
 
 def _file_exists(path: str) -> bool:

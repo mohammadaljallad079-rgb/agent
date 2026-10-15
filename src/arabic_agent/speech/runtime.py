@@ -29,6 +29,7 @@ computer tools reach theirs, so the executor and agent runner stay unaware of it
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from ..audit.base import AuditEventType, AuditLog
@@ -46,10 +47,12 @@ from .base import (
     TranscriptionEngine,
     TranscriptionResult,
 )
+from .cancel import CancelledError
 from .policy import SpeechBudget, SpeechPolicy
 from .store import (
     InMemorySpeechStore,
     SpeechActionKind,
+    SpeechActionState,
     SpeechRecord,
     SpeechStore,
 )
@@ -220,20 +223,41 @@ class SpeechRuntime:
         sample_rate_hz: int = 16000,
         channels: int = 1,
         language: str = "",
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
-        """Capture microphone audio after policy and budget checks."""
+        """Capture microphone audio after policy and budget checks.
+
+        ``should_cancel`` is polled by the backend while the device is held, so a
+        user pressing stop ends the recording promptly. A stopped recording is
+        persisted with the ``cancelled`` state and re-raised as
+        :class:`CancelledError` — a deliberate stop is recorded, not treated as a
+        failure.
+        """
         self._backend.require_available()
         if not self._backend.available:
             raise ValidationError("recording is not available in this runtime")
         self._policy.check_recording_seconds(seconds)
         self._budget(run_id).consume_recording(now=time.monotonic())
-        clip = await self._backend.record(
-            output_path=output_path,
-            device_id=device_id,
-            seconds=seconds,
-            sample_rate_hz=sample_rate_hz,
-            channels=channels,
-        )
+        try:
+            clip = await self._backend.record(
+                output_path=output_path,
+                device_id=device_id,
+                seconds=seconds,
+                sample_rate_hz=sample_rate_hz,
+                channels=channels,
+                should_cancel=should_cancel,
+            )
+        except CancelledError:
+            await self._record_cancelled(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                run_id=run_id,
+                kind=SpeechActionKind.RECORDING,
+                output_path=output_path,
+                language=language,
+                backend=self._backend.name,
+            )
+            raise
         clip = clip.model_copy(update={"language": language or self._policy.default_language})
         await self._store.add(
             SpeechRecord(
@@ -263,6 +287,41 @@ class SpeechRuntime:
             },
         )
         return clip
+
+    async def _record_cancelled(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        run_id: str,
+        kind: SpeechActionKind,
+        output_path: str,
+        language: str,
+        backend: str,
+    ) -> None:
+        """Persist the safe metadata of a stopped recording or playback."""
+        size = _file_size_or_zero(output_path)
+        await self._store.add(
+            SpeechRecord(
+                id=new_id(PREFIX_SPEECH),
+                tenant_id=tenant_id,
+                user_id=user_id,
+                run_id=run_id,
+                kind=kind,
+                state=SpeechActionState.CANCELLED,
+                engine=backend,
+                language=language,
+                size_bytes=size,
+            )
+        )
+        await self._audit.record(
+            AuditEventType.SPEECH_CANCELLED,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            run_id=run_id,
+            message=f"{kind.value} stopped on request",
+            data={"backend": backend, "language": language, "size_bytes": size},
+        )
 
     async def transcribe(
         self,
@@ -384,12 +443,33 @@ class SpeechRuntime:
         run_id: str,
         clip_path: str,
         device_id: str = "",
+        language: str = "",
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
-        """Play an audio file through the speaker, after policy checks."""
+        """Play an audio file through the speaker, after policy checks.
+
+        ``should_cancel`` lets the user stop playback mid-clip; a stopped
+        playback is persisted as ``cancelled`` and re-raised as
+        :class:`CancelledError`.
+        """
         self._backend.require_available()
         size = _file_size(clip_path)
         self._policy.check_audio_size(size)
-        await self._backend.play(clip_path=clip_path, device_id=device_id)
+        try:
+            await self._backend.play(
+                clip_path=clip_path, device_id=device_id, should_cancel=should_cancel
+            )
+        except CancelledError:
+            await self._record_cancelled(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                run_id=run_id,
+                kind=SpeechActionKind.PLAYBACK,
+                output_path=clip_path,
+                language=language,
+                backend=self._backend.name,
+            )
+            raise
         await self._store.add(
             SpeechRecord(
                 id=new_id(PREFIX_SPEECH),
@@ -425,6 +505,7 @@ class SpeechRuntime:
         voice: str = "",
         language: str = "",
         device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
     ) -> SynthesisResult:
         """Synthesize ``text`` and play it — the one-call "answer by voice" path."""
         result = await self.synthesize(
@@ -442,6 +523,8 @@ class SpeechRuntime:
             run_id=run_id,
             clip_path=result.clip.path,
             device_id=device_id,
+            language=language,
+            should_cancel=should_cancel,
         )
         return result
 
@@ -456,6 +539,7 @@ class SpeechRuntime:
         device_id: str = "",
         language: str = "",
         keep_text: bool = False,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[AudioClip, TranscriptionResult]:
         """Record a spoken command and transcribe it — the "hear a command" path."""
         clip = await self.record(
@@ -466,6 +550,7 @@ class SpeechRuntime:
             device_id=device_id,
             seconds=seconds,
             language=language,
+            should_cancel=should_cancel,
         )
         result = await self.transcribe(
             tenant_id=tenant_id,
@@ -495,6 +580,18 @@ def _file_size(path: str) -> int:
         return Path(path).stat().st_size
     except OSError as exc:
         raise ValidationError(f"could not read the audio file: {exc}") from exc
+
+
+def _file_size_or_zero(path: str) -> int:
+    """Best-effort size for a partially written clip; never raises.
+
+    Used on the cancellation path, where the file may not exist yet (a stop
+    before any audio arrived) and the safe metadata is still worth recording.
+    """
+    try:
+        return Path(path).stat().st_size
+    except OSError:
+        return 0
 
 
 __all__ = ["SpeechRuntime"]

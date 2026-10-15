@@ -48,6 +48,7 @@ class ErrorClass(StrEnum):
     CONFLICT = "conflict"  # state changed; re-read then act
     RESOURCE = "resource"  # out of quota/space; free resources or abort
     EXTERNAL = "external"  # upstream integration failed
+    CANCELLED = "cancelled"  # deliberately stopped; terminal, never retried
     INTERNAL = "internal"  # bug in our code; do not retry blindly
 
 

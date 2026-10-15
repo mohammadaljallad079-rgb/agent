@@ -837,7 +837,7 @@ class DesktopService:
     async def voice_transcribe(
         self,
         *,
-        run_id: str,
+        run_id: str | None = None,
         seconds: float = 5.0,
         device_id: str = "",
         language: str = "ar",
@@ -846,10 +846,22 @@ class DesktopService:
             run_id=run_id, seconds=seconds, device_id=device_id, language=language
         )
 
+    async def voice_synthesize(
+        self,
+        *,
+        run_id: str | None = None,
+        text: str,
+        voice: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.synthesize(
+            run_id=run_id, text=text, voice=voice, language=language
+        )
+
     async def voice_speak(
         self,
         *,
-        run_id: str,
+        run_id: str | None = None,
         text: str,
         voice: str = "",
         language: str = "ar",
@@ -858,6 +870,22 @@ class DesktopService:
         return await self._voice.speak(
             run_id=run_id, text=text, voice=voice, language=language, device_id=device_id
         )
+
+    async def voice_play(
+        self,
+        *,
+        run_id: str | None = None,
+        path: str,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.play_file(
+            run_id=run_id, path=path, device_id=device_id, language=language
+        )
+
+    def voice_stop(self, *, op: str | None = None) -> dict[str, object]:
+        """Stop an in-flight recording and/or playback, reporting what stopped."""
+        return self._voice.stop(op=op)
 
     # -- Memory ----------------------------------------------------------
     async def list_memory(self, *, limit: int = 50) -> dict[str, object]:

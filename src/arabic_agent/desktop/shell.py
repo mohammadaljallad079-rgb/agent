@@ -77,6 +77,9 @@ class DesktopBridge:
     async def list_runs(self) -> Any:
         return await self._get("/desktop/runs")
 
+    async def get_run(self, run_id: str) -> Any:
+        return await self._get(f"/desktop/runs/{run_id}")
+
     async def run_timeline(self, run_id: str) -> Any:
         return await self._get(f"/desktop/runs/{run_id}/timeline")
 
@@ -217,7 +220,11 @@ class DesktopBridge:
         )
 
     async def voice_transcribe(
-        self, run_id: str, seconds: float = 5.0, device_id: str = "", language: str = "ar"
+        self,
+        run_id: str | None = None,
+        seconds: float = 5.0,
+        device_id: str = "",
+        language: str = "ar",
     ) -> Any:
         return await self._post(
             "/desktop/voice/transcribe",
@@ -229,10 +236,22 @@ class DesktopBridge:
             },
         )
 
+    async def voice_synthesize(
+        self,
+        text: str,
+        run_id: str | None = None,
+        voice: str = "",
+        language: str = "ar",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/synthesize",
+            {"run_id": run_id, "text": text, "voice": voice, "language": language},
+        )
+
     async def voice_speak(
         self,
-        run_id: str,
         text: str,
+        run_id: str | None = None,
         voice: str = "",
         language: str = "ar",
         device_id: str = "",
@@ -247,6 +266,17 @@ class DesktopBridge:
                 "device_id": device_id,
             },
         )
+
+    async def voice_play(
+        self, path: str, run_id: str | None = None, device_id: str = "", language: str = "ar"
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/play",
+            {"run_id": run_id, "path": path, "device_id": device_id, "language": language},
+        )
+
+    async def voice_stop(self, op: str | None = None) -> Any:
+        return await self._post("/desktop/voice/stop", {"op": op})
 
     async def memory(self) -> Any:
         return await self._get("/desktop/memory")
