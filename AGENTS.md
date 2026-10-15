@@ -451,7 +451,13 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   desktop voice surface (`desktop/voice.py`, `/desktop/voice*`) drives a spoken
   turn as an ordinary durable run under the `voice` specialist, with
   `MICROPHONE_RECORD`/`SPEAKER_PLAYBACK` decided by the real policy engine
-  (approval-gated by default, never self-approved). Tests:
+  (approval-gated by default, never self-approved). A voice turn is
+  **cancellable**: `speech/cancel.py` holds a thread-safe `CancelToken` the
+  blocking audio loops poll, so a stop ends a recording/playback promptly; a
+  stopped action is persisted with the `CANCELLED` state and audited as
+  `speech.cancelled` (metadata only) rather than treated as a failure, and
+  `ErrorClass.CANCELLED` aborts recovery instead of retrying. The UI stop
+  button drives this through `/desktop/voice/stop`. Tests:
   `tests/test_speech.py`, `tests/test_desktop_voice.py`.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   image/video tools, social connectors, and a cloud web UI (the Arabic-first

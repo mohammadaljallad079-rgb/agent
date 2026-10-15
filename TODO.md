@@ -678,6 +678,13 @@ sentinel for "the whole registry".
         policy engine (approval-gated by default, never self-approved). Audio is
         written only inside the run workspace. Tests:
         `tests/test_desktop_voice.py`.
+  - [x] Cancellable voice turns: `speech/cancel.py` (`CancelToken` /
+        `CancelledError`) lets the stop button end a recording or playback
+        mid-flight; the stopped action is stored as `cancelled` and audited as
+        `speech.cancelled` (never as a failure), and `ErrorClass.CANCELLED` is
+        terminal for recovery. Routes: `/desktop/voice/stop` plus the
+        `synthesize` / `play` additions. Tests: mid-record and mid-playback
+        cancellation in `tests/test_desktop_voice.py` and `tests/test_speech.py`.
   - [ ] Education tools: `education_course_plan`, `education_lesson`,
         `education_quiz`.
 - [x] Specialist-aware UI in the desktop shell: the workspace surface renders a
