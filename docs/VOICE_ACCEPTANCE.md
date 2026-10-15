@@ -49,7 +49,27 @@ through approval) is additionally covered by
 `tests/test_local_agent_loop.py`, which is skipped unless `AAP_TEST_MODEL_PATH`
 points at a real model file.
 
-## 3. Interactive acceptance on real Windows
+## 3. Real Windows verification (CI, automated)
+
+The `Windows` workflow runs on real `windows-latest` for every push and PR:
+
+1. **Full test suite on Windows** (3.11 / 3.12 / 3.13) — lint, format, mypy and
+   `pytest` all pass on real Windows, so the voice code is not Linux-only.
+2. **Frozen payload** — `scripts/build_windows.ps1` freezes with PyInstaller and
+   runs `ArabicAIAgent.exe selfcheck`, which now includes the `voice_surface`
+   check (speech modules + cancellable loops + STT/TTS catalogue present).
+3. **Installed payload** — the produced Inno Setup installer is installed
+   silently and the *installed* executable is self-checked again, proving the
+   installer's file layout carries the voice surface.
+
+Evidence: run `38799603366` on commit `7504de0` — all four jobs (Tests on
+Windows 3.11/3.12/3.13, Build the Windows installer) **success**, artifact
+`ArabicAIAgent-Setup` (37,999,130 bytes).
+
+This is still not a substitute for the interactive gates in §4, which need a
+real logged-in desktop with a working microphone and speaker.
+
+## 4. Interactive acceptance on real Windows
 
 These gates need a real logged-in desktop with a microphone and speaker. Run
 them and record the real result; do not mark any PASS from a headless run.
@@ -67,18 +87,19 @@ them and record the real result; do not mark any PASS from a headless run.
 | V9 | Offline voice | Run in `LOCAL_ONLY` with the network blocked | Transcription and synthesis stay local; `remote_requests == 0` |
 | V10 | Arabic RTL | Inspect the voice panel | Layout is RTL and the transcript/commands render correctly |
 
-## 4. What is NOT claimed
+## 5. What is NOT claimed
 
-- No gate in §3 has been run on real Windows by the automated work; they remain
+- No gate in §4 has been run on real Windows by the automated work; they remain
   a human acceptance step.
 - The Windows audio backend (WinMM) and the Windows SAPI voice are implemented
-  and selected, but their *behaviour* on a real device is verified only by §3.
+  and selected, but their *behaviour* on a real device is verified only by §4.
 - Cloud speech (STT/TTS) is built only when the operator enables it **and**
   supplies an endpoint; it is not exercised by the automated suite.
 
-## 5. Verdict
+## 6. Verdict
 
 **GATE 4B AUTOMATED ACCEPTANCE: PASS** (full voice→PDF→speak flow through the
-real facade; packaged voice surface self-checked).
+real facade; packaged voice surface self-checked; full suite green on real
+Windows 3.11/3.12/3.13; installer built and self-checked frozen + installed).
 
-**GATE 4B DEVICE ACCEPTANCE: PENDING** — requires a real Windows desktop per §3.
+**GATE 4B DEVICE ACCEPTANCE: PENDING** — requires a real Windows desktop per §4.
