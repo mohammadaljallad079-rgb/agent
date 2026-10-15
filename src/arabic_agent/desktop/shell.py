@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 #: PyInstaller freeze alike (see :mod:`arabic_agent.core.resources`).
 UI_DIR = PACKAGE_DIR / "desktop" / "ui"
 
+#: Name of the per-user single-instance mutex. The shell acquires it and the
+#: generated Inno Setup script declares it as ``AppMutex``, so the two must stay
+#: in lock-step (see :mod:`arabic_agent.desktop.packaging`).
+SINGLE_INSTANCE_MUTEX = "ArabicAIAgent.SingleInstance"
+
 
 class DesktopBridge:
     """The JS-facing API. Holds the control token; the page never sees it.
@@ -311,6 +316,43 @@ def _load_index_html() -> str:
     return index.read_text(encoding="utf-8")
 
 
+def _single_instance_guard() -> Any | None:
+    """Hold a per-user single-instance lock for the life of the shell.
+
+    Returns the held lock handle, or ``None`` where the platform offers no such
+    primitive (every non-Windows host, so tests and Linux are unaffected).
+
+    This is a correctness guard, not a nicety: if a second copy of the app is
+    started while the first is still running, two runtimes race for the same
+    per-user database and — on Windows — the second copy keeps the installed
+    ``ArabicAIAgent.exe`` and ``_internal`` files open, so the next installer
+    run fails with "Access is denied" when it tries to overwrite them. The
+    installer also declares the same name as an ``AppMutex``, so it waits for
+    this lock to clear instead of failing.
+
+    Implemented with ``ctypes`` (stdlib) rather than ``pywin32`` so the guard
+    works in the frozen payload without an extra dependency.
+    """
+    if not sys.platform.startswith("win"):  # pragma: no cover - POSIX
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        handle = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+        if not handle:
+            return None
+        # ERROR_ALREADY_EXISTS (183): another instance already holds the mutex.
+        if ctypes.get_last_error() == 183:
+            return None
+        return handle
+    except (OSError, AttributeError, ImportError):  # pragma: no cover - defensive
+        return None
+
+
 def launch_shell(
     *,
     manager: DesktopRuntimeManager | None = None,
@@ -331,6 +373,7 @@ def launch_shell(
 
     import asyncio
 
+    _single_instance = _single_instance_guard()
     runtime_manager = manager or DesktopRuntimeManager()
     try:
         handle = asyncio.run(runtime_manager.start())
@@ -360,4 +403,4 @@ def main() -> None:
     raise SystemExit(code)
 
 
-__all__ = ["UI_DIR", "DesktopBridge", "launch_shell", "main"]
+__all__ = ["SINGLE_INSTANCE_MUTEX", "UI_DIR", "DesktopBridge", "launch_shell", "main"]
