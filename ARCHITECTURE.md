@@ -1361,6 +1361,68 @@ whose tools are not all registered is reported `degraded`, never as ready.
 
 ---
 
+## 13h. Speech & voice (Phase 04, GATE 4B)
+
+Voice is a first-class, governed capability, not a chat add-on. The agent can
+hear a spoken command and answer by voice, and every action passes through the
+same executor, policy engine, approvals and audit as any other tool.
+
+### The seam (`speech/`)
+
+Three interfaces isolate every machine- or vendor-specific detail, so the
+runtime, tools and agent core stay identical regardless of device or model:
+
+| Interface | Responsibility | Implementations |
+| --- | --- | --- |
+| `AudioBackend` | record / play / enumerate devices | WinMM (Windows), null backend |
+| `TranscriptionEngine` | speech → text | faster-whisper (local), OpenAI-compatible (cloud) |
+| `SynthesisEngine` | text → speech | Piper (local), Windows SAPI5 (local), OpenAI-compatible (cloud) |
+
+`SpeechRuntime` (`speech/runtime.py`) is the one object the tools and the desktop
+surface call. It enforces the discipline a microphone and speaker demand:
+
+- every recording and synthesized clip is a file **inside the run workspace** —
+  the runtime resolves the path, so a request can never write an arbitrary host
+  file;
+- a recording's length and a synthesis's text are bounded by `SpeechPolicy`, and
+  a per-run budget stops voice becoming a runaway;
+- a *cloud* engine is refused unless cloud speech is enabled **and** the data
+  boundary allows the audio to leave the machine;
+- every action persists safe metadata (kind, engine, language, duration, size,
+  outcome) — never the audio bytes, and a transcript only when the caller opts
+  in — and emits a metadata-only audit event.
+
+### Tools (`tools/builtin/speech.py`)
+
+`speech_capabilities`, `record_audio`, `speech_to_text`, `text_to_speech` and
+`speech_actions` run through the existing executor, so `MICROPHONE_RECORD` and
+`SPEAKER_PLAYBACK` are decided by the permission layer (allow / deny / requires
+approval) and an approval pauses the run. They are registered only for a local
+runtime and only when `speech_enabled` is set.
+
+### Verified voice models (`speech/models.py`, `speech/model_store.py`)
+
+A declarative catalogue of Whisper STT models and Piper Arabic voices with real
+sizes, SHA-256 digests and licences. `SpeechModelStore` installs them through the
+existing resumable, digest-verified installer into the speech model directory and
+resolves the exact installed artifact to the engine, so a library never silently
+fetches its own. An uninstalled model resolves to empty and the engine reports
+itself unavailable rather than pretending.
+
+### Desktop voice surface (`desktop/voice.py`)
+
+`DesktopVoiceService` is a thin, authenticated facade, not a second agent: a
+spoken turn is an ordinary durable run started through `RunService` under the
+`voice` specialist. It exposes `/desktop/voice`, `/desktop/voice/devices`,
+`/desktop/voice/models`, `/desktop/voice/start`, `/desktop/voice/transcribe`,
+`/desktop/voice/speak` and `/desktop/voice/actions`. The two speech permissions
+are evaluated by the real policy engine — under the platform default both require
+approval, so listen/speak refuse with a structured reason and never self-approve.
+Recordings and replies are written only inside the run's `voice/` workspace
+sub-directory.
+
+---
+
 ## 14. Security
 
 Baseline, designed in from the start:

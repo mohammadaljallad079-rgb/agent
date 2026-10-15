@@ -439,6 +439,20 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   creation; a `coding` run that tries a general-only tool such as
   `print_document` is refused at the executor (`specialist.scope.denied`), so
   the choice is enforced, not merely displayed. Green.
+- Speech & voice (Phase 04, GATE 4B) is implemented for a local runtime:
+  `src/arabic_agent/speech/` holds the `AudioBackend` / `TranscriptionEngine` /
+  `SynthesisEngine` seams, the governed `SpeechRuntime` (workspace-confined
+  audio, length/budget bounds, cloud-consent + data-boundary gate, metadata-only
+  audit and store) and the five speech tools registered only when
+  `speech_enabled` is set. Real engines: WinMM capture/playback and SAPI5 Arabic
+  TTS on Windows, faster-whisper/Piper locally, OpenAI-compatible in the cloud.
+  A verified model catalogue (`speech/models.py`, `speech/model_store.py`) with
+  real sizes/digests installs through the existing resumable installer. The
+  desktop voice surface (`desktop/voice.py`, `/desktop/voice*`) drives a spoken
+  turn as an ordinary durable run under the `voice` specialist, with
+  `MICROPHONE_RECORD`/`SPEAKER_PLAYBACK` decided by the real policy engine
+  (approval-gated by default, never self-approved). Tests:
+  `tests/test_speech.py`, `tests/test_desktop_voice.py`.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   image/video tools, social connectors, and a cloud web UI (the Arabic-first
   desktop UI exists inside the pywebview shell and now includes a printing

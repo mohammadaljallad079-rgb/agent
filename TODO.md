@@ -663,6 +663,21 @@ sentinel for "the whole registry".
         a per-run budget and data-boundary gate, durable local action metadata
         (SQLite + migration) and audit, wired into the `voice` scope. Wired only
         when `speech_enabled` is set and only for a local runtime.
+  - [x] Real local engines and audio devices: a Windows WinMM capture/playback
+        backend and a Windows SAPI5 Arabic TTS engine behind the existing
+        `AudioBackend` / `SynthesisEngine` seams; faster-whisper loads the
+        explicitly installed model artifact instead of letting a library fetch
+        its own.
+  - [x] Verified voice-model catalogue + store (`speech/models.py`,
+        `speech/model_store.py`): Whisper STT and Piper Arabic voices with real
+        sizes, SHA-256 digests and licences, installed through the existing
+        resumable, digest-verified installer and resolved to engine paths.
+  - [x] Desktop voice surface (`desktop/voice.py` + `/desktop/voice*` routes):
+        a spoken turn is an ordinary durable run under the `voice` specialist,
+        and `MICROPHONE_RECORD` / `SPEAKER_PLAYBACK` are decided by the real
+        policy engine (approval-gated by default, never self-approved). Audio is
+        written only inside the run workspace. Tests:
+        `tests/test_desktop_voice.py`.
   - [ ] Education tools: `education_course_plan`, `education_lesson`,
         `education_quiz`.
 - [x] Specialist-aware UI in the desktop shell: the workspace surface renders a
