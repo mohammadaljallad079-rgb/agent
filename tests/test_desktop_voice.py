@@ -39,7 +39,14 @@ from arabic_agent.speech.runtime import SpeechRuntime
 
 from .fake_http import http_server
 from .fake_speech import FakeAudioBackend, FakeSynthesizer, FakeTranscriber
-from .helpers import FakeProvider, text_response
+from .helpers import (
+    FakeProvider,
+    Responder,
+    plan_json,
+    scripted_responder,
+    text_response,
+    verify_json,
+)
 
 
 def _registry() -> ProviderRegistry:
@@ -558,3 +565,113 @@ def test_http_voice_play_refuses_path_escape(tmp_path: Path):
     client = TestClient(_voice_app(tmp_path))
     escape = client.post("/desktop/voice/play", json={"path": "../../etc/passwd"})
     assert escape.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: a spoken command becomes a real PDF through approved execution
+# ---------------------------------------------------------------------------
+
+
+def _document_responder() -> Responder:
+    """Drive the real agent loop to call ``generate_document`` then finish.
+
+    Only the LLM is scripted (``FakeProvider``): the planner, executor, policy
+    engine, approval store and the real ``generate_document`` tool all run for
+    real, so a produced ``%PDF`` is genuine tool output.
+    """
+    return scripted_responder(
+        plan=plan_json(("أنشئ مستند الطلب", "generate_document")),
+        tool_calls=[
+            (
+                "generate_document",
+                {
+                    "path": "طلب.pdf",
+                    "title": "طلب العميل",
+                    "blocks": [{"type": "paragraph", "text": "مرحبا بالعالم"}],
+                },
+            ),
+            ("finish", {"result": "تم إنشاء الطلب"}),
+        ],
+        verification=verify_json(True, "تم إنشاء الطلب"),
+    )
+
+
+def _platform_with_documents(tmp_path: Path) -> Platform:
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(_document_responder()))
+    return Platform.build(
+        _settings(tmp_path),
+        provider_registry=registry,
+        default_model="fake/model",
+    )
+
+
+def test_voice_command_creates_a_real_pdf_through_approval(tmp_path: Path):
+    """The full acceptance path: spoken Arabic → durable run → approval → PDF.
+
+    A real ``%PDF`` file is produced by the real tool after the human approves
+    the write, and the run's recorded result is what the UI would speak back.
+    """
+    platform = _platform_with_documents(tmp_path)
+    _install_fake_runtime(platform, text="أنشئ ملف PDF باسم طلب.pdf")
+    # A real tenant policy: the microphone and speaker are allowed, and the
+    # document write is gated on human approval (the default posture).
+    platform.policy.set_tenant_policy(
+        "local",
+        PolicySet(
+            name="test-voice-acceptance",
+            default_effect=PermissionEffect.DENY,
+            rules=(
+                Rule(
+                    effect=PermissionEffect.ALLOW,
+                    permission=Permission.MICROPHONE_RECORD,
+                    reason="allowed for the test",
+                ),
+                Rule(
+                    effect=PermissionEffect.ALLOW,
+                    permission=Permission.SPEAKER_PLAYBACK,
+                    reason="allowed for the test",
+                ),
+                Rule(
+                    effect=PermissionEffect.REQUIRES_APPROVAL,
+                    permission=Permission.WRITE_FILE,
+                    reason="the user must approve writing a document",
+                ),
+            ),
+        ),
+    )
+    service = DesktopService(
+        platform=platform,
+        model_manager=build_model_manager(platform),
+        events=DesktopEventBroker(),
+        locale=Locale.AR,
+    )
+
+    async def _flow() -> dict[str, object]:
+        # 1. Speak the command: it is transcribed to real Arabic text.
+        heard = await service.voice_transcribe(seconds=1.0)
+        assert heard["text"] == "أنشئ ملف PDF باسم طلب.pdf"
+        # 2. Run what was heard — as the voice specialist, on the real platform.
+        started = await service.voice_start(goal=str(heard["text"]))
+        run_id = str(started["run_id"])
+        # 3. Poll the run exactly as the UI does; it must pause for approval.
+        run = await service.get_run(run_id)
+        assert run["status"] == "waiting_approval", run
+        approval_id = run["pending_approval_id"]
+        assert approval_id
+        # 4. The human approves — this is a real approval decision, not a bypass.
+        run = await service.decide_approval(approval_id=str(approval_id), approve=True)
+        assert run["status"] == "completed", run.get("error")
+        # 5. A real PDF exists in the run workspace.
+        workspace = Path(str(started["workspace_dir"]))
+        pdfs = await asyncio.to_thread(lambda: list(workspace.rglob("*.pdf")))
+        assert pdfs, "no PDF was produced by the approved run"
+        assert pdfs[0].read_bytes().startswith(b"%PDF")
+        # 6. Answer by voice: the reply is synthesized and the result is audible.
+        reply = await service.voice_speak(run_id=run_id, text=str(run.get("result") or "تم"))
+        assert reply["cancelled"] is False
+        assert await asyncio.to_thread(Path(str(reply["audio_path"])).is_file)
+        return run
+
+    run = asyncio.run(_flow())
+    assert run["result"]

@@ -29,6 +29,9 @@ def test_self_check_passes_on_a_real_install(tmp_path: Path) -> None:
     assert statuses["local_api"] == OK
     # Document generation is either a real pass or an honest skip, never a fail.
     assert statuses["document_generation"] in (OK, SKIPPED)
+    # The voice surface is present and importable; a host without an audio
+    # device (CI, Linux) is an honest skip, never a fabricated pass.
+    assert statuses["voice_surface"] in (OK, SKIPPED)
     assert report.ok is True
 
 
@@ -56,6 +59,19 @@ def test_self_check_reports_a_failure_honestly(monkeypatch, tmp_path: Path) -> N
     report = selfcheck.run_self_check(workdir=tmp_path)
     assert report.ok is False
     assert any(c.status == FAILED for c in report.failed)
+
+
+def test_voice_surface_check_fails_when_the_catalogue_is_empty(monkeypatch) -> None:
+    """The voice check is real: an empty model catalogue is a failure, not a skip."""
+    import arabic_agent.desktop.selfcheck as selfcheck
+    import arabic_agent.speech.models as speech_models
+
+    monkeypatch.setattr(speech_models, "speech_models", lambda: ())
+    report = SelfCheckReport()
+    selfcheck.check_voice_surface(report)
+    assert report.ok is False
+    assert report.checks[0].name == "voice_surface"
+    assert report.checks[0].status == FAILED
 
 
 def test_report_serialises_and_formats() -> None:

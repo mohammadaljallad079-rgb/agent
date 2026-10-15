@@ -173,6 +173,62 @@ def check_document_generation(report: SelfCheckReport, workdir: Path) -> None:
         report.add("document_generation", OK, detail)
 
 
+def check_voice_surface(report: SelfCheckReport) -> None:
+    """Confirm the packaged voice surface imports and selects a real backend.
+
+    This proves the speech *modules* (including the cancellable backend loops)
+    and the model catalogue ship in the frozen payload, and that the audio
+    backend is selected for this platform. It deliberately does **not** record
+    or play anything: whether a real microphone/speaker works needs a real
+    logged-in desktop, so a missing device is reported as ``skipped`` with a
+    reason, never as a fabricated pass.
+    """
+    try:
+        from arabic_agent.core.enums import PlatformKind
+        from arabic_agent.speech.backends import build_audio_backend
+        from arabic_agent.speech.cancel import CancelToken
+        from arabic_agent.speech.character import SUPER_AI_CHARACTER
+        from arabic_agent.speech.models import KIND_STT, KIND_TTS, speech_models
+    except Exception as exc:  # a missing module means the payload is incomplete
+        report.add("voice_surface", FAILED, f"voice modules are not importable: {exc}")
+        return
+
+    # The cancellation primitives are exercised for real: a token that is
+    # cancelled must report it, and the loop reads it through ``should_cancel``.
+    token = CancelToken()
+    if token.should_cancel():
+        report.add("voice_surface", FAILED, "a fresh cancel token reports cancelled")
+        return
+    token.cancel("self-check")
+    if not token.should_cancel():
+        report.add("voice_surface", FAILED, "a cancelled token does not report cancelled")
+        return
+
+    backend = build_audio_backend(platform=PlatformKind.WINDOWS)
+    stt = [m for m in speech_models() if m.kind == KIND_STT]
+    tts = [m for m in speech_models() if m.kind == KIND_TTS]
+    if not stt or not tts:
+        report.add("voice_surface", FAILED, "the speech model catalogue is empty")
+        return
+
+    character = SUPER_AI_CHARACTER.voice.preferred_voice or "(engine default)"
+    if backend.available:
+        report.add(
+            "voice_surface",
+            OK,
+            f"backend {backend.name} available; {len(stt)} STT / {len(tts)} TTS models; "
+            f"voice {character}",
+        )
+    else:
+        reason = backend.unavailable_reason or "no audio device"
+        report.add(
+            "voice_surface",
+            SKIPPED,
+            f"backend {backend.name} unavailable here ({reason}); "
+            f"{len(stt)} STT / {len(tts)} TTS models packaged",
+        )
+
+
 def check_local_database(report: SelfCheckReport, workdir: Path) -> None:
     """Migrate a throwaway local store to head and confirm a real schema."""
     import asyncio
@@ -251,6 +307,7 @@ def _run_all(report: SelfCheckReport, workdir: Path) -> None:
     checks: tuple[tuple[str, Callable[[], None]], ...] = (
         ("bundled_resources", lambda: check_bundled_resources(report)),
         ("document_generation", lambda: check_document_generation(report, workdir)),
+        ("voice_surface", lambda: check_voice_surface(report)),
         ("local_database", lambda: check_local_database(report, workdir)),
         ("local_api", lambda: check_local_api(report, workdir)),
     )

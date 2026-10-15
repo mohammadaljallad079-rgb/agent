@@ -100,7 +100,8 @@
     .voice-name { font-size: 18px; font-weight: 700; }
     .voice-tagline { color: var(--muted); margin: 4px 0 10px; }
     .voice-heard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-      padding: 10px; min-height: 42px; white-space: pre-wrap; }
+      padding: 10px; min-height: 42px; white-space: pre-wrap; width: 100%; box-sizing: border-box;
+      color: var(--fg); font: inherit; resize: vertical; }
     .voice-reply { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
       padding: 10px; min-height: 42px; white-space: pre-wrap; margin-top: 8px; }
     .voice-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
@@ -191,7 +192,8 @@
       <div class="grid2">
         <div class="card">
           <h3 data-i18n="heard">ما سمعته</h3>
-          <div class="voice-heard" id="voiceHeard">—</div>
+          <textarea class="voice-heard" id="voiceHeard" rows="3" spellcheck="false">—</textarea>
+          <div class="muted" data-i18n="heardHint">يمكنك تعديل النص قبل التنفيذ</div>
           <div class="row wrap" style="margin-top:10px">
             <button class="btn" id="voiceRunBtn" data-i18n="runHeard">نفّذ ما سمعته</button>
           </div>
@@ -358,7 +360,7 @@
         missingTools:"أدوات غير متوفّرة", specialistCol:"الوكيل", noSpecialists:"لا يوجد وكلاء متخصصون",
         voice:"المساعد الصوتي", listen:"استمع", stopListening:"إيقاف", sayIt:"انطق الردّ",
         listenFor:"مدّة الاستماع (ثوانٍ)", microphone:"الميكروفون", heard:"ما سمعته", reply:"الردّ",
-        runHeard:"نفّذ ما سمعته", voiceModels:"أصوات ونماذج الكلام", voiceLog:"سجل الإجراءات الصوتية",
+        runHeard:"نفّذ ما سمعته", heardHint:"يمكنك تعديل النص قبل التنفيذ", voiceModels:"أصوات ونماذج الكلام", voiceLog:"سجل الإجراءات الصوتية",
         noVoiceModels:"لا توجد نماذج كلام في الكتالوج", noVoiceActions:"لا توجد إجراءات صوتية بعد",
         heardEmpty:"—", replyEmpty:"—", voiceDisabled:"الصوت غير مفعّل في الإعدادات",
         micAllowed:"الميكروفون مسموح", micNeedsApproval:"الميكروفون يحتاج موافقة", micDenied:"الميكروفون ممنوع",
@@ -401,7 +403,7 @@
         missingTools:"Missing tools", specialistCol:"Agent", noSpecialists:"No specialists",
         voice:"Voice assistant", listen:"Listen", stopListening:"Stop", sayIt:"Speak reply",
         listenFor:"Listen for (seconds)", microphone:"Microphone", heard:"What I heard", reply:"Reply",
-        runHeard:"Run what I heard", voiceModels:"Voices & speech models", voiceLog:"Voice action log",
+        runHeard:"Run what I heard", heardHint:"You can edit the text before running it", voiceModels:"Voices & speech models", voiceLog:"Voice action log",
         noVoiceModels:"No speech models in the catalogue", noVoiceActions:"No voice actions yet",
         heardEmpty:"—", replyEmpty:"—", voiceDisabled:"Voice is disabled in settings",
         micAllowed:"Microphone allowed", micNeedsApproval:"Microphone needs approval", micDenied:"Microphone denied",
@@ -1000,11 +1002,11 @@
       const seconds = parseFloat($("voiceSeconds").value) || 5;
       const device = $("voiceDevice").value || "";
       setCharacterState("listening");
-      $("voiceHeard").textContent = "…";
+      $("voiceHeard").value = "…";
       try {
         const r = await a.voice_transcribe(null, seconds, device, LANG);
-        if (r && r.cancelled) { toast(t("voiceStopped")); setCharacterState("idle"); $("voiceHeard").textContent = t("voiceNothingHeard"); return; }
-        $("voiceHeard").textContent = (r && r.text) ? r.text : t("voiceNothingHeard");
+        if (r && r.cancelled) { toast(t("voiceStopped")); setCharacterState("idle"); $("voiceHeard").value = t("voiceNothingHeard"); return; }
+        $("voiceHeard").value = (r && r.text) ? r.text : t("voiceNothingHeard");
         setCharacterState(r && r.text ? "success" : "idle");
         refreshVoice();
       } catch (e) { setCharacterState("error"); toast(String(e)); }
@@ -1020,7 +1022,7 @@
     }
     async function voiceRunHeard() {
       const a = api(); if (!a) return;
-      const goal = ($("voiceHeard").textContent || "").trim();
+      const goal = ($("voiceHeard").value || "").trim();
       if (!goal || goal === "—" || goal === t("voiceNothingHeard")) return;
       setCharacterState("thinking");
       try {
