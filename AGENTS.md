@@ -80,6 +80,23 @@ if it makes a demo look better.
   The ranker is lexical and dependency-free, with an Arabic-first intent lexicon
   so English tool descriptions match Arabic goals. Do not make it call out to a
   model or an embedding service.
+- **A specialist is data, never a second engine.** A specialized agent is a
+  `specialists.Specialist` value object: an id, a system directive and a
+  declared tool scope. It is resolved by the same agent loop, executor, policy
+  engine and audit trail as the general agent — do not fork `AgentRunner`, add a
+  parallel tool executor, or build a per-domain app. To add a specialist, define
+  the profile in `specialists/builtin.py` and register it in the catalogue.
+- **A specialist's scope is a ceiling, enforced in two places.** The runner
+  *advertises* only the specialist's tools intersected with what the runtime
+  actually registered; if a model names an out-of-scope tool anyway, the loop
+  *refuses* it (a `DENIED` tool result) and records `specialist.scope.denied`.
+  An empty scope is the sentinel for "the whole registry" — that is what keeps
+  the general agent general-purpose, so never treat empty as "no tools".
+- **A declared-but-absent tool degrades a specialist; it does not fail a step.**
+  Optional extras vary by runtime, so a specialist advertises the intersection
+  of its scope with the registry and readiness reports `degraded` with the
+  missing names. Report readiness honestly — never claim a specialist is ready
+  when its tools are not registered.
 
 ## 4. Coding standards
 
@@ -381,9 +398,9 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   extras, so the frozen installer really carries the document pipeline
   (verified: a local freeze bundles `reportlab` fonts and the `pptx`/`docx`/
   `pypdf`/`bs4`/`openpyxl`/`arabic_reshaper`/`bidi` modules and runs
-  `ArabicAIAgent version` → `0.1.0`). Test baseline: **960 passed, 59 skipped,
-  0 failed** with extras, **919 passed, 101 skipped, 0 failed** without them;
-  `ruff` clean, `mypy --strict` clean (230 source files).
+  `ArabicAIAgent version` → `0.1.0`). Test baseline: **1023 passed, 59 skipped,
+  0 failed** with extras, **973 passed, 109 skipped, 0 failed** without them;
+  `ruff` clean, `mypy --strict` clean (236 source files).
 - Local-model production pass: a real 0.5B GGUF model now drives the full
   platform end to end. `ModelProvider.context_window` is set by the local
   provider from the model descriptor, and `AgentRunner` passes it to
@@ -401,6 +418,27 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   is written, the run completes and the outcome is stored to memory. Regression
   tests: `test_context_manager_sizes_to_a_small_window_not_the_configured_budget`,
   `test_context_manager_without_a_window_keeps_the_configured_budget`.
+- Specialized-agent phase (Phase 04): one shared orchestration platform now
+  hosts several **specialist profiles** instead of per-domain apps. A
+  `specialists.Specialist` is declarative data — id, Arabic-first name,
+  directive, declared tool scope, required model capabilities — resolved by the
+  same agent loop, executor, policy engine and audit trail. Built-ins:
+  `general` (the SUPER AI AGENT; empty scope = the whole registry), `coding`,
+  `education`, `video`, `voice`. The scope is a ceiling enforced twice: the
+  runner advertises only `scope ∩ registered tools` (a declared-but-absent tool
+  *degrades* rather than fails — `SpecialistCatalogue.readiness()` reports
+  `available`/`degraded`/`unavailable` honestly), and a model that names an
+  out-of-scope tool is refused with a `DENIED` result plus a
+  `specialist.scope.denied` audit event. The specialist travels end to end
+  (`RunRequest.specialist` → `RunService` → `RunRecord`/`RunRow`/`LocalRunRow` →
+  `RunExecutor` → `build_runner`); unknown ids are a `404` before a run exists.
+  Discovery: `GET /specialists` and `GET /specialists/{id}`. The desktop UI
+  exposes a selector built from the live catalogue (delivered on
+  `/desktop/bootstrap` and `GET /desktop/specialists`) showing each profile's
+  description, tool count and honest readiness, and passes the chosen id on run
+  creation; a `coding` run that tries a general-only tool such as
+  `print_document` is refused at the executor (`specialist.scope.denied`), so
+  the choice is enforced, not merely displayed. Green.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   image/video tools, social connectors, and a cloud web UI (the Arabic-first
   desktop UI exists inside the pywebview shell and now includes a printing

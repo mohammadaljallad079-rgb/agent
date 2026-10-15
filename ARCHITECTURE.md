@@ -84,6 +84,7 @@ layer imports a higher one.
 | `computer` | Computer use: backends (X11), coordinate model, capture, OCR, perception, grounding, policy, screen-data boundary, runtime |
 | `browser` | Autonomous web: backends (Playwright), URL/domain policy, observations, injection scan, sources, web-content boundary, runtime |
 | `agent` | The loop, planner, recovery policy, tool executor, prompts |
+| `specialists` | Declarative specialist profiles (general/coding/education/video/voice) + catalogue, readiness |
 | `runs` | `RunRecord` lifecycle/state machine + `RunStore` ABC |
 | `persistence` | SQLAlchemy models, `Database`, Postgres store implementations |
 | `infrastructure` | Redis-backed rate limiter, distributed lock, idempotency guard |
@@ -328,8 +329,19 @@ printing, and running shell commands require approval or are denied.
 Approvals are first-class, persisted, audited entities ŌĆö not a chat message.
 
 - `Approval`: `id`, `run_id`, `tenant_id`, `user_id`, `tool_name`, `permission`,
-  `arguments`, `summary`, `status`, `created_at`, `expires_at`, `resolved_by`,
-  `reason`.
+  `arguments`, `summary`, `preview`, `status`, `created_at`, `expires_at`,
+  `resolved_by`, `reason`.
+- **`preview`** is the field that makes an approval a decision rather than a
+  yes/no on a tool name. When a call requires approval, the executor asks the
+  tool for a structured, read-only description of the *concrete* effect (target
+  path, byte count, replacement count, whether an existing file is overwritten,
+  export source→destination) before the approval is raised. `Tool.preview()`
+  defaults to `None`; a tool that implements it must inspect but never mutate,
+  and must not raise — the executor degrades a failing preview to "no preview"
+  and still raises the approval. The preview is redacted like arguments, stored
+  on the row (cloud `approvals.preview` and local `local_approvals.preview`, both
+  migrated), and surfaced on `GET /approvals` and the desktop approval center.
+  Nothing sensitive is captured: it describes the operation, not its data.
 - `ApprovalStore` (ABC) with `InMemoryApprovalStore` for the local runtime and
   `PostgresApprovalStore` for production; resolution is a one-shot conditional
   update, so an approval can never be decided twice.
@@ -1294,6 +1306,61 @@ lists printing under `PRINT_DOCUMENT`.
 
 ---
 
+## 13g. Specialized agents on a shared core (Phase 04)
+
+The product ships one orchestration platform with several **specialist
+profiles**, not one engine per domain. A specialist is declarative data — an
+id, an Arabic-first display name, a system directive, a declared tool scope and
+required model capabilities — resolved by the same agent loop, executor, policy
+engine and audit trail. Adding a specialist never forks the core.
+
+### The `specialists/` subsystem
+
+| Module | Responsibility |
+|---|---|
+| `specialists/base.py` | `Specialist` value object, `GENERAL`/`VOICE`/`VIDEO`/`CODING`/`EDUCATION` ids, `BUILTIN_SPECIALISTS`, `DEFAULT_SPECIALIST` |
+| `specialists/builtin.py` | The five built-in profiles: `general`, `coding`, `education`, `video`, `voice` |
+| `specialists/catalogue.py` | `SpecialistCatalogue`: lookup by id (empty → general) and readiness reporting |
+
+The built-in profiles:
+
+| Id | Arabic name | Scope |
+|---|---|---|
+| `general` | الوكيل العام | Empty scope = the whole registry (the SUPER AI AGENT) |
+| `coding` | وكيل البرمجة | Filesystem, shell, project, document and generation tools |
+| `education` | الوكيل التعليمي | Documents, generation, studio/video and speech tools |
+| `video` | استوديو الفيديو والمحتوى | Documents, generation, studio/video and image tools |
+| `voice` | المساعد الصوتي والشخصي | Documents, generation and speech tools |
+
+### Scope is a ceiling, enforced twice
+
+`Specialist.allows(name)` and `Specialist.advertised_tools()` define the scope.
+An **empty** scope is the explicit sentinel for "the whole registry", which is
+what keeps the general agent a general-purpose assistant.
+
+1. **Advertise**: the runner intersects the scope with the runtime's registered
+   tools, so the model is never offered a tool the specialist cannot use. A
+   declared-but-absent tool (an optional extra the runtime lacks) *degrades* the
+   specialist rather than failing a step — `SpecialistCatalogue.readiness()`
+   reports `available` / `degraded` (with the missing names) / `unavailable`.
+2. **Refuse**: if a model names an out-of-scope tool anyway, the loop refuses it
+   with a `DENIED` tool result and records a `specialist.scope.denied` audit
+   event; the run continues and the model is told to stay in scope. This is
+   defence in depth — the tool is never executed.
+
+The specialist is carried end to end: `RunRequest.specialist` → `RunService` →
+`RunRecord.specialist` (persisted, `RunRow` / `LocalRunRow`) → `RunExecutor` →
+`build_runner(specialist=...)`. Unknown ids are rejected with a `404` at the API
+edge before a run is created.
+
+### Discovery API
+
+`GET /specialists` lists every profile with its status and missing tools for the
+current runtime; `GET /specialists/{id}` returns one. Both are honest: a profile
+whose tools are not all registered is reported `degraded`, never as ready.
+
+---
+
 ## 14. Security
 
 Baseline, designed in from the start:
@@ -1614,6 +1681,13 @@ The foundation is verified, not assumed.
     routed and refuses inference with an actionable `ConfigurationError` (a task
     cannot silently succeed against it), and the gateway switches its default
     model at runtime without a rebuild (an unroutable switch is refused).
+  - `test_specialists.py` — the specialist framework: profile scope
+    (`allows`/`advertised_tools`/`scoped_names`), catalogue lookup and
+    readiness, runner tool scoping for a scoped specialist versus the general
+    agent (which advertises the whole registry), the executor refusing an
+    out-of-scope tool with a `specialist.scope.denied` audit event, and the
+    `/specialists` + `/specialists/{id}` discovery endpoints including a `404`
+    for an unknown id.
 - **Deterministic model provider**: tests inject a scripted `ModelProvider`, so
   the agent loop is tested without a network or a real LLM. No mocks of internal
   logic ŌĆö real components are wired through `Platform.build()`.

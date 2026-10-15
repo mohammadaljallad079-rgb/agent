@@ -92,6 +92,13 @@
           <textarea id="goal" rows="2" placeholder="اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا" data-i18n-ph="goalPh"></textarea>
           <button class="btn" id="runBtn" data-i18n="start">ابدأ المهمة</button>
         </div>
+        <div class="row wrap" style="margin-top:8px">
+          <label for="specialistSelect" data-i18n="specialist">الوكيل المتخصص</label>
+          <select id="specialistSelect"></select>
+          <span class="pill" id="specialistPill">—</span>
+        </div>
+        <div class="muted" id="specialistDetail"></div>
+        <div class="muted" id="specialistMissing"></div>
       </div>
       <div class="grid2">
         <div class="card">
@@ -247,7 +254,9 @@
         artifacts:"المستندات الناتجة", noArtifacts:"لا توجد مستندات بعد", open:"فتح",
         size:"الحجم", format:"الصيغة", openFailed:"تعذّر الفتح",
         testInference:"اختبار الاستدلال", inferenceOk:"اجتاز اختبار الاستدلال",
-        inferenceFailed:"فشل اختبار الاستدلال", inferenceNotRun:"لم يُجرَ اختبار الاستدلال بعد" },
+        inferenceFailed:"فشل اختبار الاستدلال", inferenceNotRun:"لم يُجرَ اختبار الاستدلال بعد",
+        previewEffect:"الأثر المتوقّع", specialist:"الوكيل المتخصص", degraded:"ناقص",
+        missingTools:"أدوات غير متوفّرة", specialistCol:"الوكيل", noSpecialists:"لا يوجد وكلاء متخصصون" },
       en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
@@ -275,7 +284,9 @@
         artifacts:"Generated documents", noArtifacts:"No documents yet", open:"Open",
         size:"Size", format:"Format", openFailed:"Could not open",
         testInference:"Test inference", inferenceOk:"Inference test passed",
-        inferenceFailed:"Inference test failed", inferenceNotRun:"Inference test not run yet" }
+        inferenceFailed:"Inference test failed", inferenceNotRun:"Inference test not run yet",
+        previewEffect:"Expected effect", specialist:"Specialist agent", degraded:"degraded",
+        missingTools:"Missing tools", specialistCol:"Agent", noSpecialists:"No specialists" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
     const t = (k) => (I18N[LANG][k] || k);
@@ -327,15 +338,60 @@
       else if (status === "waiting_approval") span.classList.add("warn");
       return span;
     }
+    // Specialist readiness pill: available=ok, degraded=warn, unavailable=danger.
+    function readinessPill(status) {
+      const label = status === "available" ? t("available")
+        : status === "degraded" ? t("degraded")
+        : status === "unavailable" ? t("unavailable") : status;
+      const span = el("span", label); span.className = "pill";
+      if (status === "available") span.classList.add("ok");
+      else if (status === "degraded") span.classList.add("warn");
+      else if (status === "unavailable") span.classList.add("danger");
+      return span;
+    }
+    let SPECIALISTS = [];
+    function specialistName(s) { return LANG === "ar" ? s.name_ar : s.name_en; }
+    function renderSpecialists(data) {
+      SPECIALISTS = (data && data.specialists) || [];
+      const select = $("specialistSelect"); const previous = select.value;
+      select.replaceChildren();
+      if (!SPECIALISTS.length) {
+        const opt = el("option", t("noSpecialists")); opt.value = ""; select.appendChild(opt);
+        select.disabled = true; $("specialistPill").textContent = "—"; return;
+      }
+      select.disabled = false;
+      SPECIALISTS.forEach(s => {
+        const opt = el("option", specialistName(s) + " — " + s.status);
+        opt.value = s.id; select.appendChild(opt);
+      });
+      const fallback = (data && data.default) || SPECIALISTS[0].id;
+      select.value = SPECIALISTS.some(s => s.id === previous) ? previous : fallback;
+      renderSpecialistDetail();
+    }
+    function renderSpecialistDetail() {
+      const id = $("specialistSelect").value;
+      const s = SPECIALISTS.find(x => x.id === id);
+      const pillBox = $("specialistPill");
+      pillBox.replaceChildren();
+      if (!s) { $("specialistDetail").textContent = ""; $("specialistMissing").textContent = ""; return; }
+      pillBox.appendChild(readinessPill(s.status));
+      $("specialistDetail").textContent = (LANG === "ar" ? s.description_ar : s.description_en)
+        + " · " + t("tools") + ": " + (s.tool_scope ? s.tool_scope.length : t("general"));
+      // Missing tools are shown honestly; an available specialist shows none.
+      $("specialistMissing").textContent = (s.missing_tools && s.missing_tools.length)
+        ? (t("missingTools") + ": " + s.missing_tools.join(", ")) : "";
+    }
     function renderRuns(runs) {
       const box = $("runs"); box.replaceChildren();
       if (!runs || !runs.length) { const d = el("div", t("noRuns")); d.className = "empty"; box.appendChild(d); return; }
       const table = el("table"); const head = el("tr");
-      [t("sessions"), "الحالة", ""].forEach(h => head.appendChild(el("th", h)));
+      [t("sessions"), t("specialistCol"), t("status"), ""].forEach(h => head.appendChild(el("th", h)));
       table.appendChild(head);
       runs.forEach(r => {
         const tr = el("tr");
         tr.appendChild(el("td", r.goal));
+        const s = SPECIALISTS.find(x => x.id === r.specialist);
+        tr.appendChild(el("td", s ? specialistName(s) : (r.specialist || "—")));
         const statusTd = el("td"); statusTd.appendChild(pill(r.status)); tr.appendChild(statusTd);
         const actions = el("td");
         const open = el("button", "↗"); open.className = "btn ghost";
@@ -370,6 +426,12 @@
         const args = el("pre", JSON.stringify(a.arguments, null, 2)); args.className = "muted";
         args.style.whiteSpace = "pre-wrap"; args.style.wordBreak = "break-word";
         card.appendChild(args);
+        if (a.preview && Object.keys(a.preview).length) {
+          card.appendChild(el("div", t("previewEffect")));
+          const pv = el("pre", JSON.stringify(a.preview, null, 2)); pv.className = "muted";
+          pv.style.whiteSpace = "pre-wrap"; pv.style.wordBreak = "break-word";
+          card.appendChild(pv);
+        }
         const row = el("div"); row.className = "row";
         const ok = el("button", t("approve")); ok.className = "btn";
         ok.onclick = () => decide(a.id, true); row.appendChild(ok);
@@ -662,6 +724,7 @@
       const a = api(); if (!a) return;
       try {
         const boot = await a.bootstrap();
+        renderSpecialists(boot.specialists);
         renderRuns(boot.runs); renderApprovals(boot.approvals);
         renderModels(boot.models, boot.recommendation);
         renderReadiness(boot.readiness, boot.active_model);
@@ -688,8 +751,9 @@
     async function startRun() {
       const a = api(); if (!a) return;
       const goal = $("goal").value.trim(); if (!goal) return;
+      const specialist = $("specialistSelect").value || "general";
       $("runBtn").disabled = true;
-      try { await a.start_run(goal, null); $("goal").value = ""; await refresh(); }
+      try { await a.start_run(goal, null, specialist); $("goal").value = ""; await refresh(); }
       catch (e) { toast("تعذّر بدء المهمة: " + e); } finally { $("runBtn").disabled = false; }
     }
     async function stopRun(id) { const a = api(); if (!a) return; try { await a.cancel_run(id); await refresh(); } catch (e) { toast(String(e)); } }
@@ -796,6 +860,7 @@
     // ---- wiring ----
     function wire() {
       $("runBtn").onclick = startRun;
+      $("specialistSelect").onchange = renderSpecialistDetail;
       $("stopBtn").onclick = () => {
         const a = api(); if (!a) return;
         a.list_runs().then(rs => rs.filter(r => !["completed","failed","cancelled"].includes(r.status)).forEach(r => stopRun(r.id)));

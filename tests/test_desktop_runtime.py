@@ -31,7 +31,13 @@ from arabic_agent.desktop.shell import UI_DIR, DesktopBridge, _load_index_html
 from arabic_agent.local.main import build_local_control_app
 from arabic_agent.models.registry import ProviderRegistry
 
-from .helpers import FakeProvider, text_response
+from .helpers import (
+    FakeProvider,
+    plan_json,
+    scripted_responder,
+    text_response,
+    verify_json,
+)
 
 TOKEN = "control-secret"
 
@@ -175,6 +181,10 @@ async def test_bridge_bootstrap_over_real_http(live_desktop: str):
         boot = await bridge.bootstrap()
         assert boot["modes"]["current"] == OperatingMode.OFFLINE.value
         assert boot["settings"]["general"]["environment"] == "test"
+        # The specialist selector is fed from the same bootstrap payload the UI
+        # refreshes on, so it is present here too.
+        assert boot["specialists"]["default"] == "general"
+        assert len(boot["specialists"]["specialists"]) == 5
         version = await bridge.version()
         assert version["version"]
     finally:
@@ -194,6 +204,130 @@ async def test_bridge_start_and_list_run(live_desktop: str):
         assert isinstance(approvals, list)
     finally:
         await bridge.aclose()
+
+
+async def test_bridge_lists_specialists_with_real_readiness(live_desktop: str):
+    """The selector's data is the real catalogue with real readiness."""
+    bridge = DesktopBridge(base_url=live_desktop, token=TOKEN)
+    try:
+        view = await bridge.specialists()
+        assert view["default"] == "general"
+        ids = {s["id"] for s in view["specialists"]}
+        assert ids == {"general", "coding", "education", "video", "voice"}
+        for s in view["specialists"]:
+            assert s["status"] in {"available", "degraded", "unavailable"}
+            assert s["name_ar"] and s["name_en"]
+            # Honest readiness: a degraded/unavailable specialist lists what is
+            # missing; an available one lists nothing.
+            if s["status"] == "available":
+                assert s["missing_tools"] == []
+            else:
+                assert s["missing_tools"]
+        # The general agent is the whole registry, so it is always available.
+        general = next(s for s in view["specialists"] if s["id"] == "general")
+        assert general["status"] == "available"
+    finally:
+        await bridge.aclose()
+
+
+async def test_bridge_run_records_and_shows_the_selected_specialist(live_desktop: str):
+    """A specialist chosen in the UI reaches the persisted run and its history."""
+    bridge = DesktopBridge(base_url=live_desktop, token=TOKEN)
+    try:
+        run = await bridge.start_run("حلّل هذا المشروع", None, "coding")
+        assert run["specialist"] == "coding"
+        # Backward-compatible default: no specialist means the general agent.
+        default_run = await bridge.start_run("مهمة عامة")
+        assert default_run["specialist"] == "general"
+        # Run history carries it, so the list/detail views can show it.
+        runs = {r["id"]: r for r in await bridge.list_runs()}
+        assert runs[run["id"]]["specialist"] == "coding"
+        assert runs[default_run["id"]]["specialist"] == "general"
+    finally:
+        await bridge.aclose()
+
+
+async def test_bridge_rejects_an_unknown_specialist(live_desktop: str):
+    bridge = DesktopBridge(base_url=live_desktop, token=TOKEN)
+    try:
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            await bridge.start_run("مهمة", None, "does_not_exist")
+        assert excinfo.value.response.status_code == 404
+    finally:
+        await bridge.aclose()
+
+
+async def test_bridge_run_reaches_executor_and_enforces_specialist_scope(tmp_path: Path):
+    """End to end: the UI's specialist choice reaches the executor's scope gate.
+
+    A deterministic model plans a call to ``print_document`` while the run is
+    under the ``coding`` specialist, whose scope never advertises printing. The
+    real executor must refuse it — the run's audit trail records
+    ``specialist.scope.denied`` — proving the selection is enforced, not merely
+    displayed. Under the general agent the same call is not scope-denied.
+    """
+    from fastapi.testclient import TestClient
+
+    def _app():  # type: ignore[no-untyped-def]
+        registry = ProviderRegistry()
+        registry.register(
+            FakeProvider(
+                scripted_responder(
+                    plan=plan_json(("اطبع", "print_document")),
+                    tool_calls=[
+                        ("print_document", {"path": "report.pdf", "printer": "default"}),
+                        ("finish", {"result": "تم", "verified": True}),
+                    ],
+                    verification=verify_json(True, "تم"),
+                )
+            )
+        )
+        return build_local_control_app(
+            Settings(
+                environment="test",
+                require_auth=False,
+                runtime_kind=RuntimeKind.LOCAL,
+                local_store_dir=str(tmp_path / "data"),
+                local_workspace_roots=(str(tmp_path / "approved"),),
+                local_mode=OperatingMode.OFFLINE,
+                local_control_token=SecretStr(TOKEN),
+                max_steps_per_run=20,
+                database_url=SecretStr(""),
+                redis_url=SecretStr(""),
+                execution_mode="inline",
+            ),
+            provider_registry=registry,
+            default_model="fake/model",
+        )
+
+    # A scoped run: the executor refuses the out-of-scope print call.
+    headers = {"X-Local-Token": TOKEN}
+    with TestClient(_app()) as client:
+        started = client.post(
+            "/desktop/runs", json={"goal": "اطبع تقريرًا", "specialist": "coding"}, headers=headers
+        )
+        assert started.status_code == 201
+        run = started.json()
+        timeline = client.get(f"/desktop/runs/{run['id']}/timeline", headers=headers).json()
+    types = [e.get("type") for e in timeline]
+    assert "specialist.scope.denied" in types
+    denied = next(e for e in timeline if e.get("type") == "specialist.scope.denied")
+    assert denied.get("data", {}).get("tool") == "print_document"
+    assert denied.get("data", {}).get("specialist") == "coding"
+    # The run's own start event names the specialist, so the timeline shows it.
+    started_event = next(e for e in timeline if e.get("type") == "run.started")
+    assert started_event.get("data", {}).get("specialist") == "coding"
+
+    # The same call under the general agent is not scope-denied: the general
+    # agent keeps the whole registry.
+    with TestClient(_app()) as client:
+        started = client.post(
+            "/desktop/runs", json={"goal": "اطبع تقريرًا", "specialist": "general"}, headers=headers
+        )
+        assert started.status_code == 201
+        run = started.json()
+        timeline = client.get(f"/desktop/runs/{run['id']}/timeline", headers=headers).json()
+    assert "specialist.scope.denied" not in [e.get("type") for e in timeline]
 
 
 async def test_bridge_exposes_no_generic_url_method(live_desktop: str):
@@ -237,6 +371,25 @@ def test_ui_assets_are_arabic_first_and_isolated():
     assert "الوكيل العربي" in html
     # The control token must never be baked into the page.
     assert TOKEN not in html
+
+
+def test_ui_has_a_real_specialist_selector():
+    """The specialist selector is wired to the bridge, not a placeholder."""
+    html = _load_index_html()
+    assert 'id="specialistSelect"' in html
+    assert 'id="specialistPill"' in html
+    assert 'id="specialistDetail"' in html
+    assert 'id="specialistMissing"' in html
+    # It reads the real catalogue through the bridge and sends the choice on a run.
+    assert "a.specialists()" not in html  # data arrives via bootstrap, not a second call
+    assert "renderSpecialists(boot.specialists)" in html
+    assert "a.start_run(goal, null, specialist)" in html
+    # Honest readiness states are rendered, with missing tools surfaced.
+    assert 't("degraded")' in html
+    assert 't("missingTools")' in html
+    # Arabic labels exist for the surface.
+    assert "الوكيل المتخصص" in html
+    assert "أدوات غير متوفّرة" in html
 
 
 def test_ui_has_a_real_browser_provisioning_surface():

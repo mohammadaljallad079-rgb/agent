@@ -46,6 +46,7 @@ from ..local.hardware import HardwareProfile, detect_hardware
 from ..local.model_security import resolve_storage_dir
 from ..models.base import ChatMessage, ModelRequest
 from ..permissions.base import Permission, Principal
+from ..specialists.base import GENERAL
 
 logger = logging.getLogger(__name__)
 
@@ -123,11 +124,20 @@ class DesktopService:
         return self._principal
 
     # -- Runs / sessions -------------------------------------------------
-    async def start_run(self, *, goal: str, workspace_dir: str | None = None) -> dict[str, object]:
+    async def start_run(
+        self,
+        *,
+        goal: str,
+        workspace_dir: str | None = None,
+        specialist: str = GENERAL,
+    ) -> dict[str, object]:
         if not goal or not goal.strip():
             raise ValidationError("a goal is required")
         record = await self._runs.start(
-            principal=self._principal, goal=goal.strip(), workspace_dir=workspace_dir
+            principal=self._principal,
+            goal=goal.strip(),
+            workspace_dir=workspace_dir,
+            specialist=specialist,
         )
         return self._run_dict(record)
 
@@ -183,6 +193,7 @@ class DesktopService:
                 "permission": a.permission.value,
                 "summary": a.summary,
                 "arguments": a.arguments,
+                "preview": a.preview,
                 "run_id": a.run_id,
                 "created_at": a.created_at.isoformat(),
                 "expires_at": a.expires_at.isoformat(),
@@ -508,6 +519,39 @@ class DesktopService:
             )
         tools.sort(key=lambda t: str(t["name"]))
         return {"tools": tools, "count": len(tools)}
+
+    # -- Specialists -----------------------------------------------------
+    def specialists_view(self) -> dict[str, object]:
+        """Every specialist profile with its *real* readiness against the tools.
+
+        This is the same catalogue, scope intersection and readiness computation
+        the API uses (``platform.specialists``), so the desktop selector can never
+        show a specialist as more capable than the runtime will actually run it.
+        A specialist whose declared tools are partly absent is reported
+        ``degraded`` with the missing names; none present is ``unavailable``.
+        """
+        available = frozenset(self._platform.tools.names())
+        readiness = {str(row["id"]): row for row in self._platform.specialists.readiness(available)}
+        items: list[dict[str, object]] = []
+        for specialist in self._platform.specialists.all():
+            row = readiness.get(specialist.id, {})
+            items.append(
+                {
+                    "id": specialist.id,
+                    "name_ar": specialist.name_ar,
+                    "name_en": specialist.name_en,
+                    "description_ar": specialist.description_ar,
+                    "description_en": specialist.description_en,
+                    "domains": list(specialist.domains),
+                    "required_capabilities": sorted(
+                        c.value for c in specialist.required_capabilities
+                    ),
+                    "tool_scope": sorted(specialist.scoped_names(available)),
+                    "status": str(row.get("status", "available")),
+                    "missing_tools": [str(m) for m in row.get("missing_tools", [])],
+                }
+            )
+        return {"specialists": items, "default": GENERAL, "count": len(items)}
 
     # -- Generated artifacts ---------------------------------------------
     #: Formats the UI can open in the operating system's default application.
@@ -1106,6 +1150,7 @@ class DesktopService:
             "verified": record.verified,
             "error": record.error,
             "workspace_dir": record.workspace_dir,
+            "specialist": getattr(record, "specialist", GENERAL),
             "pending_approval_id": record.pending_approval_id,
             "steps_executed": record.steps_executed,
             "tool_calls": record.tool_calls,

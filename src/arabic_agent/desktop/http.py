@@ -24,6 +24,7 @@ Endpoints (all under ``/desktop``):
 * ``POST /desktop/models/{id}/verify`` / ``POST .../health`` / ``DELETE /desktop/models/{id}``
 * ``GET  /desktop/modes`` / ``POST /desktop/modes``
 * ``GET  /desktop/tools``          — the live tool registry with permissions
+* ``GET  /desktop/specialists``    — specialist profiles with real readiness
 * ``GET  /desktop/artifacts`` / ``GET /desktop/runs/{id}/artifacts``
 * ``POST /desktop/runs/{id}/artifacts/open`` — open a generated document
 * ``GET  /desktop/workflows`` / ``GET /desktop/workflows/{id}/runs``
@@ -51,6 +52,7 @@ from ..core.errors import (
     PlatformError,
     ValidationError,
 )
+from ..specialists.base import GENERAL
 from .events import sse_format
 from .service import DesktopService
 from .version import PRODUCT_VERSION
@@ -59,6 +61,8 @@ from .version import PRODUCT_VERSION
 class StartRunRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=8000)
     workspace_dir: str | None = None
+    #: Specialist profile id; omitted means the general agent (whole registry).
+    specialist: str = Field(default=GENERAL, max_length=64)
 
 
 class ApprovalDecision(BaseModel):
@@ -134,6 +138,7 @@ def create_desktop_app(
             "browser": service.browser_view(),
             "providers": service.providers_view(),
             "tools": service.tools_view(),
+            "specialists": service.specialists_view(),
             "artifacts": await service.list_artifacts(),
             "connectors": service.connectors_view(),
             "computer": service.computer_view(),
@@ -155,7 +160,11 @@ def create_desktop_app(
     async def start_run(
         payload: StartRunRequest, _: None = Depends(authorize)
     ) -> dict[str, object]:
-        return await service.start_run(goal=payload.goal, workspace_dir=payload.workspace_dir)
+        return await service.start_run(
+            goal=payload.goal,
+            workspace_dir=payload.workspace_dir,
+            specialist=payload.specialist,
+        )
 
     @app.get("/desktop/runs/{run_id}")
     async def get_run(run_id: str, _: None = Depends(authorize)) -> dict[str, object]:
@@ -307,6 +316,12 @@ def create_desktop_app(
     @app.get("/desktop/tools")
     async def get_tools(_: None = Depends(authorize)) -> dict[str, object]:
         return service.tools_view()
+
+    # -- Specialists -----------------------------------------------------
+    @app.get("/desktop/specialists")
+    async def get_specialists(_: None = Depends(authorize)) -> dict[str, object]:
+        """Specialist profiles with real readiness against the running tools."""
+        return service.specialists_view()
 
     # -- Generated artifacts ---------------------------------------------
     @app.get("/desktop/artifacts")

@@ -130,6 +130,8 @@ from .printing.runtime import PrintRuntime
 from .printing.store import InMemoryPrintJobStore, PrintJobStore
 from .runs.store import InMemoryRunStore, RunStore
 from .runtime.boundary import RuntimeProfile
+from .specialists.base import Specialist
+from .specialists.catalogue import SpecialistCatalogue, default_catalogue
 from .tasks.engine import TaskEngine
 from .tasks.store import InMemoryTaskStore, TaskStore
 from .tools.base import Tool
@@ -224,6 +226,7 @@ class Platform:
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
         readiness: ReadinessService | None = None,
+        specialists: SpecialistCatalogue | None = None,
     ) -> None:
         self.settings = settings
         self.gateway = gateway
@@ -269,6 +272,7 @@ class Platform:
         self.readiness = readiness or ReadinessService(
             [], timeout_seconds=settings.readiness_timeout_seconds
         )
+        self.specialists = specialists or default_catalogue()
 
     @property
     def durable(self) -> bool:
@@ -284,8 +288,14 @@ class Platform:
         """Whether Redis-backed coordination (queue/rate limit/idempotency) is on."""
         return self.redis_client is not None
 
-    def build_runner(self, *, locale: Locale | None = None) -> AgentRunner:
-        """Create an agent runner bound to this platform's components."""
+    def build_runner(
+        self, *, locale: Locale | None = None, specialist: Specialist | None = None
+    ) -> AgentRunner:
+        """Create an agent runner bound to this platform's components.
+
+        ``specialist`` scopes which tools the runner advertises (and accepts);
+        ``None`` is the general agent with the whole registry.
+        """
         return AgentRunner(
             gateway=self.gateway,
             tools=self.tools,
@@ -299,6 +309,7 @@ class Platform:
             settings=self.settings,
             locale=locale or self.settings.default_locale,
             attachment_provider=self.attachment_provider,
+            specialist=specialist,
         )
 
     async def aclose(self) -> None:
@@ -377,6 +388,7 @@ class Platform:
         redis_client: aioredis.Redis | None = None,
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
+        specialists: SpecialistCatalogue | None = None,
     ) -> Platform:
         """Construct a platform from settings.
 
@@ -1058,6 +1070,7 @@ class Platform:
             metrics=metrics,
             tracer=tracer,
             readiness=readiness,
+            specialists=specialists,
         )
         # The engine holds a reference to its platform (it reuses the runner,
         # executor, policy engine and audit log). Break the construction cycle

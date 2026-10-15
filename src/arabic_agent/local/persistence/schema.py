@@ -202,6 +202,10 @@ class LocalApprovalRow(LocalBase):
     permission: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     arguments: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
     summary: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    #: Structured, non-secret preview of the operation, shown to the approver.
+    preview: Mapped[dict[str, Any]] = mapped_column(
+        JSONType, nullable=False, default=dict, server_default=sa.text("'{}'")
+    )
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
@@ -358,6 +362,9 @@ class LocalRunRow(LocalBase):
     workspace_dir: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
     idempotency_key: Mapped[str | None] = mapped_column(sa.String(200), nullable=True)
     parent_run_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    specialist: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="general", server_default="general"
+    )
     roles: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
     granted_permissions: Mapped[list[str] | None] = mapped_column(JSONType, nullable=True)
     result: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")

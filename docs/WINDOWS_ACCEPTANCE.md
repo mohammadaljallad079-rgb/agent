@@ -142,9 +142,9 @@ uv pip install -e ".[dev,documents,docgen]"
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
-uv run pytest                      # expect: 961 passed, 59 skipped, 0 failed
+uv run pytest                      # expect: 1023 passed, 59 skipped, 0 failed
 # On a bare checkout without the documents/docgen extras the same suite is
-# 919 passed, 101 skipped, 0 failed — the extra tests skip, they do not fail.
+# 973 passed, 109 skipped, 0 failed — the extra tests skip, they do not fail.
 
 # 2. Build the wheel (contains the desktop UI asset and the packaged
 #    migration chain arabic_agent/_migrations_local)

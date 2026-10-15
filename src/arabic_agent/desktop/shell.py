@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from ..core.resources import PACKAGE_DIR
+from ..specialists.base import GENERAL
 from .runtime_manager import DesktopRuntimeManager, RuntimeStartError
 
 logger = logging.getLogger(__name__)
@@ -110,8 +111,16 @@ class DesktopBridge:
         return await self._get("/desktop/version")
 
     # -- Write surface ---------------------------------------------------
-    async def start_run(self, goal: str, workspace_dir: str | None = None) -> Any:
-        return await self._post("/desktop/runs", {"goal": goal, "workspace_dir": workspace_dir})
+    async def start_run(
+        self,
+        goal: str,
+        workspace_dir: str | None = None,
+        specialist: str = GENERAL,
+    ) -> Any:
+        return await self._post(
+            "/desktop/runs",
+            {"goal": goal, "workspace_dir": workspace_dir, "specialist": specialist},
+        )
 
     async def cancel_run(self, run_id: str) -> Any:
         return await self._post(f"/desktop/runs/{run_id}/cancel")
@@ -155,6 +164,9 @@ class DesktopBridge:
 
     async def tools(self) -> Any:
         return await self._get("/desktop/tools")
+
+    async def specialists(self) -> Any:
+        return await self._get("/desktop/specialists")
 
     async def artifacts(self) -> Any:
         return await self._get("/desktop/artifacts")

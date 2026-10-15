@@ -95,6 +95,54 @@ def _run_to_completion(client: TestClient, workspace: Path) -> str:
     return str(finished["id"])
 
 
+def _write_responder():  # type: ignore[no-untyped-def]
+    return scripted_responder(
+        plan=plan_json(("اكتب ملف", "write_file")),
+        tool_calls=[
+            ("write_file", {"path": "note.txt", "content": "مرحبا"}),
+            ("finish", {"result": "تم", "verified": True}),
+        ],
+        verification=verify_json(True, "تم"),
+    )
+
+
+def test_desktop_approval_surfaces_the_tool_preview(tmp_path: Path) -> None:
+    """The approval center shows the concrete effect, not just a tool name."""
+    registry = ProviderRegistry()
+    registry.register(FakeProvider(_write_responder()))
+    app = build_local_control_app(
+        _settings(tmp_path), provider_registry=registry, default_model="fake/model"
+    )
+    workspace = tmp_path / "approved"
+    workspace.mkdir()
+    with TestClient(app) as client:
+        started = client.post(
+            "/desktop/runs",
+            json={"goal": "اكتب ملف", "workspace_dir": str(workspace)},
+            headers=HEADERS,
+        )
+        assert started.status_code == 201
+        run = started.json()
+        assert run["status"] == "waiting_approval"
+        approval_id = run["pending_approval_id"]
+
+        pending = client.get("/desktop/approvals", headers=HEADERS).json()
+        entry = next(a for a in pending if a["id"] == approval_id)
+        assert entry["preview"]["operation"] == "write_file"
+        assert entry["preview"]["path"] == "note.txt"
+        assert entry["preview"]["bytes"] == len("مرحبا".encode())
+        assert entry["preview"]["will_change"] is True
+        # The preview describes the write without having applied it.
+        assert not (workspace / "note.txt").exists()
+
+        decided = client.post(
+            f"/desktop/approvals/{approval_id}", json={"approve": True}, headers=HEADERS
+        )
+        assert decided.status_code == 200
+        assert decided.json()["status"] == "completed"
+        assert (workspace / "note.txt").read_text(encoding="utf-8") == "مرحبا"
+
+
 @pytest.mark.skipif(
     not __import__("importlib.util", fromlist=["util"]).find_spec("pptx"),
     reason="python-pptx not installed",

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..core.enums import RunStatus
 from ..core.errors import ConflictError
 from ..core.ids import PREFIX_RUN, new_id
+from ..specialists.base import GENERAL
 
 
 def _utcnow() -> datetime:
@@ -77,6 +78,11 @@ class RunRecord(BaseModel):
     idempotency_key: str | None = None
     #: Links a recovered/retried run to the run it continues.
     parent_run_id: str | None = None
+
+    #: The specialist profile this run executes under (Phase 04). Stored so a
+    #: worker reconstructs the same tool scope on resume/recovery without the
+    #: caller resending it. Defaults to the general agent.
+    specialist: str = GENERAL
 
     #: Principal identity needed to rebuild authorisation at execution time
     #: (roles and the permission ceiling). These are not secrets; storing them

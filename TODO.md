@@ -607,6 +607,76 @@ binary; not implementable in this environment):
       input, approval UX, emergency stop, offline `remote_requests == 0`,
       crash/restart). The automated gates above do not cover a live desktop.
 
+## Phase 04 — Specialized agents on a shared core
+
+One orchestration platform, several declarative **specialist profiles** — not
+one engine per domain. A specialist is data (`specialists/builtin.py`), resolved
+by the same agent loop, executor, policy engine and audit trail. The SUPER AI
+AGENT stays general-purpose: `general` has an *empty* scope, the explicit
+sentinel for "the whole registry".
+
+- [x] `specialists/` package: `Specialist` value object (id, Arabic-first name,
+      directive, declared tool scope, required model capabilities),
+      `SpecialistCatalogue` with lookup (empty id → `general`) and readiness.
+- [x] Built-in profiles: `general` (whole registry), `coding`, `education`,
+      `video`, `voice`.
+- [x] Scope is a ceiling, enforced twice: the runner advertises only
+      `scope ∩ registered tools`, and an out-of-scope tool named by the model is
+      refused with a `DENIED` result plus a `specialist.scope.denied` audit
+      event (defence in depth — never executed).
+- [x] Honest readiness: `available` / `degraded` (with the missing tool names) /
+      `unavailable`. A declared-but-absent tool degrades a specialist; it does
+      not fail a step.
+- [x] End-to-end wiring: `RunRequest.specialist` → `RunService` → `RunRecord`
+      (+ `RunRow` / `LocalRunRow` + migrations) → `RunExecutor` →
+      `build_runner(specialist=...)`. Unknown ids are a `404` before a run is
+      created.
+- [x] Discovery API: `GET /specialists`, `GET /specialists/{id}`.
+- [x] Human-in-the-loop approval **preview**: a sensitive call carries a
+      structured, read-only description of its concrete effect (target path,
+      byte count, overwrite flag, replacement count, export source→destination)
+      produced by `Tool.preview()` before the approval is raised. It is redacted,
+      persisted (cloud `approvals.preview` + local `local_approvals.preview`,
+      with migrations) and surfaced on `GET /approvals` and the desktop approval
+      center, so the decision is informed rather than a yes/no on a tool name.
+- [x] Tests: `tests/test_specialists.py` (profile scope, catalogue, readiness,
+      runner scoping, executor refusal + audit, discovery endpoints), plus
+      preview coverage in `test_document_editing.py`, `test_api.py`,
+      `test_desktop_artifacts.py` and a durable round-trip in
+      `test_local_durable.py`.
+- [ ] The specialist-specific tools the profiles declare are **not implemented
+      yet**; readiness reports them `degraded` today. This is deliberate and
+      honest — the profiles describe the intended scope, and the gap is visible
+      rather than hidden. Remaining tools, grouped:
+  - [x] Document artifact tools: `edit_document`, `export_document` (and the
+        `document_editing_formats` discovery tool) — real in-place editing of
+        text/Markdown/DOCX/XLSX plus format export, wired into the `voice`,
+        `video`, `education` and `coding` scopes.
+  - [ ] Coding agent tools: `code_analyze`, `code_review`, `git_diff`.
+  - [ ] Video/studio tools: `studio_project_create`, `studio_storyboard`,
+        `studio_scene_render`, `studio_subtitles`, `studio_voiceover`,
+        `studio_compose`, `studio_project_status`, `studio_capabilities`,
+        `image_generate`.
+  - [ ] Voice tools: `speech_to_text`, `text_to_speech`, `speech_capabilities`.
+  - [ ] Education tools: `education_course_plan`, `education_lesson`,
+        `education_quiz`.
+- [x] Specialist-aware UI in the desktop shell: the workspace surface renders a
+      selector from the live catalogue (delivered on `/desktop/bootstrap` and
+      `GET /desktop/specialists`, both backed by the same `platform.specialists`
+      catalogue and readiness the API uses), shows each profile's Arabic/English
+      description, tool count and honest readiness pill (`available` /
+      `degraded` / `unavailable`, with the missing tool names when degraded),
+      and passes the chosen id on run creation (`POST /desktop/runs`
+      `specialist`). The run list shows the specialist per run, and the run's
+      start audit event records it. Enforced end to end: a specialist choice
+      reaches the executor's scope gate (a `coding` run that tries
+      `print_document` is refused with `specialist.scope.denied`; the general
+      agent is not). Regression coverage in `tests/test_desktop_runtime.py`
+      (bridge + live HTTP + UI asset) and `tests/test_local_durable.py`
+      (durable persistence of the choice).
+
+---
+
 ## Phase 7 — Product surface
 
 - [ ] Cloud/multi-tenant web UI with full RTL/LTR support, locale switching,
@@ -813,10 +883,10 @@ binary; not implementable in this environment):
 
 ## Windows-readiness closeout
 
-- The full suite is green — **961 passed, 59 skipped, 0 failed** — and the same
+- The full suite is green — **1023 passed, 59 skipped, 0 failed** — and the same
   suite on a checkout *without* the optional `documents`/`docgen` extras is
-  **919 passed, 101 skipped, 0 failed** (the extra tests skip honestly; they do
-  not error). `ruff` is clean and `mypy --strict` reports no issues in 230
+  **973 passed, 109 skipped, 0 failed** (the extra tests skip honestly; they do
+  not error). `ruff` is clean and `mypy --strict` reports no issues in 236
   source files.
 - Windows-only defects found from the `windows-latest` CI run and fixed at root
   cause, each with a regression test (detail in `docs/WINDOWS_ACCEPTANCE.md` §2):

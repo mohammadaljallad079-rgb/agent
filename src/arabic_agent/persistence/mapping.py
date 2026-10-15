@@ -58,6 +58,7 @@ def run_to_row(record: RunRecord) -> dict[str, Any]:
         "workspace_dir": record.workspace_dir,
         "idempotency_key": record.idempotency_key,
         "parent_run_id": record.parent_run_id,
+        "specialist": record.specialist,
         "roles": list(record.roles),
         "granted_permissions": (
             list(record.granted_permissions) if record.granted_permissions is not None else None
@@ -91,6 +92,7 @@ def run_from_row(row: RunRow) -> RunRecord:
         workspace_dir=row.workspace_dir or "",
         idempotency_key=row.idempotency_key,
         parent_run_id=row.parent_run_id,
+        specialist=row.specialist,
         roles=tuple(row.roles or ()),
         granted_permissions=(
             tuple(row.granted_permissions) if row.granted_permissions is not None else None
@@ -190,6 +192,7 @@ def approval_to_row(approval: Approval) -> dict[str, Any]:
         "permission": approval.permission.value,
         "arguments": dict(approval.arguments),
         "summary": approval.summary,
+        "preview": dict(approval.preview),
         "status": approval.status.value,
         "created_at": approval.created_at,
         "expires_at": approval.expires_at,
@@ -209,6 +212,7 @@ def approval_from_row(row: ApprovalRow) -> Approval:
         permission=Permission(row.permission),
         arguments=dict(row.arguments or {}),
         summary=row.summary,
+        preview=dict(getattr(row, "preview", None) or {}),
         status=ApprovalStatus(row.status),
         created_at=row.created_at,
         expires_at=row.expires_at,

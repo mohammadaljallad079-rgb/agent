@@ -29,7 +29,10 @@ from arabic_agent.tools.builtin.docgen import (
     DOCUMENT_GENERATION_TOOLS,
     CreatePresentationTool,
     CreateSpreadsheetTool,
+    DocumentEditingFormatsTool,
     DocumentGenerationFormatsTool,
+    EditDocumentTool,
+    ExportDocumentTool,
     GenerateDocumentTool,
 )
 
@@ -70,14 +73,20 @@ def test_generation_tools_are_declared_writes() -> None:
     assert GenerateDocumentTool.permissions == (Permission.WRITE_FILE,)
     assert CreateSpreadsheetTool.permissions == (Permission.WRITE_FILE,)
     assert CreatePresentationTool.permissions == (Permission.WRITE_FILE,)
-    # The formats reporter is read-only.
+    assert EditDocumentTool.permissions == (Permission.WRITE_FILE,)
+    assert ExportDocumentTool.permissions == (Permission.WRITE_FILE,)
+    # The formats reporters are read-only.
     assert DocumentGenerationFormatsTool.permissions == ()
+    assert DocumentEditingFormatsTool.permissions == ()
     names = {cls.name for cls in DOCUMENT_GENERATION_TOOLS}
     assert names == {
         "generate_document",
         "create_spreadsheet",
         "create_presentation",
         "document_generation_formats",
+        "edit_document",
+        "export_document",
+        "document_editing_formats",
     }
 
 

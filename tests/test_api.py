@@ -107,6 +107,13 @@ def test_approval_flow_over_http(settings, tmp_path):
 
         pending = client.get("/approvals").json()
         assert any(a["id"] == approval_id for a in pending)
+        # The pending approval exposes a data-driven preview of the effect so the
+        # decision is informed. It must describe the write without having applied it.
+        entry = next(a for a in pending if a["id"] == approval_id)
+        assert entry["preview"]["operation"] == "write_file"
+        assert entry["preview"]["path"] == "a.txt"
+        assert entry["preview"]["bytes"] == 2
+        assert not list((tmp_path / "data" / "workspaces").rglob("a.txt"))
 
         decided = client.post(f"/approvals/{approval_id}/decide", json={"approve": True})
         assert decided.status_code == 200

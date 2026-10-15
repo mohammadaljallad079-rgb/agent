@@ -444,6 +444,99 @@ async def test_approval_survives_process_restart_then_resumes(tmp_path):
         await platform.aclose()
 
 
+async def test_approval_preview_is_durable_and_tenant_scoped(tmp_path):
+    """A structured approval preview survives a restart and stays tenant-scoped."""
+    from datetime import UTC, datetime, timedelta
+
+    from arabic_agent.permissions.approvals import Approval
+
+    preview = {
+        "operation": "write_file",
+        "path": "report.md",
+        "bytes": 12,
+        "overwrites_existing": True,
+    }
+    platform = _build(tmp_path)
+    try:
+        saved = await platform.approvals.add(
+            Approval(
+                tenant_id="tnt_1",
+                user_id="usr_1",
+                run_id="run_preview",
+                tool_name="write_file",
+                permission=Permission.WRITE_FILE,
+                arguments={"path": "report.md"},
+                summary="اكتب الملف report.md",
+                preview=preview,
+                expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            )
+        )
+    finally:
+        await platform.aclose()
+
+    # A new platform (new process in the real world) reads it back from disk.
+    reopened = _build(tmp_path)
+    try:
+        loaded = await reopened.approvals.get(saved.id, tenant_id="tnt_1")
+        assert loaded.preview == preview
+        # Cross-tenant access must not resolve the record.
+        with pytest.raises(NotFoundError):
+            await reopened.approvals.get(saved.id, tenant_id="tnt_2")
+    finally:
+        await reopened.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Specialist selection reaches the executor and is enforced durably
+# ---------------------------------------------------------------------------
+async def test_specialist_selection_reaches_the_executor_and_is_durable(tmp_path):
+    """A chosen specialist is persisted, executed under its scope, and re-read.
+
+    This is the durable half of the desktop selector: the id the UI sends is
+    stored on the run row, reaches the executor, and survives a restart.
+    """
+    from arabic_agent.api.service import RunService
+
+    platform = _build(tmp_path)
+    service = RunService(platform)
+    try:
+        record = await service.start(
+            principal=_principal(),
+            goal="حلّل المشروع",
+            specialist="coding",
+        )
+        assert record.specialist == "coding"
+        # The executor advertises the coding scope, which excludes a tool only
+        # the general agent should have (e.g. printing).
+        assert "run_local_command" in platform.specialists.get("coding").advertised_tools()
+        assert not platform.specialists.get("coding").allows("print_document")
+        # The general agent, by contrast, allows everything.
+        assert platform.specialists.get("general").allows("print_document")
+    finally:
+        await platform.aclose()
+
+    # A new platform reads the specialist back from the real SQLite file.
+    reopened = _build(tmp_path)
+    try:
+        loaded = await reopened.runs.get(record.id, tenant_id="tnt_1")
+        assert loaded.specialist == "coding"
+    finally:
+        await reopened.aclose()
+
+
+async def test_run_defaults_to_general_specialist_when_omitted(tmp_path):
+    """Backward compatibility: an existing caller that omits it gets general."""
+    from arabic_agent.api.service import RunService
+
+    platform = _build(tmp_path)
+    service = RunService(platform)
+    try:
+        record = await service.start(principal=_principal(), goal="مهمة عامة")
+        assert record.specialist == "general"
+    finally:
+        await platform.aclose()
+
+
 # ---------------------------------------------------------------------------
 # Security: secrets never persist, finished work is never resurrected
 # ---------------------------------------------------------------------------

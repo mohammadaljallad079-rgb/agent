@@ -19,6 +19,9 @@ class MessageKey(StrEnum):
     APPROVAL_DENIED = "approval.denied"
     PERMISSION_DENIED = "permission.denied"
     TOOL_NOT_FOUND = "tool.not_found"
+    SPECIALIST_UNKNOWN = "specialist.unknown"
+    SPECIALIST_SCOPE_DENIED = "specialist.scope_denied"
+    SPECIALIST_DEGRADED = "specialist.degraded"
     INVALID_REQUEST = "request.invalid"
     UNAUTHENTICATED = "auth.unauthenticated"
     NOT_FOUND = "resource.not_found"
@@ -36,6 +39,9 @@ MESSAGES: dict[Locale, dict[MessageKey, str]] = {
         MessageKey.APPROVAL_DENIED: "تم رفض العملية.",
         MessageKey.PERMISSION_DENIED: "غير مسموح بتنفيذ هذه العملية.",
         MessageKey.TOOL_NOT_FOUND: "الأداة المطلوبة غير متوفرة.",
+        MessageKey.SPECIALIST_UNKNOWN: "التخصص المطلوب غير معروف.",
+        MessageKey.SPECIALIST_SCOPE_DENIED: "هذه الأداة خارج نطاق تخصص الوكيل الحالي.",
+        MessageKey.SPECIALIST_DEGRADED: "بعض أدوات هذا التخصص غير متوفرة في بيئة التشغيل الحالية.",
         MessageKey.INVALID_REQUEST: "الطلب غير صالح.",
         MessageKey.UNAUTHENTICATED: "يجب تسجيل الدخول.",
         MessageKey.NOT_FOUND: "العنصر المطلوب غير موجود.",
@@ -50,6 +56,9 @@ MESSAGES: dict[Locale, dict[MessageKey, str]] = {
         MessageKey.APPROVAL_DENIED: "Operation denied.",
         MessageKey.PERMISSION_DENIED: "This operation is not permitted.",
         MessageKey.TOOL_NOT_FOUND: "The requested tool is unavailable.",
+        MessageKey.SPECIALIST_UNKNOWN: "The requested specialist is not known.",
+        MessageKey.SPECIALIST_SCOPE_DENIED: "That tool is outside this agent's specialist scope.",
+        MessageKey.SPECIALIST_DEGRADED: "Some tools for this specialist are unavailable here.",
         MessageKey.INVALID_REQUEST: "The request is invalid.",
         MessageKey.UNAUTHENTICATED: "Authentication is required.",
         MessageKey.NOT_FOUND: "The requested resource was not found.",

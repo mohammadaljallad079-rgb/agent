@@ -31,6 +31,10 @@ class AuditEventType(StrEnum):
     TOOL_RESULT = "tool.result"
     TOOL_ERROR = "tool.error"
     TOOL_RETRY = "tool.retry"
+    #: A model named a tool outside the active specialist's declared scope. The
+    #: call is refused before the executor sees it (defence in depth: the scope
+    #: was already the advertisement ceiling).
+    SPECIALIST_SCOPE_DENIED = "specialist.scope.denied"
     POLICY_DECISION = "policy.decision"
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_RESOLVED = "approval.resolved"

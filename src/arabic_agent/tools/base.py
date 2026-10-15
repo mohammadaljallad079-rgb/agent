@@ -142,6 +142,21 @@ class Tool(ABC):
     async def run(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         """Execute the tool. Raise a :class:`PlatformError` on failure."""
 
+    async def preview(
+        self, arguments: dict[str, Any], context: ToolContext
+    ) -> dict[str, Any] | None:
+        """A non-destructive, structured preview of what this call would do.
+
+        Called by the executor *only* when a call is about to require approval,
+        so the human sees the concrete effect (which file, which text changes,
+        how many replacements) rather than just the tool name. Returning
+        ``None`` (the default) means the tool has no preview to add. An
+        implementation must be read-only — it may inspect state but never
+        mutate it — and must not raise: the executor treats a failing preview as
+        "no preview" and still raises the approval.
+        """
+        return None
+
     async def execute(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         """Validate, time, and run the tool, converting stray errors.
 
