@@ -666,8 +666,12 @@ def test_terminate_group_uses_the_process_group_on_posix(monkeypatch):
     import arabic_agent.speech.backends.posix as posix
 
     signalled: list[tuple[int, int]] = []
-    monkeypatch.setattr(posix.os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)))
-    monkeypatch.setattr(posix.os, "getpgid", lambda pid: pid + 1)
+    # ``raising=False``: on Windows ``os`` has no ``killpg``/``getpgid`` at all,
+    # and this test must run there too (it injects the POSIX behaviour).
+    monkeypatch.setattr(
+        posix.os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)), raising=False
+    )
+    monkeypatch.setattr(posix.os, "getpgid", lambda pid: pid + 1, raising=False)
     process = _FakeProcess()
     posix._terminate_group(process)  # type: ignore[arg-type]
     assert signalled and signalled[0][0] == process.pid + 1
