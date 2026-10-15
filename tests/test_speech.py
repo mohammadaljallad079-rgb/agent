@@ -17,6 +17,7 @@ accepted the call.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -637,3 +638,59 @@ def test_platform_with_speech_builds_runtime_and_tools(tmp_path):
     caps = platform.speech_runtime.capabilities()
     if not caps.can_record:
         assert caps.backend_unavailable_reason
+
+
+class _FakeProcess:
+    """A stand-in audio process that records how it was stopped."""
+
+    def __init__(self, *, wait_raises: bool = False) -> None:
+        self.pid = 4242
+        self.terminated = False
+        self.killed = False
+        self._wait_raises = wait_raises
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self._wait_raises:
+            raise subprocess.TimeoutExpired(cmd="arecord", timeout=timeout or 0)
+        return 0
+
+
+def test_terminate_group_uses_the_process_group_on_posix(monkeypatch):
+    """Where the platform provides process groups, the whole group is signalled."""
+    import arabic_agent.speech.backends.posix as posix
+
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(posix.os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)))
+    monkeypatch.setattr(posix.os, "getpgid", lambda pid: pid + 1)
+    process = _FakeProcess()
+    posix._terminate_group(process)  # type: ignore[arg-type]
+    assert signalled and signalled[0][0] == process.pid + 1
+    assert process.terminated is False
+
+
+def test_terminate_group_falls_back_without_process_groups(monkeypatch):
+    """On a platform without ``killpg``/``getpgid`` (Windows), the process is used.
+
+    This is the regression guard for the cross-platform mypy failure: the POSIX
+    audio backend ships in the Windows payload, so it must not touch POSIX-only
+    ``os`` members unconditionally.
+    """
+    import arabic_agent.speech.backends.posix as posix
+
+    monkeypatch.delattr(posix.os, "killpg", raising=False)
+    monkeypatch.delattr(posix.os, "getpgid", raising=False)
+    process = _FakeProcess()
+    posix._terminate_group(process)  # type: ignore[arg-type]
+    assert process.terminated is True
+
+    # A process that ignores SIGTERM is killed after the wait times out.
+    stubborn = _FakeProcess(wait_raises=True)
+    posix._terminate_group(stubborn)  # type: ignore[arg-type]
+    assert stubborn.terminated is True
+    assert stubborn.killed is True

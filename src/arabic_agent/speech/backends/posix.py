@@ -187,17 +187,32 @@ def _run(argv: list[str], *, should_cancel: Callable[[], bool] | None = None) ->
 
 
 def _terminate_group(process: subprocess.Popen[bytes]) -> None:
-    """Stop an audio process and its children, tolerating an already-dead one."""
-    try:
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError, OSError):
+    """Stop an audio process and its children, tolerating an already-dead one.
+
+    Process groups are POSIX-only (``killpg``/``getpgid``/``SIGKILL``); this
+    module ships in the cross-platform payload, so the group signal is used
+    only where the platform provides it and the process itself is terminated
+    otherwise.
+    """
+    killpg = getattr(os, "killpg", None)
+    getpgid = getattr(os, "getpgid", None)
+    sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+    def _signal_group(sig: int) -> bool:
+        if killpg is None or getpgid is None:
+            return False
+        try:
+            killpg(getpgid(process.pid), sig)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+
+    if not _signal_group(signal.SIGTERM):
         process.terminate()
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+        if not _signal_group(sigkill):
             process.kill()
 
 
