@@ -153,6 +153,7 @@ class AuditEventType(StrEnum):
     SPEECH_SYNTHESIZED = "speech.synthesized"
     SPEECH_PLAYED = "speech.played"
     SPEECH_FAILED = "speech.failed"
+    SPEECH_CANCELLED = "speech.cancelled"
     SPEECH_BOUNDARY_DECISION = "speech.boundary_decision"
     # Browser / web (Phase 8). These record *metadata* only — a URL, title,
     # element counts, action kind and policy decision — never the raw page text,

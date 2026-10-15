@@ -67,6 +67,44 @@
       border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; max-width: 360px; display: none; }
     .toast.show { display: block; }
     progress { width: 100%; height: 10px; }
+    /* ---- Voice experience ---- */
+    .voice-stage { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+    .character { position: relative; width: 148px; height: 148px; border-radius: 50%;
+      background: radial-gradient(circle at 32% 28%, var(--accent), var(--panel-2) 72%);
+      border: 2px solid var(--line); flex: 0 0 auto; display: grid; place-items: center;
+      transition: box-shadow .25s ease, transform .25s ease; }
+    .character[data-state="listening"] { box-shadow: 0 0 0 10px rgba(79,140,255,.18); transform: scale(1.03); }
+    .character[data-state="thinking"] { animation: breathe 1.4s ease-in-out infinite; }
+    .character[data-state="speaking"] { box-shadow: 0 0 0 14px rgba(46,204,113,.18); }
+    .character[data-state="waiting_approval"] { box-shadow: 0 0 0 12px rgba(245,166,35,.22); }
+    .character[data-state="error"] { box-shadow: 0 0 0 12px rgba(231,76,60,.22); }
+    .character[data-state="success"] { box-shadow: 0 0 0 12px rgba(46,204,113,.22); }
+    @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+    .character .eyes { display: flex; gap: 26px; margin-top: -12px; }
+    .character .eyes i { width: 12px; height: 12px; border-radius: 50%; background: var(--fg);
+      display: inline-block; }
+    .character[data-state="listening"] .eyes i, .character[data-state="speaking"] .eyes i { background: #fff; }
+    .character .mouth { width: 40px; height: 12px; margin-top: 8px; border-radius: 8px;
+      background: var(--bg); border: 2px solid var(--fg); transition: all .09s linear; }
+    .character .mouth[data-shape="open"] { height: 26px; border-radius: 50%; }
+    .character .mouth[data-shape="wide"] { width: 54px; height: 10px; }
+    .character .mouth[data-shape="round"] { width: 24px; height: 24px; border-radius: 50%; }
+    .character .mouth[data-shape="closed"] { width: 34px; height: 6px; }
+    .character .mouth[data-shape="teeth"] { width: 46px; height: 14px; }
+    .character .mouth[data-shape="tongue"] { width: 42px; height: 18px; }
+    .character .mouth[data-shape="throat"] { width: 30px; height: 20px; }
+    .character .mouth[data-shape="emphatic"] { width: 50px; height: 16px; }
+    .character .mouth[data-shape="trill"] { width: 38px; height: 12px; }
+    .character .mouth[data-shape="sh"] { width: 44px; height: 12px; }
+    .voice-meta { flex: 1 1 320px; min-width: 260px; }
+    .voice-name { font-size: 18px; font-weight: 700; }
+    .voice-tagline { color: var(--muted); margin: 4px 0 10px; }
+    .voice-heard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px; min-height: 42px; white-space: pre-wrap; width: 100%; box-sizing: border-box;
+      color: var(--fg); font: inherit; resize: vertical; }
+    .voice-reply { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px; min-height: 42px; white-space: pre-wrap; margin-top: 8px; }
+    .voice-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
     @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; }
       nav { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); } }
   </style>
@@ -113,6 +151,69 @@
       <div class="card">
         <h3 data-i18n="timeline">الخط الزمني للمهمة</h3>
         <ul class="timeline" id="timeline"><li class="empty" data-i18n="selectRun">اختر مهمة لعرض تفاصيلها</li></ul>
+      </div>
+    </section>
+
+    <section id="s-voice">
+      <h2 data-i18n="voice">المساعد الصوتي</h2>
+      <div class="card">
+        <div class="voice-stage">
+          <div class="character" id="character" data-state="idle" aria-hidden="true">
+            <div>
+              <div class="eyes"><i></i><i></i></div>
+              <div class="mouth" id="characterMouth" data-shape="closed"></div>
+            </div>
+          </div>
+          <div class="voice-meta">
+            <div class="voice-name" id="voiceName">—</div>
+            <div class="voice-tagline" id="voiceTagline"></div>
+            <div class="row wrap">
+              <span class="pill" id="voiceState">—</span>
+              <span class="pill" id="voiceMicState">—</span>
+              <span class="pill" id="voiceSpeakerState">—</span>
+              <span class="muted" id="voiceEngines"></span>
+            </div>
+            <div class="muted" id="voiceReason"></div>
+          </div>
+        </div>
+        <div class="voice-controls">
+          <button class="btn" id="voiceListenBtn" data-i18n="listen">استمع</button>
+          <button class="btn ghost" id="voiceStopBtn" data-i18n="stopListening">إيقاف</button>
+          <button class="btn ghost" id="voiceSpeakBtn" data-i18n="sayIt">انطق الردّ</button>
+        </div>
+        <div class="row wrap" style="margin-top:10px">
+          <label for="voiceSeconds" data-i18n="listenFor">مدّة الاستماع (ثوانٍ)</label>
+          <input type="text" id="voiceSeconds" value="5" style="max-width:90px" />
+          <label for="voiceDevice" data-i18n="microphone">الميكروفون</label>
+          <select id="voiceDevice"></select>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h3 data-i18n="heard">ما سمعته</h3>
+          <textarea class="voice-heard" id="voiceHeard" rows="3" spellcheck="false">—</textarea>
+          <div class="muted" data-i18n="heardHint">يمكنك تعديل النص قبل التنفيذ</div>
+          <div class="row wrap" style="margin-top:10px">
+            <button class="btn" id="voiceRunBtn" data-i18n="runHeard">نفّذ ما سمعته</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="reply">الردّ</h3>
+          <div class="voice-reply" id="voiceReply">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 data-i18n="voiceModels">أصوات ونماذج الكلام</h3>
+        <div class="muted" id="voiceModelsNote"></div>
+        <div id="voiceModels"></div>
+      </div>
+
+      <div class="card">
+        <h3 data-i18n="voiceLog">سجل الإجراءات الصوتية</h3>
+        <div class="muted" id="voiceActionsCount"></div>
+        <div id="voiceActions"></div>
       </div>
     </section>
 
@@ -256,7 +357,20 @@
         testInference:"اختبار الاستدلال", inferenceOk:"اجتاز اختبار الاستدلال",
         inferenceFailed:"فشل اختبار الاستدلال", inferenceNotRun:"لم يُجرَ اختبار الاستدلال بعد",
         previewEffect:"الأثر المتوقّع", specialist:"الوكيل المتخصص", degraded:"ناقص",
-        missingTools:"أدوات غير متوفّرة", specialistCol:"الوكيل", noSpecialists:"لا يوجد وكلاء متخصصون" },
+        missingTools:"أدوات غير متوفّرة", specialistCol:"الوكيل", noSpecialists:"لا يوجد وكلاء متخصصون",
+        voice:"المساعد الصوتي", listen:"استمع", stopListening:"إيقاف", sayIt:"انطق الردّ",
+        listenFor:"مدّة الاستماع (ثوانٍ)", microphone:"الميكروفون", heard:"ما سمعته", reply:"الردّ",
+        runHeard:"نفّذ ما سمعته", heardHint:"يمكنك تعديل النص قبل التنفيذ", voiceModels:"أصوات ونماذج الكلام", voiceLog:"سجل الإجراءات الصوتية",
+        noVoiceModels:"لا توجد نماذج كلام في الكتالوج", noVoiceActions:"لا توجد إجراءات صوتية بعد",
+        heardEmpty:"—", replyEmpty:"—", voiceDisabled:"الصوت غير مفعّل في الإعدادات",
+        micAllowed:"الميكروفون مسموح", micNeedsApproval:"الميكروفون يحتاج موافقة", micDenied:"الميكروفون ممنوع",
+        speakerAllowed:"مكبّر الصوت مسموح", speakerNeedsApproval:"مكبّر الصوت يحتاج موافقة",
+        speakerDenied:"مكبّر الصوت ممنوع", voiceIdle:"خامل", voiceListening:"يستمع",
+        voiceThinking:"يفكّر", voiceSpeaking:"يتحدّث", voiceWaiting:"بانتظار الموافقة",
+        voiceSuccess:"تمّ", voiceError:"خطأ", voiceNotAvailable:"الصوت غير متاح",
+        installVoice:"تثبيت", removeVoice:"إزالة", voiceInstalled:"مثبّت", voiceNotInstalled:"غير مثبّت",
+        kindSTT:"تحويل الكلام إلى نص", kindTTS:"تحويل النص إلى كلام",
+        voiceStopped:"تمّ الإيقاف", voiceNothingHeard:"لم أسمع شيئًا", voiceNoReply:"لا يوجد ردّ بعد" },
       en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
@@ -286,7 +400,20 @@
         testInference:"Test inference", inferenceOk:"Inference test passed",
         inferenceFailed:"Inference test failed", inferenceNotRun:"Inference test not run yet",
         previewEffect:"Expected effect", specialist:"Specialist agent", degraded:"degraded",
-        missingTools:"Missing tools", specialistCol:"Agent", noSpecialists:"No specialists" }
+        missingTools:"Missing tools", specialistCol:"Agent", noSpecialists:"No specialists",
+        voice:"Voice assistant", listen:"Listen", stopListening:"Stop", sayIt:"Speak reply",
+        listenFor:"Listen for (seconds)", microphone:"Microphone", heard:"What I heard", reply:"Reply",
+        runHeard:"Run what I heard", heardHint:"You can edit the text before running it", voiceModels:"Voices & speech models", voiceLog:"Voice action log",
+        noVoiceModels:"No speech models in the catalogue", noVoiceActions:"No voice actions yet",
+        heardEmpty:"—", replyEmpty:"—", voiceDisabled:"Voice is disabled in settings",
+        micAllowed:"Microphone allowed", micNeedsApproval:"Microphone needs approval", micDenied:"Microphone denied",
+        speakerAllowed:"Speaker allowed", speakerNeedsApproval:"Speaker needs approval",
+        speakerDenied:"Speaker denied", voiceIdle:"Idle", voiceListening:"Listening",
+        voiceThinking:"Thinking", voiceSpeaking:"Speaking", voiceWaiting:"Waiting for approval",
+        voiceSuccess:"Done", voiceError:"Error", voiceNotAvailable:"Voice unavailable",
+        installVoice:"Install", removeVoice:"Remove", voiceInstalled:"installed", voiceNotInstalled:"not installed",
+        kindSTT:"Speech to text", kindTTS:"Text to speech",
+        voiceStopped:"Stopped", voiceNothingHeard:"I heard nothing", voiceNoReply:"No reply yet" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
     const t = (k) => (I18N[LANG][k] || k);
@@ -307,10 +434,11 @@
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.section === section));
       if (section === "artifacts") refreshArtifacts();
       if (section === "printing") refreshPrinting();
+      if (section === "voice") refreshVoice();
     }
 
     // ---- navigation ----
-    const SECTIONS = ["workspace","approvals","models","providers","tools","artifacts","workflows","connectors","computer","printing","memory","browser","settings","diagnostics"];
+    const SECTIONS = ["workspace","voice","approvals","models","providers","tools","artifacts","workflows","connectors","computer","printing","memory","browser","settings","diagnostics"];
     function buildNav() {
       const nav = $("nav"); nav.replaceChildren();
       SECTIONS.forEach(s => {
@@ -719,6 +847,228 @@
       $("runtimeBadge").textContent = (d.runtime && d.runtime.state) || "—";
     }
 
+    // ---- voice ----
+    // The character is real data from the service; the viseme map it ships is
+    // what animates the mouth from the same Arabic text the agent speaks. No
+    // second animation engine, no fabricated mouth movement.
+    let VOICE = null;
+    let VOICE_LAST_REPLY = "";
+    let mouthTimer = null;
+    function setCharacterState(state) {
+      const box = $("character"); if (!box) return;
+      box.dataset.state = state || "idle";
+      const label = { idle:t("voiceIdle"), listening:t("voiceListening"), thinking:t("voiceThinking"),
+        speaking:t("voiceSpeaking"), waiting_approval:t("voiceWaiting"),
+        success:t("voiceSuccess"), error:t("voiceError") }[state] || state;
+      const pill = $("voiceState"); pill.textContent = label; pill.className = "pill";
+      if (state === "success") pill.classList.add("ok");
+      else if (state === "error") pill.classList.add("danger");
+      else if (state === "waiting_approval") pill.classList.add("warn");
+      // The mouth rests closed unless the character is speaking.
+      if (state !== "speaking") setMouth("closed");
+    }
+    function setMouth(shape) { const m = $("characterMouth"); if (m) m.dataset.shape = shape || "closed"; }
+    // Animate the mouth across a reply's text using the character's viseme map.
+    // This is a genuine text→viseme mapping, not a random flap: each character is
+    // matched to the viseme whose phoneme set contains it.
+    function animateMouth(text) {
+      const map = (VOICE && VOICE.character && VOICE.character.visemes) || [];
+      if (!map.length || !text) { setMouth("closed"); return; }
+      const seq = [];
+      for (const ch of text) {
+        const low = ch.toLowerCase();
+        const v = map.find(x => (x.phonemes || []).some(p => p.toLowerCase() === low));
+        seq.push(v ? v.shape : "closed");
+      }
+      if (mouthTimer) clearInterval(mouthTimer);
+      let i = 0;
+      mouthTimer = setInterval(() => {
+        setMouth(seq[i % seq.length]); i += 1;
+        if (i >= seq.length) { clearInterval(mouthTimer); mouthTimer = null; setMouth("closed"); }
+      }, 110);
+    }
+    function speechPolicyPill(kind, allowed, reason) {
+      // Under the default policy a speech permission "requires approval"; the
+      // capability view reports allowed=false with the real reason, so the pill
+      // says "needs approval" rather than falsely claiming it is usable.
+      let label, cls;
+      if (allowed) { label = kind === "mic" ? t("micAllowed") : t("speakerAllowed"); cls = "pill ok"; }
+      else if ((reason || "").toLowerCase().includes("approv")) { label = kind === "mic" ? t("micNeedsApproval") : t("speakerNeedsApproval"); cls = "pill warn"; }
+      else { label = kind === "mic" ? t("micDenied") : t("speakerDenied"); cls = "pill danger"; }
+      const span = el("span", label); span.className = cls;
+      span.title = reason || "";
+      return span;
+    }
+    function renderVoice(caps) {
+      VOICE = caps || {};
+      const character = VOICE.character || {};
+      $("voiceName").textContent = (LANG === "ar" ? character.name_ar : character.name_en) || "—";
+      $("voiceTagline").textContent = (LANG === "ar" ? character.tagline_ar : character.tagline_en) || "";
+      const mic = $("voiceMicState"); mic.replaceChildren(speechPolicyPill("mic", VOICE.record_allowed, VOICE.record_reason));
+      const spk = $("voiceSpeakerState"); spk.replaceChildren(speechPolicyPill("speaker", VOICE.playback_allowed, VOICE.playback_reason));
+      const engines = [];
+      if (VOICE.stt_engine) engines.push("STT: " + VOICE.stt_engine + (VOICE.cloud_stt ? " (cloud)" : " (local)"));
+      if (VOICE.tts_engine) engines.push("TTS: " + VOICE.tts_engine + (VOICE.cloud_tts ? " (cloud)" : " (local)"));
+      $("voiceEngines").textContent = engines.join("  ·  ");
+      $("voiceReason").textContent = VOICE.available ? (VOICE.unavailable_reason || "") : (VOICE.unavailable_reason || t("voiceNotAvailable"));
+      // Honest button state: a disabled button is one the runtime cannot honour.
+      $("voiceListenBtn").disabled = !VOICE.enabled || !VOICE.can_record;
+      $("voiceSpeakBtn").disabled = !VOICE.enabled || !VOICE.can_synthesize;
+      $("voiceRunBtn").disabled = !VOICE.enabled;
+      if (VOICE.recording) setCharacterState("listening");
+      else if (VOICE.playing) setCharacterState("speaking");
+      else if (!VOICE.available) setCharacterState("error");
+      else setCharacterState("idle");
+      renderVoiceDevices(VOICE.devices || []);
+    }
+    function renderVoiceDevices(devices) {
+      const select = $("voiceDevice"); const previous = select.value;
+      select.replaceChildren();
+      const inputs = (devices || []).filter(d => d.kind === "input");
+      if (!inputs.length) { const o = el("option", t("unavailable")); o.value = ""; select.appendChild(o); select.disabled = true; return; }
+      select.disabled = false;
+      inputs.forEach(d => { const o = el("option", d.name || d.id); o.value = d.id; select.appendChild(o); });
+      if (inputs.some(d => d.id === previous)) select.value = previous;
+    }
+    function renderVoiceModels(data) {
+      const box = $("voiceModels"); box.replaceChildren();
+      const items = (data && data.models) || [];
+      $("voiceModelsNote").textContent = VOICE && VOICE.available ? "" : t("voiceDisabled");
+      if (!items.length) { const d = el("div", t("noVoiceModels")); d.className = "empty"; box.appendChild(d); return; }
+      items.forEach(m => {
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap";
+        head.appendChild(el("strong", LANG === "ar" ? (m.display_name_ar || m.display_name) : m.display_name));
+        const kind = el("span", m.kind === "stt" ? t("kindSTT") : t("kindTTS")); kind.className = "pill"; head.appendChild(kind);
+        head.appendChild(pill(m.installed ? t("voiceInstalled") : t("voiceNotInstalled")));
+        if (m.installed) { const s = head.lastChild; s.classList.add("ok"); }
+        if (m.languages && m.languages.length) { const s = el("span", m.languages.join(", ")); s.className = "pill"; head.appendChild(s); }
+        card.appendChild(head);
+        const desc = el("div", LANG === "ar" ? (m.description_ar || m.description) : m.description);
+        desc.className = "muted"; card.appendChild(desc);
+        const spec = el("div", `${(m.size_mib || 0)} MiB · ${m.license || ""} · ${m.engine || ""}`);
+        spec.className = "muted"; card.appendChild(spec);
+        const row = el("div"); row.className = "row wrap";
+        if (!m.installed) {
+          const b = el("button", t("installVoice")); b.className = "btn";
+          b.disabled = !(VOICE && VOICE.enabled);
+          b.onclick = () => installVoiceModel(m.id); row.appendChild(b);
+        } else {
+          const r = el("button", t("removeVoice")); r.className = "btn danger";
+          r.onclick = () => removeVoiceModel(m.id); row.appendChild(r);
+        }
+        card.appendChild(row); box.appendChild(card);
+      });
+    }
+    function renderVoiceActions(data) {
+      const box = $("voiceActions"); box.replaceChildren();
+      const items = (data && data.actions) || [];
+      $("voiceActionsCount").textContent = (data && data.count != null ? data.count : items.length) + "";
+      if (!items.length) { const d = el("div", t("noVoiceActions")); d.className = "empty"; box.appendChild(d); return; }
+      const table = el("table"); const head = el("tr");
+      [t("kind"), t("status"), t("size"), t("created")].forEach(h => head.appendChild(el("th", h)));
+      table.appendChild(head);
+      items.forEach(a => {
+        const tr = el("tr");
+        tr.appendChild(el("td", a.kind));
+        const st = el("td"); const s = el("span", a.state); s.className = "pill";
+        if (a.state === "ok") s.classList.add("ok"); else if (a.state === "cancelled") s.classList.add("warn"); else if (a.state === "failed") s.classList.add("danger");
+        st.appendChild(s); tr.appendChild(st);
+        tr.appendChild(el("td", (a.size_bytes || 0) + " B"));
+        tr.appendChild(el("td", a.created_at ? new Date(a.created_at).toLocaleTimeString() : "—"));
+        table.appendChild(tr);
+      });
+      box.appendChild(table);
+    }
+    function voiceRunId() {
+      const runs = (VOICE && VOICE._runs) || [];
+      return runs.length ? runs[0] : null;
+    }
+    async function refreshVoice() {
+      const a = api(); if (!a) return;
+      try {
+        const [caps, models] = await Promise.all([a.voice(), a.voice_models()]);
+        renderVoice(caps);
+        renderVoiceModels(models);
+        try {
+          const runs = await a.list_runs();
+          VOICE._runs = (runs || []).map(r => r.id);
+          renderVoiceActions(await a.voice_actions(VOICE._runs.length ? VOICE._runs[0] : null));
+        } catch (e) { renderVoiceActions({ actions: [], count: 0 }); }
+      } catch (e) { toast(String(e)); }
+    }
+    async function voiceListen() {
+      const a = api(); if (!a) return;
+      const seconds = parseFloat($("voiceSeconds").value) || 5;
+      const device = $("voiceDevice").value || "";
+      setCharacterState("listening");
+      $("voiceHeard").value = "…";
+      try {
+        const r = await a.voice_transcribe(null, seconds, device, LANG);
+        if (r && r.cancelled) { toast(t("voiceStopped")); setCharacterState("idle"); $("voiceHeard").value = t("voiceNothingHeard"); return; }
+        $("voiceHeard").value = (r && r.text) ? r.text : t("voiceNothingHeard");
+        setCharacterState(r && r.text ? "success" : "idle");
+        refreshVoice();
+      } catch (e) { setCharacterState("error"); toast(String(e)); }
+    }
+    async function voiceStop() {
+      const a = api(); if (!a) return;
+      try {
+        const r = await a.voice_stop(null);
+        if (r && r.cancelled) toast(t("voiceStopped"));
+        setCharacterState("idle");
+        refreshVoice();
+      } catch (e) { toast(String(e)); }
+    }
+    async function voiceRunHeard() {
+      const a = api(); if (!a) return;
+      const goal = ($("voiceHeard").value || "").trim();
+      if (!goal || goal === "—" || goal === t("voiceNothingHeard")) return;
+      setCharacterState("thinking");
+      try {
+        const started = await a.voice_start(goal, null);
+        $("voiceReply").textContent = "…";
+        // Poll the run so the reply reflects the real outcome, not a guess.
+        let tries = 0;
+        const poll = setInterval(async () => {
+          tries += 1;
+          try {
+            const run = await a.get_run(started.run_id);
+            if (run && ["completed","failed","cancelled"].includes(run.status)) {
+              clearInterval(poll);
+              const text = run.result || run.error || t("voiceNoReply");
+              $("voiceReply").textContent = text;
+              VOICE_LAST_REPLY = text;
+              setCharacterState(run.status === "completed" ? "success" : "error");
+              refreshVoice();
+            } else if (tries > 120) { clearInterval(poll); setCharacterState("idle"); }
+          } catch (e) { clearInterval(poll); setCharacterState("error"); }
+        }, 1500);
+      } catch (e) { setCharacterState("error"); toast(String(e)); }
+    }
+    async function voiceSpeakReply() {
+      const a = api(); if (!a) return;
+      const text = (VOICE_LAST_REPLY || $("voiceReply").textContent || "").trim();
+      if (!text || text === "—" || text === "…") { toast(t("voiceNoReply")); return; }
+      setCharacterState("speaking");
+      animateMouth(text);
+      try {
+        const r = await a.voice_speak(text, voiceRunId(), "", LANG, $("voiceDevice").value || "");
+        if (r && r.cancelled) { toast(t("voiceStopped")); }
+        setCharacterState(r && r.cancelled ? "idle" : "success");
+        refreshVoice();
+      } catch (e) { setCharacterState("error"); toast(String(e)); }
+    }
+    async function installVoiceModel(id) {
+      const a = api(); if (!a) return;
+      try { const r = await a.install_voice_model(id); toast(r.success ? t("voiceInstalled") : (r.detail || "")); await refreshVoice(); }
+      catch (e) { toast(String(e)); }
+    }
+    async function removeVoiceModel(id) {
+      const a = api(); if (!a) return;
+      try { await a.remove_voice_model(id); await refreshVoice(); } catch (e) { toast(String(e)); }
+    }
+
     // ---- actions ----
     async function refresh() {
       const a = api(); if (!a) return;
@@ -870,6 +1220,10 @@
       $("inferBtn").onclick = testInference;
       $("provisionBtn").onclick = provisionBrowser;
       $("cancelProvisionBtn").onclick = cancelBrowserProvision;
+      $("voiceListenBtn").onclick = voiceListen;
+      $("voiceStopBtn").onclick = voiceStop;
+      $("voiceSpeakBtn").onclick = voiceSpeakReply;
+      $("voiceRunBtn").onclick = voiceRunHeard;
       $("langBtn").onclick = () => { LANG = LANG === "ar" ? "en" : "ar"; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };
       $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
     }

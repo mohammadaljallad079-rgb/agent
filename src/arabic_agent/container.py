@@ -136,6 +136,7 @@ from .specialists.base import Specialist
 from .specialists.catalogue import SpecialistCatalogue, default_catalogue
 from .speech.backends import build_audio_backend
 from .speech.engines import build_synthesis_engine, build_transcription_engine
+from .speech.model_store import stt_model_dir, tts_voice_file
 from .speech.policy import SpeechPolicy
 from .speech.runtime import SpeechRuntime
 from .speech.store import InMemorySpeechStore, SpeechStore
@@ -980,6 +981,23 @@ class Platform:
             speech_cloud_key = ""
             if settings.speech_allow_cloud and settings.speech_cloud_api_key_env:
                 speech_cloud_key = os.environ.get(settings.speech_cloud_api_key_env, "")
+            # Resolve installed local speech models so the engines load the exact
+            # artifact the product downloaded and verified, rather than letting a
+            # library silently fetch something else. A model that is not installed
+            # simply resolves to empty and the engine reports itself unavailable.
+            speech_storage = settings.local_model_storage_dir or str(
+                Path(settings.local_store_dir) / "models"
+            )
+            whisper_model_path = (
+                stt_model_dir(speech_storage, settings.speech_whisper_model_id)
+                if settings.speech_whisper_model_id
+                else None
+            ) or ""
+            piper_voice_path = (
+                tts_voice_file(speech_storage, settings.speech_tts_model_id)
+                if settings.speech_tts_model_id
+                else None
+            ) or settings.speech_piper_voice_model
             transcription_engine = build_transcription_engine(
                 engine=settings.speech_stt_engine,
                 allow_cloud=settings.speech_allow_cloud,
@@ -988,6 +1006,7 @@ class Platform:
                 cloud_model=settings.speech_cloud_stt_model,
                 whisper_model_size=settings.speech_whisper_model,
                 whisper_device=settings.speech_whisper_device,
+                whisper_model_path=whisper_model_path,
             )
             synthesis_engine = build_synthesis_engine(
                 engine=settings.speech_tts_engine,
@@ -996,7 +1015,7 @@ class Platform:
                 cloud_api_key=speech_cloud_key,
                 cloud_model=settings.speech_cloud_tts_model,
                 cloud_voice=settings.speech_cloud_tts_voice,
-                piper_voice_model=settings.speech_piper_voice_model,
+                piper_voice_model=piper_voice_path,
             )
             speech_policy = SpeechPolicy(
                 max_recording_seconds=settings.speech_max_recording_seconds,

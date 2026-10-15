@@ -663,6 +663,39 @@ sentinel for "the whole registry".
         a per-run budget and data-boundary gate, durable local action metadata
         (SQLite + migration) and audit, wired into the `voice` scope. Wired only
         when `speech_enabled` is set and only for a local runtime.
+  - [x] Real local engines and audio devices: a Windows WinMM capture/playback
+        backend and a Windows SAPI5 Arabic TTS engine behind the existing
+        `AudioBackend` / `SynthesisEngine` seams; faster-whisper loads the
+        explicitly installed model artifact instead of letting a library fetch
+        its own.
+  - [x] Verified voice-model catalogue + store (`speech/models.py`,
+        `speech/model_store.py`): Whisper STT and Piper Arabic voices with real
+        sizes, SHA-256 digests and licences, installed through the existing
+        resumable, digest-verified installer and resolved to engine paths.
+  - [x] Desktop voice surface (`desktop/voice.py` + `/desktop/voice*` routes):
+        a spoken turn is an ordinary durable run under the `voice` specialist,
+        and `MICROPHONE_RECORD` / `SPEAKER_PLAYBACK` are decided by the real
+        policy engine (approval-gated by default, never self-approved). Audio is
+        written only inside the run workspace. Tests:
+        `tests/test_desktop_voice.py`.
+  - [x] Cancellable voice turns: `speech/cancel.py` (`CancelToken` /
+        `CancelledError`) lets the stop button end a recording or playback
+        mid-flight; the stopped action is stored as `cancelled` and audited as
+        `speech.cancelled` (never as a failure), and `ErrorClass.CANCELLED` is
+        terminal for recovery. Routes: `/desktop/voice/stop` plus the
+        `synthesize` / `play` additions. Tests: mid-record and mid-playback
+        cancellation in `tests/test_desktop_voice.py` and `tests/test_speech.py`.
+  - [x] GATE 4B release acceptance: the voice panel's transcript is an
+        **editable** box (a mis-heard command can be corrected before it runs;
+        AR/EN strings stay at parity), and a full acceptance test drives the
+        real facade — transcribe spoken Arabic → start a `voice` run → poll to
+        `waiting_approval` via `get_run` → approve → a real `%PDF` is written by
+        the real tool → speak the result
+        (`tests/test_desktop_voice.py::test_voice_command_creates_a_real_pdf_through_approval`).
+        `ArabicAIAgent.exe selfcheck` gained a `voice_surface` check proving the
+        speech modules, cancellable loops and model catalogue ship in the frozen
+        payload (a host without an audio device is an honest skip). Procedure
+        and remaining interactive gates: `docs/VOICE_ACCEPTANCE.md`.
   - [ ] Education tools: `education_course_plan`, `education_lesson`,
         `education_quiz`.
 - [x] Specialist-aware UI in the desktop shell: the workspace surface renders a

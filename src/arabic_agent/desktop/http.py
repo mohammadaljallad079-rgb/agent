@@ -88,6 +88,46 @@ class TestInferenceRequest(BaseModel):
     model_id: str | None = Field(default=None, max_length=200)
 
 
+class VoiceStartRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=8000)
+    workspace_dir: str | None = None
+
+
+class VoiceTranscribeRequest(BaseModel):
+    #: Optional run; omitted records a preview clip under the local store.
+    run_id: str | None = Field(default=None, max_length=200)
+    seconds: float = Field(default=5.0, gt=0, le=120)
+    device_id: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceSynthesizeRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    text: str = Field(min_length=1, max_length=5000)
+    voice: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceSpeakRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    text: str = Field(min_length=1, max_length=5000)
+    voice: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+    device_id: str = Field(default="", max_length=200)
+
+
+class VoicePlayRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    path: str = Field(min_length=1, max_length=1000)
+    device_id: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceStopRequest(BaseModel):
+    #: ``record`` or ``play``; omitted stops both.
+    op: str | None = Field(default=None, max_length=16)
+
+
 def create_desktop_app(
     service: DesktopService,
     *,
@@ -144,6 +184,8 @@ def create_desktop_app(
             "computer": service.computer_view(),
             "printing": service.printing_view(),
             "printJobs": await service.list_print_jobs(),
+            "voice": service.voice_view(),
+            "voiceModels": service.voice_models(),
             "workflows": await service.list_workflows(),
             "memory": await service.list_memory(),
             "diagnostics": service.diagnostics(),
@@ -367,6 +409,90 @@ def create_desktop_app(
     @app.get("/desktop/printing/jobs")
     async def get_print_jobs(limit: int = 50, _: None = Depends(authorize)) -> dict[str, object]:
         return await service.list_print_jobs(limit=limit)
+
+    # -- Voice -----------------------------------------------------------
+    @app.get("/desktop/voice")
+    async def get_voice(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.voice_view()
+
+    @app.get("/desktop/voice/devices")
+    async def get_voice_devices(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.voice_devices()
+
+    @app.get("/desktop/voice/models")
+    async def get_voice_models(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.voice_models()
+
+    @app.post("/desktop/voice/models/{model_id}/install")
+    async def install_voice_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return await service.install_voice_model(model_id)
+
+    @app.delete("/desktop/voice/models/{model_id}")
+    async def remove_voice_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return service.remove_voice_model(model_id)
+
+    @app.get("/desktop/voice/actions")
+    async def get_voice_actions(
+        run_id: str | None = None, limit: int = 50, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_actions(run_id=run_id, limit=limit)
+
+    @app.post("/desktop/voice/start")
+    async def voice_start(
+        payload: VoiceStartRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_start(goal=payload.goal, workspace_dir=payload.workspace_dir)
+
+    @app.post("/desktop/voice/transcribe")
+    async def voice_transcribe(
+        payload: VoiceTranscribeRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_transcribe(
+            run_id=payload.run_id,
+            seconds=payload.seconds,
+            device_id=payload.device_id,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/synthesize")
+    async def voice_synthesize(
+        payload: VoiceSynthesizeRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_synthesize(
+            run_id=payload.run_id,
+            text=payload.text,
+            voice=payload.voice,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/speak")
+    async def voice_speak(
+        payload: VoiceSpeakRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_speak(
+            run_id=payload.run_id,
+            text=payload.text,
+            voice=payload.voice,
+            language=payload.language,
+            device_id=payload.device_id,
+        )
+
+    @app.post("/desktop/voice/play")
+    async def voice_play(
+        payload: VoicePlayRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_play(
+            run_id=payload.run_id,
+            path=payload.path,
+            device_id=payload.device_id,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/stop")
+    async def voice_stop(
+        payload: VoiceStopRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return service.voice_stop(op=payload.op)
 
     # -- Memory ----------------------------------------------------------
     @app.get("/desktop/memory")

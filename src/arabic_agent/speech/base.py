@@ -24,6 +24,7 @@ model gateway remains the single place a model is chosen, budgeted and audited.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -162,6 +163,12 @@ class AudioBackend(ABC):
 
     Concrete adapters live in :mod:`arabic_agent.speech.backends`. An adapter
     that cannot run here reports ``available = False`` and a reason.
+
+    Both blocking operations accept an optional ``should_cancel`` callable. The
+    backend polls it while it holds the device, so a long recording or a playing
+    clip can be stopped promptly by the user instead of running to its natural
+    end. A backend that cannot poll (or an adapter whose hardware call blocks
+    atomically) may ignore it — but it must not *pretend* to support cancellation.
     """
 
     name: str = "none"
@@ -192,11 +199,18 @@ class AudioBackend(ABC):
         seconds: float = 5.0,
         sample_rate_hz: int = 16000,
         channels: int = 1,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
         """Capture microphone audio to ``output_path`` and return its metadata."""
 
     @abstractmethod
-    async def play(self, *, clip_path: str, device_id: str = "") -> None:
+    async def play(
+        self,
+        *,
+        clip_path: str,
+        device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         """Play the audio file at ``clip_path`` through the speaker."""
 
 

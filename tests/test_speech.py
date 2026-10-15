@@ -17,6 +17,7 @@ accepted the call.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,7 @@ from arabic_agent.local.boundary import DataBoundaryPolicy
 from arabic_agent.permissions.approvals import InMemoryApprovalStore
 from arabic_agent.permissions.base import Permission, PolicySet, Principal, Rule
 from arabic_agent.permissions.policy import PolicyEngine
+from arabic_agent.speech.cancel import CancelledError
 from arabic_agent.speech.policy import SpeechPolicy
 from arabic_agent.speech.runtime import SpeechRuntime
 from arabic_agent.speech.store import (
@@ -266,6 +268,33 @@ async def test_runtime_speak_synthesizes_then_plays(tmp_path):
     events = await sink.list_for_run(tenant_id="t", run_id="r")
     assert any(e.type is AuditEventType.SPEECH_SYNTHESIZED for e in events)
     assert any(e.type is AuditEventType.SPEECH_PLAYED for e in events)
+
+
+async def test_runtime_cancelled_recording_is_persisted_and_audited(tmp_path):
+    store = InMemorySpeechStore()
+    runtime, sink = _runtime(store=store)
+    # ``should_cancel`` is already true, so the backend raises before writing.
+    clip_path = tmp_path / "a.wav"
+
+    def _cancel() -> bool:
+        return True
+
+    with pytest.raises(CancelledError):
+        await runtime.record(
+            tenant_id="t",
+            user_id="u",
+            run_id="r",
+            output_path=str(clip_path),
+            should_cancel=_cancel,
+        )
+    records = await store.list_for_run(tenant_id="t", run_id="r")
+    assert records[-1].kind is SpeechActionKind.RECORDING
+    assert records[-1].state.value == "cancelled"
+    events = await sink.list_for_run(tenant_id="t", run_id="r")
+    cancelled = [e for e in events if e.type is AuditEventType.SPEECH_CANCELLED]
+    assert len(cancelled) == 1
+    # A stopped recording is not also reported as successfully recorded.
+    assert not any(e.type is AuditEventType.SPEECH_RECORDED for e in events)
 
 
 async def test_runtime_listen_records_then_transcribes(tmp_path):
@@ -609,3 +638,63 @@ def test_platform_with_speech_builds_runtime_and_tools(tmp_path):
     caps = platform.speech_runtime.capabilities()
     if not caps.can_record:
         assert caps.backend_unavailable_reason
+
+
+class _FakeProcess:
+    """A stand-in audio process that records how it was stopped."""
+
+    def __init__(self, *, wait_raises: bool = False) -> None:
+        self.pid = 4242
+        self.terminated = False
+        self.killed = False
+        self._wait_raises = wait_raises
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self._wait_raises:
+            raise subprocess.TimeoutExpired(cmd="arecord", timeout=timeout or 0)
+        return 0
+
+
+def test_terminate_group_uses_the_process_group_on_posix(monkeypatch):
+    """Where the platform provides process groups, the whole group is signalled."""
+    import arabic_agent.speech.backends.posix as posix
+
+    signalled: list[tuple[int, int]] = []
+    # ``raising=False``: on Windows ``os`` has no ``killpg``/``getpgid`` at all,
+    # and this test must run there too (it injects the POSIX behaviour).
+    monkeypatch.setattr(
+        posix.os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)), raising=False
+    )
+    monkeypatch.setattr(posix.os, "getpgid", lambda pid: pid + 1, raising=False)
+    process = _FakeProcess()
+    posix._terminate_group(process)  # type: ignore[arg-type]
+    assert signalled and signalled[0][0] == process.pid + 1
+    assert process.terminated is False
+
+
+def test_terminate_group_falls_back_without_process_groups(monkeypatch):
+    """On a platform without ``killpg``/``getpgid`` (Windows), the process is used.
+
+    This is the regression guard for the cross-platform mypy failure: the POSIX
+    audio backend ships in the Windows payload, so it must not touch POSIX-only
+    ``os`` members unconditionally.
+    """
+    import arabic_agent.speech.backends.posix as posix
+
+    monkeypatch.delattr(posix.os, "killpg", raising=False)
+    monkeypatch.delattr(posix.os, "getpgid", raising=False)
+    process = _FakeProcess()
+    posix._terminate_group(process)  # type: ignore[arg-type]
+    assert process.terminated is True
+
+    # A process that ignores SIGTERM is killed after the wait times out.
+    stubborn = _FakeProcess(wait_raises=True)
+    posix._terminate_group(stubborn)  # type: ignore[arg-type]
+    assert stubborn.terminated is True
+    assert stubborn.killed is True

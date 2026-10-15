@@ -7,6 +7,8 @@ fail honestly instead of pretending to record or play.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ...core.enums import PlatformKind
 from ..base import AudioBackend, AudioClip, AudioDevice
 
@@ -32,11 +34,18 @@ class NullAudioBackend(AudioBackend):
         seconds: float = 5.0,
         sample_rate_hz: int = 16000,
         channels: int = 1,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AudioClip:
         self.require_available()
         raise AssertionError("unreachable")
 
-    async def play(self, *, clip_path: str, device_id: str = "") -> None:
+    async def play(
+        self,
+        *,
+        clip_path: str,
+        device_id: str = "",
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self.require_available()
         raise AssertionError("unreachable")
 

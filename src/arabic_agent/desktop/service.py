@@ -47,6 +47,7 @@ from ..local.model_security import resolve_storage_dir
 from ..models.base import ChatMessage, ModelRequest
 from ..permissions.base import Permission, Principal
 from ..specialists.base import GENERAL
+from .voice import DesktopVoiceService
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,8 @@ _SETTINGS_CAPABILITIES: tuple[tuple[str, Permission, str], ...] = (
     ("calendar.write", Permission.CALENDAR_WRITE, "تعديل التقويم"),
     ("calendar.delete", Permission.CALENDAR_DELETE, "حذف أحداث التقويم"),
     ("printing", Permission.PRINT_DOCUMENT, "الطباعة"),
+    ("voice.listen", Permission.MICROPHONE_RECORD, "الاستماع عبر الميكروفون"),
+    ("voice.speak", Permission.SPEAKER_PLAYBACK, "النطق عبر مكبر الصوت"),
     ("email.send", Permission.SEND_EMAIL, "إرسال البريد"),
     ("network", Permission.NETWORK_ACCESS, "الوصول للشبكة"),
 )
@@ -106,6 +109,7 @@ class DesktopService:
         self._runs = RunService(platform)
         self._locale = locale
         self._browser = BrowserProvisioner()
+        self._voice = DesktopVoiceService(platform=platform, principal=self._principal)
         #: True only after a real health check passed for the active model.
         self._active_model_ready = False
         #: True only after the routed inference acceptance test produced output.
@@ -794,6 +798,94 @@ class DesktopService:
             for r in records
         ]
         return {"enabled": True, "jobs": jobs, "count": len(jobs)}
+
+    # -- Voice -----------------------------------------------------------
+    def voice_view(self) -> dict[str, object]:
+        """Voice availability from real settings, runtime and policy state.
+
+        Nothing here claims a working microphone or voice: ``enabled`` reflects
+        the setting, ``available`` is true only when a real speech runtime is
+        wired, and the two ``*_allowed`` flags are the *real* policy decisions
+        for the microphone and speaker. Under the default policy both require
+        approval, so a voice button is honestly reported as needing approval
+        rather than silently recording.
+        """
+        return self._voice.capabilities()
+
+    async def voice_devices(self) -> dict[str, object]:
+        return await self._voice.list_devices()
+
+    def voice_models(self) -> dict[str, object]:
+        return self._voice.list_models()
+
+    async def install_voice_model(self, model_id: str) -> dict[str, object]:
+        return await self._voice.install_model(model_id)
+
+    def remove_voice_model(self, model_id: str) -> dict[str, object]:
+        return self._voice.remove_model(model_id)
+
+    async def voice_actions(
+        self, *, run_id: str | None = None, limit: int = 50
+    ) -> dict[str, object]:
+        return await self._voice.list_actions(run_id=run_id, limit=limit)
+
+    async def voice_start(
+        self, *, goal: str, workspace_dir: str | None = None
+    ) -> dict[str, object]:
+        return await self._voice.start_voice_run(goal=goal, workspace_dir=workspace_dir)
+
+    async def voice_transcribe(
+        self,
+        *,
+        run_id: str | None = None,
+        seconds: float = 5.0,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.transcribe(
+            run_id=run_id, seconds=seconds, device_id=device_id, language=language
+        )
+
+    async def voice_synthesize(
+        self,
+        *,
+        run_id: str | None = None,
+        text: str,
+        voice: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.synthesize(
+            run_id=run_id, text=text, voice=voice, language=language
+        )
+
+    async def voice_speak(
+        self,
+        *,
+        run_id: str | None = None,
+        text: str,
+        voice: str = "",
+        language: str = "ar",
+        device_id: str = "",
+    ) -> dict[str, object]:
+        return await self._voice.speak(
+            run_id=run_id, text=text, voice=voice, language=language, device_id=device_id
+        )
+
+    async def voice_play(
+        self,
+        *,
+        run_id: str | None = None,
+        path: str,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.play_file(
+            run_id=run_id, path=path, device_id=device_id, language=language
+        )
+
+    def voice_stop(self, *, op: str | None = None) -> dict[str, object]:
+        """Stop an in-flight recording and/or playback, reporting what stopped."""
+        return self._voice.stop(op=op)
 
     # -- Memory ----------------------------------------------------------
     async def list_memory(self, *, limit: int = 50) -> dict[str, object]:

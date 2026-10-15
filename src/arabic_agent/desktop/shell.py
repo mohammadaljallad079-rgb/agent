@@ -77,6 +77,9 @@ class DesktopBridge:
     async def list_runs(self) -> Any:
         return await self._get("/desktop/runs")
 
+    async def get_run(self, run_id: str) -> Any:
+        return await self._get(f"/desktop/runs/{run_id}")
+
     async def run_timeline(self, run_id: str) -> Any:
         return await self._get(f"/desktop/runs/{run_id}/timeline")
 
@@ -191,6 +194,89 @@ class DesktopBridge:
 
     async def print_jobs(self) -> Any:
         return await self._get("/desktop/printing/jobs")
+
+    async def voice(self) -> Any:
+        return await self._get("/desktop/voice")
+
+    async def voice_devices(self) -> Any:
+        return await self._get("/desktop/voice/devices")
+
+    async def voice_models(self) -> Any:
+        return await self._get("/desktop/voice/models")
+
+    async def install_voice_model(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/voice/models/{model_id}/install")
+
+    async def remove_voice_model(self, model_id: str) -> Any:
+        return await self._delete(f"/desktop/voice/models/{model_id}")
+
+    async def voice_actions(self, run_id: str | None = None) -> Any:
+        path = "/desktop/voice/actions" + (f"?run_id={run_id}" if run_id else "")
+        return await self._get(path)
+
+    async def voice_start(self, goal: str, workspace_dir: str | None = None) -> Any:
+        return await self._post(
+            "/desktop/voice/start", {"goal": goal, "workspace_dir": workspace_dir}
+        )
+
+    async def voice_transcribe(
+        self,
+        run_id: str | None = None,
+        seconds: float = 5.0,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/transcribe",
+            {
+                "run_id": run_id,
+                "seconds": seconds,
+                "device_id": device_id,
+                "language": language,
+            },
+        )
+
+    async def voice_synthesize(
+        self,
+        text: str,
+        run_id: str | None = None,
+        voice: str = "",
+        language: str = "ar",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/synthesize",
+            {"run_id": run_id, "text": text, "voice": voice, "language": language},
+        )
+
+    async def voice_speak(
+        self,
+        text: str,
+        run_id: str | None = None,
+        voice: str = "",
+        language: str = "ar",
+        device_id: str = "",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/speak",
+            {
+                "run_id": run_id,
+                "text": text,
+                "voice": voice,
+                "language": language,
+                "device_id": device_id,
+            },
+        )
+
+    async def voice_play(
+        self, path: str, run_id: str | None = None, device_id: str = "", language: str = "ar"
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/play",
+            {"run_id": run_id, "path": path, "device_id": device_id, "language": language},
+        )
+
+    async def voice_stop(self, op: str | None = None) -> Any:
+        return await self._post("/desktop/voice/stop", {"op": op})
 
     async def memory(self) -> Any:
         return await self._get("/desktop/memory")

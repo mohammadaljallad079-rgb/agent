@@ -41,6 +41,9 @@ class SpeechActionState(StrEnum):
     OK = "ok"
     FAILED = "failed"
     DENIED = "denied"
+    #: The action was stopped on request. Distinct from FAILED: it is a
+    #: deliberate, terminal outcome, not an error to be retried.
+    CANCELLED = "cancelled"
 
 
 def _utcnow() -> datetime:
