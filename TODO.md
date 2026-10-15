@@ -657,7 +657,12 @@ sentinel for "the whole registry".
         `studio_scene_render`, `studio_subtitles`, `studio_voiceover`,
         `studio_compose`, `studio_project_status`, `studio_capabilities`,
         `image_generate`.
-  - [ ] Voice tools: `speech_to_text`, `text_to_speech`, `speech_capabilities`.
+  - [x] Voice tools: `speech_to_text`, `text_to_speech`, `speech_capabilities`,
+        `record_audio`, `speech_actions` — real microphone capture, local
+        (faster-whisper / Piper) and cloud (OpenAI-compatible) engines, playback,
+        a per-run budget and data-boundary gate, durable local action metadata
+        (SQLite + migration) and audit, wired into the `voice` scope. Wired only
+        when `speech_enabled` is set and only for a local runtime.
   - [ ] Education tools: `education_course_plan`, `education_lesson`,
         `education_quiz`.
 - [x] Specialist-aware UI in the desktop shell: the workspace surface renders a

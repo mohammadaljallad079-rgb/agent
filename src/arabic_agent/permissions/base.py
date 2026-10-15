@@ -53,6 +53,14 @@ class Permission(StrEnum):
     PRINT_DOCUMENT = "PRINT_DOCUMENT"
     PRINT = "PRINT"
 
+    # Speech / voice (the desktop runtime's microphone and speaker surface).
+    # Split so that recording the microphone and playing through the speaker are
+    # independent grants: a tenant can let the agent *speak* without letting it
+    # *listen*, and vice versa. Recording is the more sensitive of the two
+    # because it captures ambient sound the user did not author.
+    MICROPHONE_RECORD = "MICROPHONE_RECORD"
+    SPEAKER_PLAYBACK = "SPEAKER_PLAYBACK"
+
     # Communications
     SEND_EMAIL = "SEND_EMAIL"
     READ_EMAIL = "READ_EMAIL"
@@ -116,6 +124,8 @@ _PERMISSION_RISK: dict[Permission, RiskLevel] = {
     Permission.FILES_MOVE: RiskLevel.MEDIUM,
     Permission.PRINT_DOCUMENT: RiskLevel.MEDIUM,
     Permission.PRINT: RiskLevel.MEDIUM,
+    Permission.MICROPHONE_RECORD: RiskLevel.HIGH,
+    Permission.SPEAKER_PLAYBACK: RiskLevel.MEDIUM,
     Permission.CLIPBOARD_READ: RiskLevel.MEDIUM,
     Permission.CLIPBOARD_WRITE: RiskLevel.MEDIUM,
     Permission.RUN_COMMAND: RiskLevel.HIGH,
