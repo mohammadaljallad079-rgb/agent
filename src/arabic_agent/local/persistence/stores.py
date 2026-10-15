@@ -69,6 +69,12 @@ from ...printing.base import PrintJobStatus, PrintOptions
 from ...printing.store import PrintJobRecord, PrintJobStore
 from ...runs.base import RunRecord
 from ...runs.store import RunStore
+from ...speech.store import (
+    SpeechActionKind,
+    SpeechActionState,
+    SpeechRecord,
+    SpeechStore,
+)
 from ...workflows.models import Workflow, WorkflowVersion
 from ...workflows.run import StepRun, WorkflowRun
 from ...workflows.store import WorkflowRunStore, WorkflowStore, WorkflowVersionStore
@@ -81,6 +87,7 @@ from .schema import (
     LocalIdempotencyRow,
     LocalPrintJobRow,
     LocalRunRow,
+    LocalSpeechActionRow,
     LocalSyncActionRow,
     LocalWorkflowRow,
     LocalWorkflowRunRow,
@@ -1010,6 +1017,103 @@ def _print_job_from_row(row: LocalPrintJobRow) -> PrintJobRecord:
     )
 
 
+# --- Speech actions ---------------------------------------------------------
+class LocalSpeechActionStore(SpeechStore):
+    """Durable local speech-action metadata (survives a restart).
+
+    Persists the same :class:`~arabic_agent.speech.store.SpeechRecord` the
+    in-memory store holds, so a recording or spoken reply can be reviewed or
+    reconciled after the application restarts. Only safe metadata is stored; the
+    audio bytes are never persisted, and a transcript only when the caller opted
+    into keeping it.
+    """
+
+    def __init__(self, db: LocalDatabase) -> None:
+        self._db = db
+
+    async def add(self, record: SpeechRecord) -> SpeechRecord:
+        async with self._db.transaction() as session:
+            session.add(LocalSpeechActionRow(**_speech_to_row(record)))
+        return record
+
+    async def get(self, record_id: str, *, tenant_id: str) -> SpeechRecord:
+        async with self._db.transaction() as session:
+            row = await session.get(LocalSpeechActionRow, record_id)
+        if row is None or row.tenant_id != tenant_id:
+            raise NotFoundError("speech record not found", details={"id": record_id})
+        return _speech_from_row(row)
+
+    async def list_for_run(self, *, tenant_id: str, run_id: str) -> list[SpeechRecord]:
+        stmt = (
+            select(LocalSpeechActionRow)
+            .where(
+                LocalSpeechActionRow.tenant_id == tenant_id,
+                LocalSpeechActionRow.run_id == run_id,
+            )
+            .order_by(LocalSpeechActionRow.created_at)
+        )
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [_speech_from_row(r) for r in rows]
+
+    async def list_recent(self, *, tenant_id: str, limit: int = 50) -> list[SpeechRecord]:
+        stmt = (
+            select(LocalSpeechActionRow)
+            .where(LocalSpeechActionRow.tenant_id == tenant_id)
+            .order_by(LocalSpeechActionRow.created_at.desc())
+            .limit(limit)
+        )
+        async with self._db.transaction() as session:
+            rows = (await session.execute(stmt)).scalars().all()
+        return [_speech_from_row(r) for r in rows]
+
+
+def _speech_to_row(record: SpeechRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "tenant_id": record.tenant_id,
+        "user_id": record.user_id,
+        "run_id": record.run_id,
+        "kind": record.kind.value,
+        "state": record.state.value,
+        "engine": record.engine,
+        "language": record.language,
+        "duration_seconds": record.duration_seconds,
+        "size_bytes": record.size_bytes,
+        "text": record.text,
+        "error": record.error,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def _speech_from_row(row: LocalSpeechActionRow) -> SpeechRecord:
+    try:
+        kind = SpeechActionKind(row.kind)
+    except ValueError:
+        kind = SpeechActionKind.RECORDING
+    try:
+        state = SpeechActionState(row.state)
+    except ValueError:
+        state = SpeechActionState.OK
+    return SpeechRecord(
+        id=row.id,
+        tenant_id=row.tenant_id,
+        user_id=row.user_id,
+        run_id=row.run_id,
+        kind=kind,
+        state=state,
+        engine=row.engine,
+        language=row.language,
+        duration_seconds=row.duration_seconds,
+        size_bytes=row.size_bytes,
+        text=row.text,
+        error=row.error,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 __all__ = [
     "LocalActionLedger",
     "LocalApprovalStore",
@@ -1017,6 +1121,7 @@ __all__ = [
     "LocalIdempotencyGuard",
     "LocalPrintJobStore",
     "LocalRunStore",
+    "LocalSpeechActionStore",
     "LocalSyncQueue",
     "LocalWorkflowRunStore",
     "LocalWorkflowStore",

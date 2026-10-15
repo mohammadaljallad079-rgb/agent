@@ -202,3 +202,12 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["webview.*"]
 ignore_missing_imports = true
+
+# Speech engines (Gate 4B) are optional, lazily-imported dependencies:
+# faster-whisper (local speech-to-text) and piper (local text-to-speech). They
+# are not part of the baseline install and ship no first-party stubs, so a
+# missing module must not fail the type check of the rest of the platform.
+[[tool.mypy.overrides]]
+module = ["faster_whisper.*", "piper.*"]
+follow_imports = "skip"
+ignore_missing_imports = true

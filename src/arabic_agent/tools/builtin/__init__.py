@@ -15,6 +15,7 @@ from .filesystem_extra import EXTENDED_FILESYSTEM_TOOLS
 from .printing import PRINT_TOOLS
 from .project import PROJECT_TOOLS
 from .shell import ShellCommandTool
+from .speech import SPEECH_TOOLS
 
 __all__ = [
     "BROWSER_TOOLS",
@@ -25,6 +26,7 @@ __all__ = [
     "EXTENDED_FILESYSTEM_TOOLS",
     "PRINT_TOOLS",
     "PROJECT_TOOLS",
+    "SPEECH_TOOLS",
     "EchoTool",
     "ListDirectoryTool",
     "ReadFileTool",

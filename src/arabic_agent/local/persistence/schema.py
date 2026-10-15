@@ -342,6 +342,40 @@ class LocalPrintJobRow(LocalBase):
     )
 
 
+class LocalSpeechActionRow(LocalBase):
+    """Durable local speech-action metadata.
+
+    A recording or a spoken reply is a physical side effect a user may want to
+    review after an application restart. This row stores only safe metadata —
+    kind, engine, language, duration, size and outcome — never the audio bytes.
+    A transcript is stored only when the caller explicitly opted into keeping it
+    (``keep_text``); even then it is the recognised text, never the audio. It
+    mirrors the in-memory ``SpeechRecord`` so the same record round-trips.
+    """
+
+    __tablename__ = "local_speech_actions"
+
+    id: Mapped[str] = mapped_column(sa.String(200), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="", index=True)
+    kind: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="ok")
+    engine: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
+    language: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="")
+    duration_seconds: Mapped[float] = mapped_column(sa.Float, nullable=False, default=0.0)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    text: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+
+    __table_args__ = (
+        sa.Index("ix_local_speech_actions_tenant_run", "tenant_id", "run_id"),
+        sa.Index("ix_local_speech_actions_tenant_created", "tenant_id", "created_at"),
+    )
+
+
 class LocalRunRow(LocalBase):
     """Durable local agent run (desktop sessions/tasks).
 

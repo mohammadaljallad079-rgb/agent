@@ -162,6 +162,16 @@ def platform_default_policy() -> PolicySet:
             ),
             Rule(
                 effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.MICROPHONE_RECORD,
+                reason="recording the microphone captures ambient sound the user did not author",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
+                permission=Permission.SPEAKER_PLAYBACK,
+                reason="playing audio through the speaker is an audible physical side effect",
+            ),
+            Rule(
+                effect=PermissionEffect.REQUIRES_APPROVAL,
                 permission=Permission.SCREEN_READ,
                 reason="screen capture can expose anything on the display",
             ),
