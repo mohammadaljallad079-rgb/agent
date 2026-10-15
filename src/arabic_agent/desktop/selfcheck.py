@@ -9,6 +9,9 @@ assume — that:
   chains, resolved exactly as the frozen runtime resolves them);
 * document generation really writes files (an Arabic PDF plus DOCX/PPTX/XLSX),
   or reports each format as unavailable with a reason when its extra is absent;
+* the voice surface is packaged (speech modules, cancellable loops and the
+  STT/TTS model catalogue import and select a backend for this platform); a
+  host without an audio device is reported as a skip, not a fabricated pass;
 * the local SQLite store migrates to head and ends up with a real schema;
 * the loopback control API answers an authenticated request.
 

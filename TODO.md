@@ -685,6 +685,17 @@ sentinel for "the whole registry".
         terminal for recovery. Routes: `/desktop/voice/stop` plus the
         `synthesize` / `play` additions. Tests: mid-record and mid-playback
         cancellation in `tests/test_desktop_voice.py` and `tests/test_speech.py`.
+  - [x] GATE 4B release acceptance: the voice panel's transcript is an
+        **editable** box (a mis-heard command can be corrected before it runs;
+        AR/EN strings stay at parity), and a full acceptance test drives the
+        real facade — transcribe spoken Arabic → start a `voice` run → poll to
+        `waiting_approval` via `get_run` → approve → a real `%PDF` is written by
+        the real tool → speak the result
+        (`tests/test_desktop_voice.py::test_voice_command_creates_a_real_pdf_through_approval`).
+        `ArabicAIAgent.exe selfcheck` gained a `voice_surface` check proving the
+        speech modules, cancellable loops and model catalogue ship in the frozen
+        payload (a host without an audio device is an honest skip). Procedure
+        and remaining interactive gates: `docs/VOICE_ACCEPTANCE.md`.
   - [ ] Education tools: `education_course_plan`, `education_lesson`,
         `education_quiz`.
 - [x] Specialist-aware UI in the desktop shell: the workspace surface renders a

@@ -457,8 +457,15 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   stopped action is persisted with the `CANCELLED` state and audited as
   `speech.cancelled` (metadata only) rather than treated as a failure, and
   `ErrorClass.CANCELLED` aborts recovery instead of retrying. The UI stop
-  button drives this through `/desktop/voice/stop`. Tests:
-  `tests/test_speech.py`, `tests/test_desktop_voice.py`.
+  button drives this through `/desktop/voice/stop`. The "what I heard" box is
+  **editable**, so a mis-heard command is corrected before it runs. Tests:
+  `tests/test_speech.py`, `tests/test_desktop_voice.py` (including a full
+  transcribe → run → approval → real `%PDF` → speak acceptance test through the
+  real `DesktopService` facade). `ArabicAIAgent.exe selfcheck` has a
+  `voice_surface` check that proves the speech modules, cancellable loops and
+  model catalogue ship in the frozen payload. Acceptance procedure and the
+  remaining interactive (real microphone/speaker) gates:
+  `docs/VOICE_ACCEPTANCE.md`.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   image/video tools, social connectors, and a cloud web UI (the Arabic-first
   desktop UI exists inside the pywebview shell and now includes a printing
