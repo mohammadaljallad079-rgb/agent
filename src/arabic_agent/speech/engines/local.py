@@ -45,9 +45,19 @@ class LocalWhisperTranscriber(TranscriptionEngine):
     is_cloud = False
     languages = ("ar", "en")
 
-    def __init__(self, *, model_size: str = "small", device: str = "cpu") -> None:
+    def __init__(
+        self,
+        *,
+        model_size: str = "small",
+        device: str = "cpu",
+        model_path: str = "",
+    ) -> None:
         self._model_size = model_size
         self._device = device
+        #: An installed CTranslate2 model *directory*. When set it wins over
+        #: ``model_size``, so the product loads the exact artifact it installed
+        #: (and verified) rather than whatever ``faster-whisper`` would fetch.
+        self._model_path = model_path
         self._model: object | None = None
         try:
             import faster_whisper  # noqa: F401
@@ -63,7 +73,8 @@ class LocalWhisperTranscriber(TranscriptionEngine):
         if self._model is None:
             from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(self._model_size, device=self._device, compute_type="int8")
+            source = self._model_path or self._model_size
+            self._model = WhisperModel(source, device=self._device, compute_type="int8")
         return self._model
 
     def _transcribe_sync(self, audio_path: str, language: str, prompt: str) -> TranscriptionResult:

@@ -234,6 +234,17 @@ class Settings(BaseSettings):
     speech_whisper_device: str = "cpu"
     #: Path to a local Piper voice model (``.onnx``). Required for offline TTS.
     speech_piper_voice_model: str = ""
+    #: Installed STT model id from the speech catalogue (e.g.
+    #: ``faster-whisper-small``). When set and installed, the engine loads that
+    #: verified artifact; empty falls back to ``speech_whisper_model``.
+    speech_whisper_model_id: str = ""
+    #: Installed TTS model id from the speech catalogue (e.g.
+    #: ``piper-ar-jo-kareem-medium``). When set and installed, its voice file is
+    #: used; empty falls back to ``speech_piper_voice_model``.
+    speech_tts_model_id: str = ""
+    #: Directory the desktop voice surface writes recordings and replies to,
+    #: relative to the run workspace (created on demand).
+    speech_workspace_subdir: str = "voice"
     #: Whether cloud speech engines may be used at all. Off by default: enabling
     #: this is the operator's explicit consent for audio/text to leave the
     #: machine, and the per-request data boundary must also allow it.

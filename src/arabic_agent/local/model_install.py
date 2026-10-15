@@ -63,6 +63,16 @@ def _write_manifest(storage_dir: Path, manifest: dict[str, dict[str, object]]) -
     tmp.replace(path)
 
 
+def write_manifest(storage_dir: Path, manifest: dict[str, dict[str, object]]) -> None:
+    """Write the installed-model manifest atomically.
+
+    A public wrapper over the internal writer so callers outside this module (the
+    speech model store's removal path) can prune entries without importing a
+    private name.
+    """
+    _write_manifest(storage_dir, manifest)
+
+
 class InstallResult:
     """Outcome of an installation attempt."""
 

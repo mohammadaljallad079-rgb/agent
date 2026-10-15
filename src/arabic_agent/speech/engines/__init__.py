@@ -23,6 +23,7 @@ from ..base import SynthesisEngine, TranscriptionEngine
 from .cloud import OpenAICompatibleSynthesizer, OpenAICompatibleTranscriber
 from .local import LocalWhisperTranscriber, PiperSynthesizer
 from .null import NullSynthesisEngine, NullTranscriptionEngine
+from .windows import WindowsSapiSynthesizer
 
 
 def build_transcription_engine(
@@ -34,10 +35,20 @@ def build_transcription_engine(
     cloud_model: str = "whisper-1",
     whisper_model_size: str = "small",
     whisper_device: str = "cpu",
+    whisper_model_path: str = "",
 ) -> TranscriptionEngine:
-    """Return the best available speech-to-text engine."""
+    """Return the best available speech-to-text engine.
+
+    ``whisper_model_path`` is an installed CTranslate2 model directory; when set
+    it wins over ``whisper_model_size`` so the product loads the artifact it
+    installed rather than whatever ``faster-whisper`` would otherwise fetch.
+    """
     if engine in {"auto", "local", "faster-whisper"}:
-        local = LocalWhisperTranscriber(model_size=whisper_model_size, device=whisper_device)
+        local = LocalWhisperTranscriber(
+            model_size=whisper_model_size,
+            device=whisper_device,
+            model_path=whisper_model_path,
+        )
         if local.available:
             return local
         if engine in {"local", "faster-whisper"}:
@@ -63,13 +74,27 @@ def build_synthesis_engine(
     cloud_voice: str = "alloy",
     piper_voice_model: str = "",
 ) -> SynthesisEngine:
-    """Return the best available text-to-speech engine."""
+    """Return the best available text-to-speech engine.
+
+    The preference order for ``auto`` is deliberate: a configured Piper voice
+    first (a small, offline neural voice), then the voices already installed in
+    Windows (SAPI5, no download), then a cloud engine when explicitly allowed.
+    """
     if engine in {"auto", "local", "piper"}:
-        local = PiperSynthesizer(voice_model=piper_voice_model)
-        if local.available:
-            return local
-        if engine in {"local", "piper"}:
-            return NullSynthesisEngine(local.unavailable_reason)
+        if piper_voice_model:
+            local = PiperSynthesizer(voice_model=piper_voice_model)
+            if local.available:
+                return local
+            if engine in {"local", "piper"}:
+                return NullSynthesisEngine(local.unavailable_reason)
+        elif engine == "piper":
+            return NullSynthesisEngine("no piper voice model is configured")
+    if engine in {"auto", "sapi", "windows"}:
+        sapi = WindowsSapiSynthesizer()
+        if sapi.available:
+            return sapi
+        if engine in {"sapi", "windows"}:
+            return NullSynthesisEngine(sapi.unavailable_reason)
     if engine in {"auto", "cloud"} and allow_cloud and cloud_base_url:
         cloud = OpenAICompatibleSynthesizer(
             base_url=cloud_base_url,
