@@ -149,7 +149,9 @@ class RunExecutor:
         approval = await self._platform.approvals.get(approval_id, tenant_id=tenant_id)
 
         async def call(leased: RunRecord) -> AgentRunResult:
-            runner = self._platform.build_runner()
+            runner = self._platform.build_runner(
+                specialist=self._platform.specialists.get(leased.specialist)
+            )
             return await runner.resume_after_approval(
                 principal=principal_from_run(leased),
                 approval=approval,
@@ -218,7 +220,9 @@ class RunExecutor:
 
     async def _run_agent(self, record: RunRecord, *, recovered: bool) -> AgentRunResult:
         principal = principal_from_run(record)
-        runner = self._platform.build_runner()
+        runner = self._platform.build_runner(
+            specialist=self._platform.specialists.get(record.specialist)
+        )
         return await runner.run(
             principal=principal,
             goal=record.goal,

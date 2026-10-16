@@ -7,6 +7,8 @@ settings expose the expected defaults and validation.
 
 from __future__ import annotations
 
+import sys
+
 from pydantic import SecretStr
 
 from arabic_agent.computer.backends import build_computer_backend
@@ -79,11 +81,23 @@ def test_cloud_runtime_never_registers_computer_tools(tmp_path):
 
 
 def test_build_backend_returns_null_for_unimplemented_platforms():
-    for kind in (PlatformKind.WINDOWS, PlatformKind.MACOS):
-        backend = build_computer_backend(platform=kind)
-        assert isinstance(backend, NullComputerBackend)
-        assert backend.available is False
+    # macOS is design-only and always reports an honest null backend.
+    backend = build_computer_backend(platform=PlatformKind.MACOS)
+    assert isinstance(backend, NullComputerBackend)
+    assert backend.available is False
+    assert backend.unavailable_reason
+
+
+def test_build_backend_for_windows_reports_availability_honestly():
+    backend = build_computer_backend(platform=PlatformKind.WINDOWS)
+    # On real Windows the Win32 backend is selected; off Windows it is an
+    # honest null backend carrying the reason. Either way it is never a silent
+    # "available" that fails on first use.
+    assert backend.available in (True, False)
+    if not backend.available:
         assert backend.unavailable_reason
+    elif sys.platform != "win32":  # pragma: no cover - defensive
+        raise AssertionError("a Windows backend must not claim availability off Windows")
 
 
 def test_build_backend_for_linux_reports_availability_honestly():

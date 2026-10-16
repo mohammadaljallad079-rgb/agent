@@ -34,6 +34,9 @@ PREFIX_WEBHOOK = "whk"
 PREFIX_DEVICE = "dev"
 PREFIX_SYNC = "syc"
 PREFIX_LOCAL_CAPABILITY = "lcp"
+# Speech / voice
+PREFIX_AUDIO = "aud"
+PREFIX_SPEECH = "spc"
 
 
 def new_id(prefix: str) -> str:

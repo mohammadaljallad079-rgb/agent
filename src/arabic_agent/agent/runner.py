@@ -35,6 +35,7 @@ from ..models.base import ChatMessage, ModelRequest, ToolSpec, Usage
 from ..models.gateway import ModelGateway
 from ..permissions.approvals import Approval, ApprovalStore
 from ..permissions.base import Principal
+from ..specialists import DEFAULT_SPECIALIST, Specialist
 from ..tasks.base import TaskPlan, TaskStep
 from ..tasks.engine import TaskEngine
 from ..tools.base import ToolContext
@@ -99,6 +100,7 @@ class AgentRunner:
         recovery: RecoveryPolicy | None = None,
         locale: Locale = Locale.AR,
         attachment_provider: AttachmentProvider | None = None,
+        specialist: Specialist | None = None,
     ) -> None:
         self._gateway = gateway
         self._tools = tools
@@ -114,6 +116,7 @@ class AgentRunner:
             max_retries=settings.max_tool_retries, max_replans=settings.max_replans
         )
         self._locale = locale
+        self._specialist = specialist or DEFAULT_SPECIALIST
         self._planner = Planner(gateway, locale=locale)
         self._loop_guard = LoopGuard()
         #: Optional multimodal source (the computer subsystem). The runner never
@@ -134,6 +137,26 @@ class AgentRunner:
             return None
         return provider.context_window
 
+    def _system_prompt(self) -> str:
+        """The shared operator prompt plus the specialist's own directive."""
+        base = system_prompt(self._locale)
+        directive = self._specialist.system_prompt.strip()
+        return f"{base}\n\n{directive}" if directive else base
+
+    def _specialist_specs(self) -> tuple[ToolSpec, ...]:
+        """The tool specs this specialist is allowed to advertise.
+
+        A specialist with an empty scope (the general agent) gets the whole
+        registry. A scoped specialist gets only its declared tools that the
+        runtime actually registered, so an absent optional extra degrades the
+        specialist instead of failing a step on a tool that does not exist.
+        """
+        specs = self._tools.specs()
+        scope = self._specialist.advertised_tools()
+        if not scope:
+            return specs
+        return tuple(spec for spec in specs if spec.name in scope)
+
     def _planning_tools(self, goal: str) -> tuple[ToolSpec, ...]:
         """The tools worth advertising to the planner for this goal.
 
@@ -142,8 +165,12 @@ class AgentRunner:
         (see :mod:`arabic_agent.tools.retrieval`). Cloud models with a large
         window keep the whole registry, because breadth is useful there and the
         context can hold it.
+
+        A specialist's scope is applied first: the general agent ranks the whole
+        registry, a scoped specialist ranks only its own tools. The scope is a
+        ceiling the ranking can never exceed.
         """
-        specs = self._tools.specs()
+        specs = self._specialist_specs()
         window = self._active_window()
         if window is None or window >= _RETRIEVAL_WINDOW_THRESHOLD:
             return specs
@@ -191,7 +218,12 @@ class AgentRunner:
             user_id=principal.user_id,
             run_id=run_id,
             message="run recovered" if recovery_attempt is not None else "run started",
-            data={"goal": goal, "workspace": workspace, "recovery_attempt": recovery_attempt},
+            data={
+                "goal": goal,
+                "workspace": workspace,
+                "recovery_attempt": recovery_attempt,
+                "specialist": self._specialist.id,
+            },
         )
 
         plan = await self._resolve_plan(
@@ -306,7 +338,7 @@ class AgentRunner:
             attachments = await self._collect_attachments(run_id)
             window = self._active_window()
             package = self._context.build(
-                system_prompt=system_prompt(self._locale),
+                system_prompt=self._system_prompt(),
                 goal=plan.goal,
                 plan=plan,
                 recent_messages=history[-_HISTORY_WINDOW:],
@@ -371,6 +403,29 @@ class AgentRunner:
             history.append(response.message)
             for call in response.tool_calls:
                 tool_calls += 1
+                if not self._specialist.allows(call.name):
+                    # Defence in depth: the specialist never advertised this tool,
+                    # so a model that named it anyway is refused here rather than
+                    # silently reaching outside its scope. The run continues; the
+                    # model is told to stay within its capabilities.
+                    await self._audit.record(
+                        AuditEventType.SPECIALIST_SCOPE_DENIED,
+                        tenant_id=principal.tenant_id,
+                        user_id=principal.user_id,
+                        run_id=run_id,
+                        message=f"tool outside specialist scope: {call.name}",
+                        data={"tool": call.name, "specialist": self._specialist.id},
+                    )
+                    history.append(
+                        ChatMessage.tool_result(
+                            call.id,
+                            f"DENIED: tool '{call.name}' is outside the "
+                            f"'{self._specialist.id}' specialist scope. "
+                            "Use one of the advertised tools.",
+                            name=call.name,
+                        )
+                    )
+                    continue
                 verdict = self._loop_guard.observe_call(call.name, call.arguments)
                 if verdict.action == "abort":
                     await self._audit.record(
@@ -804,7 +859,7 @@ class AgentRunner:
         same way the goal ranks the planning catalogue. A large-window model
         keeps the full registry, where breadth is affordable.
         """
-        specs = self._tools.specs()
+        specs = self._specialist_specs()
         hint = step.tool_hint
         if hint and hint in {spec.name for spec in specs}:
             return tuple(spec for spec in specs if spec.name == hint or spec.name in CORE_TOOLS)

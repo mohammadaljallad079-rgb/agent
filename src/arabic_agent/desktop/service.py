@@ -46,6 +46,8 @@ from ..local.hardware import HardwareProfile, detect_hardware
 from ..local.model_security import resolve_storage_dir
 from ..models.base import ChatMessage, ModelRequest
 from ..permissions.base import Permission, Principal
+from ..specialists.base import GENERAL
+from .voice import DesktopVoiceService
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ _SETTINGS_CAPABILITIES: tuple[tuple[str, Permission, str], ...] = (
     ("calendar.write", Permission.CALENDAR_WRITE, "تعديل التقويم"),
     ("calendar.delete", Permission.CALENDAR_DELETE, "حذف أحداث التقويم"),
     ("printing", Permission.PRINT_DOCUMENT, "الطباعة"),
+    ("voice.listen", Permission.MICROPHONE_RECORD, "الاستماع عبر الميكروفون"),
+    ("voice.speak", Permission.SPEAKER_PLAYBACK, "النطق عبر مكبر الصوت"),
     ("email.send", Permission.SEND_EMAIL, "إرسال البريد"),
     ("network", Permission.NETWORK_ACCESS, "الوصول للشبكة"),
 )
@@ -105,6 +109,7 @@ class DesktopService:
         self._runs = RunService(platform)
         self._locale = locale
         self._browser = BrowserProvisioner()
+        self._voice = DesktopVoiceService(platform=platform, principal=self._principal)
         #: True only after a real health check passed for the active model.
         self._active_model_ready = False
         #: True only after the routed inference acceptance test produced output.
@@ -123,11 +128,20 @@ class DesktopService:
         return self._principal
 
     # -- Runs / sessions -------------------------------------------------
-    async def start_run(self, *, goal: str, workspace_dir: str | None = None) -> dict[str, object]:
+    async def start_run(
+        self,
+        *,
+        goal: str,
+        workspace_dir: str | None = None,
+        specialist: str = GENERAL,
+    ) -> dict[str, object]:
         if not goal or not goal.strip():
             raise ValidationError("a goal is required")
         record = await self._runs.start(
-            principal=self._principal, goal=goal.strip(), workspace_dir=workspace_dir
+            principal=self._principal,
+            goal=goal.strip(),
+            workspace_dir=workspace_dir,
+            specialist=specialist,
         )
         return self._run_dict(record)
 
@@ -183,6 +197,7 @@ class DesktopService:
                 "permission": a.permission.value,
                 "summary": a.summary,
                 "arguments": a.arguments,
+                "preview": a.preview,
                 "run_id": a.run_id,
                 "created_at": a.created_at.isoformat(),
                 "expires_at": a.expires_at.isoformat(),
@@ -509,6 +524,39 @@ class DesktopService:
         tools.sort(key=lambda t: str(t["name"]))
         return {"tools": tools, "count": len(tools)}
 
+    # -- Specialists -----------------------------------------------------
+    def specialists_view(self) -> dict[str, object]:
+        """Every specialist profile with its *real* readiness against the tools.
+
+        This is the same catalogue, scope intersection and readiness computation
+        the API uses (``platform.specialists``), so the desktop selector can never
+        show a specialist as more capable than the runtime will actually run it.
+        A specialist whose declared tools are partly absent is reported
+        ``degraded`` with the missing names; none present is ``unavailable``.
+        """
+        available = frozenset(self._platform.tools.names())
+        readiness = {str(row["id"]): row for row in self._platform.specialists.readiness(available)}
+        items: list[dict[str, object]] = []
+        for specialist in self._platform.specialists.all():
+            row = readiness.get(specialist.id, {})
+            items.append(
+                {
+                    "id": specialist.id,
+                    "name_ar": specialist.name_ar,
+                    "name_en": specialist.name_en,
+                    "description_ar": specialist.description_ar,
+                    "description_en": specialist.description_en,
+                    "domains": list(specialist.domains),
+                    "required_capabilities": sorted(
+                        c.value for c in specialist.required_capabilities
+                    ),
+                    "tool_scope": sorted(specialist.scoped_names(available)),
+                    "status": str(row.get("status", "available")),
+                    "missing_tools": [str(m) for m in row.get("missing_tools", [])],
+                }
+            )
+        return {"specialists": items, "default": GENERAL, "count": len(items)}
+
     # -- Generated artifacts ---------------------------------------------
     #: Formats the UI can open in the operating system's default application.
     _OPENABLE_SUFFIXES = frozenset({".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".txt"})
@@ -750,6 +798,94 @@ class DesktopService:
             for r in records
         ]
         return {"enabled": True, "jobs": jobs, "count": len(jobs)}
+
+    # -- Voice -----------------------------------------------------------
+    def voice_view(self) -> dict[str, object]:
+        """Voice availability from real settings, runtime and policy state.
+
+        Nothing here claims a working microphone or voice: ``enabled`` reflects
+        the setting, ``available`` is true only when a real speech runtime is
+        wired, and the two ``*_allowed`` flags are the *real* policy decisions
+        for the microphone and speaker. Under the default policy both require
+        approval, so a voice button is honestly reported as needing approval
+        rather than silently recording.
+        """
+        return self._voice.capabilities()
+
+    async def voice_devices(self) -> dict[str, object]:
+        return await self._voice.list_devices()
+
+    def voice_models(self) -> dict[str, object]:
+        return self._voice.list_models()
+
+    async def install_voice_model(self, model_id: str) -> dict[str, object]:
+        return await self._voice.install_model(model_id)
+
+    def remove_voice_model(self, model_id: str) -> dict[str, object]:
+        return self._voice.remove_model(model_id)
+
+    async def voice_actions(
+        self, *, run_id: str | None = None, limit: int = 50
+    ) -> dict[str, object]:
+        return await self._voice.list_actions(run_id=run_id, limit=limit)
+
+    async def voice_start(
+        self, *, goal: str, workspace_dir: str | None = None
+    ) -> dict[str, object]:
+        return await self._voice.start_voice_run(goal=goal, workspace_dir=workspace_dir)
+
+    async def voice_transcribe(
+        self,
+        *,
+        run_id: str | None = None,
+        seconds: float = 5.0,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.transcribe(
+            run_id=run_id, seconds=seconds, device_id=device_id, language=language
+        )
+
+    async def voice_synthesize(
+        self,
+        *,
+        run_id: str | None = None,
+        text: str,
+        voice: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.synthesize(
+            run_id=run_id, text=text, voice=voice, language=language
+        )
+
+    async def voice_speak(
+        self,
+        *,
+        run_id: str | None = None,
+        text: str,
+        voice: str = "",
+        language: str = "ar",
+        device_id: str = "",
+    ) -> dict[str, object]:
+        return await self._voice.speak(
+            run_id=run_id, text=text, voice=voice, language=language, device_id=device_id
+        )
+
+    async def voice_play(
+        self,
+        *,
+        run_id: str | None = None,
+        path: str,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> dict[str, object]:
+        return await self._voice.play_file(
+            run_id=run_id, path=path, device_id=device_id, language=language
+        )
+
+    def voice_stop(self, *, op: str | None = None) -> dict[str, object]:
+        """Stop an in-flight recording and/or playback, reporting what stopped."""
+        return self._voice.stop(op=op)
 
     # -- Memory ----------------------------------------------------------
     async def list_memory(self, *, limit: int = 50) -> dict[str, object]:
@@ -1106,6 +1242,7 @@ class DesktopService:
             "verified": record.verified,
             "error": record.error,
             "workspace_dir": record.workspace_dir,
+            "specialist": getattr(record, "specialist", GENERAL),
             "pending_approval_id": record.pending_approval_id,
             "steps_executed": record.steps_executed,
             "tool_calls": record.tool_calls,

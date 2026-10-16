@@ -69,6 +69,19 @@ _INTENT_LEXICON: dict[str, tuple[str, ...]] = {
     "ملفات": ("file",),
     "مجلد": ("directory", "folder"),
     "مجلدات": ("directory", "folder"),
+    # file operations. Arabic imperative forms are normalised (hamza folded,
+    # final alef dropped), so the keys are the folded spellings.
+    "اقر": ("read",),
+    "قرا": ("read",),
+    "حذف": ("delete", "remove"),
+    "احذف": ("delete", "remove"),
+    "امسح": ("delete", "remove"),
+    "انسخ": ("copy",),
+    "نسخ": ("copy",),
+    "انقل": ("move",),
+    "نقل": ("move",),
+    "عدل": ("edit",),
+    "حرر": ("edit",),
     # communication
     "بريد": ("email",),
     "ايميل": ("email",),
@@ -192,20 +205,25 @@ def _normalise_arabic(word: str) -> str:
     return word
 
 
-def _tokens(text: str) -> list[str]:
+def _tokens(text: str, *, drop_stopwords: bool = True) -> list[str]:
     tokens: list[str] = []
     for raw in _WORD_RE.findall(text.lower()):
         token = _normalise_arabic(raw)
-        if len(token) < 2 or token in _STOPWORDS:
+        if len(token) < 2 or (drop_stopwords and token in _STOPWORDS):
             continue
         tokens.append(token)
     return tokens
 
 
 def _tool_terms(spec: ToolSpec) -> set[str]:
-    """The searchable terms of a tool: name parts plus description words."""
-    terms = set(_tokens(spec.name.replace("_", " ")))
-    terms |= set(_tokens(spec.description or ""))
+    """The searchable terms of a tool: name parts plus description words.
+
+    Stopwords are *not* dropped here: tool names and descriptions are short and
+    hand-written, so every word (including ``file``) is meaningful. Dropping
+    them would erase exactly the words the intent lexicon maps Arabic goals onto.
+    """
+    terms = set(_tokens(spec.name.replace("_", " "), drop_stopwords=False))
+    terms |= set(_tokens(spec.description or "", drop_stopwords=False))
     return terms
 
 

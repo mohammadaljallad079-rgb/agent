@@ -31,6 +31,10 @@ class AuditEventType(StrEnum):
     TOOL_RESULT = "tool.result"
     TOOL_ERROR = "tool.error"
     TOOL_RETRY = "tool.retry"
+    #: A model named a tool outside the active specialist's declared scope. The
+    #: call is refused before the executor sees it (defence in depth: the scope
+    #: was already the advertisement ceiling).
+    SPECIALIST_SCOPE_DENIED = "specialist.scope.denied"
     POLICY_DECISION = "policy.decision"
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_RESOLVED = "approval.resolved"
@@ -139,6 +143,18 @@ class AuditEventType(StrEnum):
     PRINT_JOB_FAILED = "print.job_failed"
     PRINT_JOB_CANCELLED = "print.job_cancelled"
     PRINT_BOUNDARY_DECISION = "print.boundary_decision"
+    # Speech / voice (Gate 4B). These record *metadata* only — a duration, a
+    # device, a language, an engine, and the policy/boundary decision — never the
+    # raw audio, and never a full transcript unless the user opted into keeping
+    # one. A recording and a playback are auditable facts in their own right.
+    SPEECH_DEVICES_LISTED = "speech.devices_listed"
+    SPEECH_RECORDED = "speech.recorded"
+    SPEECH_TRANSCRIBED = "speech.transcribed"
+    SPEECH_SYNTHESIZED = "speech.synthesized"
+    SPEECH_PLAYED = "speech.played"
+    SPEECH_FAILED = "speech.failed"
+    SPEECH_CANCELLED = "speech.cancelled"
+    SPEECH_BOUNDARY_DECISION = "speech.boundary_decision"
     # Browser / web (Phase 8). These record *metadata* only — a URL, title,
     # element counts, action kind and policy decision — never the raw page text,
     # a typed secret value, or a screenshot.

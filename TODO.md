@@ -523,12 +523,15 @@ in-memory in the local runtime are made durable here.
 - [ ] Packaged/signed binary distribution (PyInstaller/MSIX) and an auto-update
       mechanism. The wheel ships the UI asset and both console scripts.
 
-## Phase 10W — Real Windows acceptance & installer verification (blocked)
+## Phase 10W — Real Windows acceptance & installer verification (in progress)
 
-Acceptance must run on **actual Windows**. The current development host is a
-headless Linux container (Debian 13, no Windows, no Wine, no `/dev/kvm`, no
-display), so no Windows acceptance flow can be executed here and none is
-claimed. See ARCHITECTURE.md §18a for the full status.
+Acceptance must run on **actual Windows**. The development host is a headless
+Linux container (Debian 13, no Windows, no Wine, no `/dev/kvm`, no display), so
+no *interactive* Windows acceptance gate is executed here and none is claimed.
+What is now real is the **automated** Windows half: `.github/workflows/windows.yml`
+runs the full suite on real `windows-latest` (3.11/3.12/3.13), builds the binary
+installer, and verifies it end to end before uploading. See ARCHITECTURE.md §18a
+and `docs/WINDOWS_ACCEPTANCE.md`.
 
 Two genuine defects found by a static audit + clean-venv install (both are
 host-independent and were fixed with regression tests):
@@ -587,11 +590,130 @@ binary; not implementable in this environment):
       `/desktop/browser{,/provision,/progress,/cancel}` and the desktop UI
       section let the product install/verify the Chromium runtime with real
       progress and audit, instead of telling the user to run `playwright install`.
+- [x] Automated Windows verification of the built installer:
+      `ArabicAIAgent.exe selfcheck` verifies the *packaged* product through real
+      code paths (bundled UI + both migration chains, real Arabic PDF/DOCX/PPTX/
+      XLSX writes, a real SQLite migration and a real authenticated loopback
+      request). `scripts/build_windows.ps1` runs it on the frozen payload and,
+      after compiling the installer, silently installs it, self-checks the
+      *installed* executable and uninstalls — so a broken package fails CI
+      instead of being uploaded. The installer `ArabicAIAgent-Setup-*.exe` and
+      its SHA-256 are produced by the Windows job and uploaded as an artifact.
+      Tests: `tests/test_selfcheck.py`.
 - [ ] Code signing certificate and signing.
 - [ ] Tray/background runtime and Windows notifications (not implemented).
-- [ ] Run the full acceptance matrix on real Windows (install, first run, real
-      GGUF model, real Agent file/browser/computer tasks, Arabic, approval,
-      emergency stop, offline `remote_requests == 0`, crash/restart, uninstall).
+- [ ] Interactive acceptance gates on a real logged-in Windows desktop (first-run
+      wizard, real GGUF model, real Agent file/browser/computer tasks, Arabic
+      input, approval UX, emergency stop, offline `remote_requests == 0`,
+      crash/restart). The automated gates above do not cover a live desktop.
+
+## Phase 04 — Specialized agents on a shared core
+
+One orchestration platform, several declarative **specialist profiles** — not
+one engine per domain. A specialist is data (`specialists/builtin.py`), resolved
+by the same agent loop, executor, policy engine and audit trail. The SUPER AI
+AGENT stays general-purpose: `general` has an *empty* scope, the explicit
+sentinel for "the whole registry".
+
+- [x] `specialists/` package: `Specialist` value object (id, Arabic-first name,
+      directive, declared tool scope, required model capabilities),
+      `SpecialistCatalogue` with lookup (empty id → `general`) and readiness.
+- [x] Built-in profiles: `general` (whole registry), `coding`, `education`,
+      `video`, `voice`.
+- [x] Scope is a ceiling, enforced twice: the runner advertises only
+      `scope ∩ registered tools`, and an out-of-scope tool named by the model is
+      refused with a `DENIED` result plus a `specialist.scope.denied` audit
+      event (defence in depth — never executed).
+- [x] Honest readiness: `available` / `degraded` (with the missing tool names) /
+      `unavailable`. A declared-but-absent tool degrades a specialist; it does
+      not fail a step.
+- [x] End-to-end wiring: `RunRequest.specialist` → `RunService` → `RunRecord`
+      (+ `RunRow` / `LocalRunRow` + migrations) → `RunExecutor` →
+      `build_runner(specialist=...)`. Unknown ids are a `404` before a run is
+      created.
+- [x] Discovery API: `GET /specialists`, `GET /specialists/{id}`.
+- [x] Human-in-the-loop approval **preview**: a sensitive call carries a
+      structured, read-only description of its concrete effect (target path,
+      byte count, overwrite flag, replacement count, export source→destination)
+      produced by `Tool.preview()` before the approval is raised. It is redacted,
+      persisted (cloud `approvals.preview` + local `local_approvals.preview`,
+      with migrations) and surfaced on `GET /approvals` and the desktop approval
+      center, so the decision is informed rather than a yes/no on a tool name.
+- [x] Tests: `tests/test_specialists.py` (profile scope, catalogue, readiness,
+      runner scoping, executor refusal + audit, discovery endpoints), plus
+      preview coverage in `test_document_editing.py`, `test_api.py`,
+      `test_desktop_artifacts.py` and a durable round-trip in
+      `test_local_durable.py`.
+- [ ] The specialist-specific tools the profiles declare are **not implemented
+      yet**; readiness reports them `degraded` today. This is deliberate and
+      honest — the profiles describe the intended scope, and the gap is visible
+      rather than hidden. Remaining tools, grouped:
+  - [x] Document artifact tools: `edit_document`, `export_document` (and the
+        `document_editing_formats` discovery tool) — real in-place editing of
+        text/Markdown/DOCX/XLSX plus format export, wired into the `voice`,
+        `video`, `education` and `coding` scopes.
+  - [ ] Coding agent tools: `code_analyze`, `code_review`, `git_diff`.
+  - [ ] Video/studio tools: `studio_project_create`, `studio_storyboard`,
+        `studio_scene_render`, `studio_subtitles`, `studio_voiceover`,
+        `studio_compose`, `studio_project_status`, `studio_capabilities`,
+        `image_generate`.
+  - [x] Voice tools: `speech_to_text`, `text_to_speech`, `speech_capabilities`,
+        `record_audio`, `speech_actions` — real microphone capture, local
+        (faster-whisper / Piper) and cloud (OpenAI-compatible) engines, playback,
+        a per-run budget and data-boundary gate, durable local action metadata
+        (SQLite + migration) and audit, wired into the `voice` scope. Wired only
+        when `speech_enabled` is set and only for a local runtime.
+  - [x] Real local engines and audio devices: a Windows WinMM capture/playback
+        backend and a Windows SAPI5 Arabic TTS engine behind the existing
+        `AudioBackend` / `SynthesisEngine` seams; faster-whisper loads the
+        explicitly installed model artifact instead of letting a library fetch
+        its own.
+  - [x] Verified voice-model catalogue + store (`speech/models.py`,
+        `speech/model_store.py`): Whisper STT and Piper Arabic voices with real
+        sizes, SHA-256 digests and licences, installed through the existing
+        resumable, digest-verified installer and resolved to engine paths.
+  - [x] Desktop voice surface (`desktop/voice.py` + `/desktop/voice*` routes):
+        a spoken turn is an ordinary durable run under the `voice` specialist,
+        and `MICROPHONE_RECORD` / `SPEAKER_PLAYBACK` are decided by the real
+        policy engine (approval-gated by default, never self-approved). Audio is
+        written only inside the run workspace. Tests:
+        `tests/test_desktop_voice.py`.
+  - [x] Cancellable voice turns: `speech/cancel.py` (`CancelToken` /
+        `CancelledError`) lets the stop button end a recording or playback
+        mid-flight; the stopped action is stored as `cancelled` and audited as
+        `speech.cancelled` (never as a failure), and `ErrorClass.CANCELLED` is
+        terminal for recovery. Routes: `/desktop/voice/stop` plus the
+        `synthesize` / `play` additions. Tests: mid-record and mid-playback
+        cancellation in `tests/test_desktop_voice.py` and `tests/test_speech.py`.
+  - [x] GATE 4B release acceptance: the voice panel's transcript is an
+        **editable** box (a mis-heard command can be corrected before it runs;
+        AR/EN strings stay at parity), and a full acceptance test drives the
+        real facade — transcribe spoken Arabic → start a `voice` run → poll to
+        `waiting_approval` via `get_run` → approve → a real `%PDF` is written by
+        the real tool → speak the result
+        (`tests/test_desktop_voice.py::test_voice_command_creates_a_real_pdf_through_approval`).
+        `ArabicAIAgent.exe selfcheck` gained a `voice_surface` check proving the
+        speech modules, cancellable loops and model catalogue ship in the frozen
+        payload (a host without an audio device is an honest skip). Procedure
+        and remaining interactive gates: `docs/VOICE_ACCEPTANCE.md`.
+  - [ ] Education tools: `education_course_plan`, `education_lesson`,
+        `education_quiz`.
+- [x] Specialist-aware UI in the desktop shell: the workspace surface renders a
+      selector from the live catalogue (delivered on `/desktop/bootstrap` and
+      `GET /desktop/specialists`, both backed by the same `platform.specialists`
+      catalogue and readiness the API uses), shows each profile's Arabic/English
+      description, tool count and honest readiness pill (`available` /
+      `degraded` / `unavailable`, with the missing tool names when degraded),
+      and passes the chosen id on run creation (`POST /desktop/runs`
+      `specialist`). The run list shows the specialist per run, and the run's
+      start audit event records it. Enforced end to end: a specialist choice
+      reaches the executor's scope gate (a `coding` run that tries
+      `print_document` is refused with `specialist.scope.denied`; the general
+      agent is not). Regression coverage in `tests/test_desktop_runtime.py`
+      (bridge + live HTTP + UI asset) and `tests/test_local_durable.py`
+      (durable persistence of the choice).
+
+---
 
 ## Phase 7 — Product surface
 
@@ -796,6 +918,33 @@ binary; not implementable in this environment):
   tool runs, `report.pdf` is written to the workspace, the step completes,
   verification passes, the run is marked `completed`, and the outcome is written
   to memory. No FakeProvider, no injected tool call.
+
+## Windows-readiness closeout
+
+- The full suite is green — **1023 passed, 59 skipped, 0 failed** — and the same
+  suite on a checkout *without* the optional `documents`/`docgen` extras is
+  **973 passed, 109 skipped, 0 failed** (the extra tests skip honestly; they do
+  not error). `ruff` is clean and `mypy --strict` reports no issues in 236
+  source files.
+- Windows-only defects found from the `windows-latest` CI run and fixed at root
+  cause, each with a regression test (detail in `docs/WINDOWS_ACCEPTANCE.md` §2):
+  1. **PyInstaller spec embedded OS-native separators.** `str(Path)` produced
+     backslashes on Windows; the spec now emits every path via `Path.as_posix()`
+     and the packaging test asserts no backslash remains, so a spec generated on
+     one platform builds on the other.
+  2. **cp1252 mojibaked an Arabic round-trip.** A workflow test read a UTF-8 file
+     with the platform default codec; it now reads `encoding="utf-8"`.
+  3. **Optional-dependency gaps surfaced as errors, not skips.** python-pptx
+     (which imports Pillow) and reportlab tests now skip when their extra is
+     absent, keeping a bare checkout green.
+  4. **Frozen install could not generate documents.** The spec now collects the
+     document/model packages' modules and data files when present, and the
+     Windows build installs the `documents` and `docgen` extras, so a packaged
+     product generates Arabic PDFs instead of reporting them unavailable.
+- Tool-retrieval quality was tightened: file/directory intent tokens
+  (ملف/ملفات/مجلد/مجلدات) map to the file tools and a stopword bug that hid
+  read/delete intents was fixed (`tools/retrieval.py`), covered by
+  `tests/test_tool_retrieval.py`.
 
 ## Verification commands
 

@@ -9,6 +9,8 @@ fact that computer tools are permission-gated and audited.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from arabic_agent.audit.base import AuditEventType, AuditLog
@@ -28,6 +30,7 @@ from arabic_agent.computer.grounding import (
     normalize_text,
     resolve_target,
 )
+from arabic_agent.computer.observations import ObservationStore
 from arabic_agent.computer.ocr import OcrWord
 from arabic_agent.computer.perception import (
     Observation,
@@ -314,18 +317,33 @@ async def test_capture_budget_is_enforced():
 
 
 async def test_stale_observation_is_refused():
-    runtime, _, _ = _runtime(max_observation_age_seconds=0.0001)
-    observation = await runtime.observe(tenant_id="t", user_id="u", run_id="r")
-    import asyncio
-
-    await asyncio.sleep(0.01)
+    # Build the runtime around a store that hands back a genuinely aged
+    # observation: Windows' monotonic clock is coarse (~15.6 ms), so a short
+    # sleep can leave the age at 0 and the freshness gate would never trip.
+    real_observation = Observation(
+        id="obs_stale",
+        run_id="r",
+        captured_at=time.monotonic() - 60.0,
+        metadata=_metadata(),
+    )
+    store = ObservationStore()
+    store.put(real_observation)
+    backend = FakeComputerBackend()
+    runtime = ComputerRuntime(
+        backend=backend,
+        perception=PerceptionLayer(backend, ocr=FakeOcr()),
+        policy=ComputerPolicy(max_observation_age_seconds=0.0001),
+        audit=AuditLog([InMemoryAuditSink()]),
+        boundary=ScreenDataBoundary(policy=ScreenDataPolicy.LOCAL_ONLY),
+        observations=store,
+    )
     with pytest.raises(ValidationError):
         await runtime.pointer_move(
             tenant_id="t",
             user_id="u",
             run_id="r",
             target=GroundingTarget.at_point(1, 1),
-            observation_id=observation.id,
+            observation_id="obs_stale",
         )
 
 

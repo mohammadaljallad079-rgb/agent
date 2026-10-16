@@ -52,8 +52,9 @@ for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
    stale-observation) now have an implementation to exercise, but still need a
    real interactive Windows desktop to be marked PASS.
 
-2. **Binary Windows installer — build inputs implemented, artifact not yet
-   built.** `desktop/packaging.py` generates the two inputs a binary build needs:
+2. **Binary Windows installer — build inputs implemented; the artifact is built
+   by CI on real Windows and now gated by a self-check.** `desktop/packaging.py`
+   generates the two inputs a binary build needs:
    a one-folder PyInstaller spec (a windowed `ArabicAIAgent.exe` whose `Analysis`
    entry is the real script path `src/arabic_agent/__main__.py`, bundling the
    desktop UI and **both** migration chains — `migrations_local/` →
@@ -63,9 +64,12 @@ for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
    Start-menu/desktop icons, opt-in startup entry). One script drives the whole
    documented flow — `scripts/build_windows.ps1` — which also runs in
    `.github/workflows/windows.yml` on `windows-latest` and uploads
-   `ArabicAIAgent-Setup-*.exe`. Gates 3/4/73 (installer build, SHA-256) still need
-   a real Windows build to produce the artifact and its hash. The script installer
-   in `desktop/installer.py` remains as the developer install path.
+   `ArabicAIAgent-Setup-*.exe`. The build now runs
+   `ArabicAIAgent.exe selfcheck` on both the frozen payload and the *installed*
+   executable before uploading, so a broken package fails the build instead of
+   shipping. Gates 3/4/73 (installer build, SHA-256) are produced and checked by
+   that job; the interactive gates still need a real logged-in desktop. The
+   script installer in `desktop/installer.py` remains the developer install path.
 
 3. **Browser runtime — provisioning implemented.** `browser/provisioning.py` is
    a real provisioner (probe → install → verify → state machine with cancel),
@@ -80,6 +84,30 @@ for). Status is tracked in `TODO.md` (Phase 10W) and `ARCHITECTURE.md` §18a.
 
 4. **Code signing, tray/background runtime, Windows notifications** are not
    implemented (unchanged).
+
+### Windows defects found and fixed at root cause (with regression tests)
+
+These were genuine Windows-only failures, each fixed in the product/test and
+guarded so they cannot silently return:
+
+- **PyInstaller spec used OS-native path separators.** The spec embedded
+  `str(Path)` values, which are backslash-separated on Windows. The spec now
+  emits every path with `Path.as_posix()`, and
+  `tests/test_desktop_packaging.py::test_pyinstaller_spec_collects_data_and_entry`
+  asserts the spec contains no backslash at all, so a spec generated on one
+  platform builds on the other.
+- **Windows locale (cp1252) mojibaked Arabic on read.** A workflow test read a
+  file written as UTF-8 with the platform default codec, so the Arabic round-trip
+  failed on Windows. The test now reads with `encoding="utf-8"`; the product's
+  own reader/writer already used UTF-8 and were unchanged.
+- **Optional dependency gaps surfaced as errors instead of skips.** Tests that
+  exercise python-pptx (which itself imports Pillow) or reportlab now
+  `importorskip`/`skipif` when the `documents`/`docgen` extras are absent, so a
+  bare checkout is green (skips) rather than red (errors).
+- **Frozen install could not generate documents.** The spec now bundles the
+  document/model packages' modules and data files when present, and the Windows
+  build installs the `documents` and `docgen` extras, so a packaged product has
+  real document generation rather than a runtime "not available" message.
 
 ---
 
@@ -108,13 +136,15 @@ Run in PowerShell from the repository root.
 ```powershell
 # 0. Environment
 uv venv --python 3.13
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev,documents,docgen]"
 
 # 1. Quality gates (must be green before packaging)
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
-uv run pytest                      # expect: 784 passed, 55 skipped, 0 failed
+uv run pytest                      # expect: 1023 passed, 59 skipped, 0 failed
+# On a bare checkout without the documents/docgen extras the same suite is
+# 973 passed, 109 skipped, 0 failed — the extra tests skip, they do not fail.
 
 # 2. Build the wheel (contains the desktop UI asset and the packaged
 #    migration chain arabic_agent/_migrations_local)
@@ -150,13 +180,37 @@ cannot drift:
 which expands to exactly:
 
 ```powershell
-uv pip install --system -e ".[dev,desktop,packaging]"
+uv sync --extra dev --extra desktop --extra packaging --extra documents --extra docgen
 python -m arabic_agent.desktop.packaging dist   # writes ArabicAIAgent.spec + ArabicAIAgent.iss
 pyinstaller --clean --noconfirm dist\ArabicAIAgent.spec
-dist\ArabicAIAgent\ArabicAIAgent.exe version    # smoke test
+# smoke test + full self-check of the frozen payload (exit code is the verdict)
+dist\ArabicAIAgent\ArabicAIAgent.exe version
+dist\ArabicAIAgent\ArabicAIAgent.exe selfcheck --report dist\selfcheck.json
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" dist\ArabicAIAgent.iss
 Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256
+# install the produced setup, self-check the installed app, then uninstall
+ArabicAIAgent-Setup-*.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+"%LOCALAPPDATA%\ArabicAIAgent\ArabicAIAgent.exe" selfcheck --report dist\installed-selfcheck.json
+"%LOCALAPPDATA%\ArabicAIAgent\unins000.exe" /VERYSILENT
 ```
+
+`ArabicAIAgent.exe selfcheck` is the product verifying *itself* through real
+code paths: it resolves the bundled desktop UI and both migration chains exactly
+as the frozen runtime does, writes a real Arabic PDF plus DOCX/PPTX/XLSX,
+migrates a throwaway SQLite store to head and confirms its schema, and answers a
+real authenticated request on the loopback control API. Each check is `ok`,
+`failed` or `skipped` (a missing optional extra is an honest skip, never a
+hidden pass); the exit code is non-zero iff anything `failed`. Because the
+frozen build is windowed (`console=False`) it has no stdout, so the build script
+runs it with `Start-Process -Wait` and reads the JSON `--report` file.
+
+The `documents` and `docgen` extras are installed so the frozen payload
+contains working document parsing and Arabic PDF generation; the spec collects
+their modules and data files automatically (each package only if installed, so
+the spec still generates on a bare checkout). `local_model` is deliberately not
+installed: `llama-cpp-python` has no prebuilt Windows wheel, so the installer
+ships a real cloud path and the app downloads the local runtime on demand
+rather than bundling a compiler-dependent native extension.
 
 `desktop/packaging.py` produces:
 
@@ -168,8 +222,15 @@ Get-FileHash dist\ArabicAIAgent-Setup-*.exe -Algorithm SHA256
   `migrations_local/` → `arabic_agent/_migrations_local` and `migrations/` →
   `arabic_agent/_migrations_cloud`. Every `datas` source is verified to exist
   before the spec is written, so the "Unable to find …" freeze failure cannot
-  recur. The frozen runtime resolves these via `arabic_agent.core.resources`,
-  which addresses them relative to the importable package (no cwd assumption).
+  recur. All paths in the spec are emitted in POSIX form (`Path.as_posix()`), so
+  a spec generated on Windows is byte-identical in path terms to one generated
+  on Linux and can be built on either. Optional document/model packages present
+  on the build host are collected (modules *and* data files) via
+  `collect_submodules`/`collect_data_files`, each only when importable, so a
+  frozen install can generate Arabic PDFs while a bare checkout still produces a
+  valid spec. The frozen runtime resolves these via
+  `arabic_agent.core.resources`, which addresses them relative to the importable
+  package (no cwd assumption).
 - **`ArabicAIAgent.iss`** — an Inno Setup script installing per-user into
   `{localappdata}\ArabicAIAgent` with `PrivilegesRequired=lowest` (no UAC),
   Start-menu/desktop icons, an opt-in Startup entry, and an uninstall that
@@ -310,7 +371,37 @@ were not provided.
 
 ---
 
-## 8. Reporting
+## 8. Troubleshooting: the installer reports "Access is denied"
+
+The installer is per-user (`PrivilegesRequired=lowest`, `{localappdata}`), so it
+never needs administrator rights and never writes to `Program Files`. When a
+user still sees **"Access is denied"**, it is one of the following — none of
+which is fixed by "run as administrator":
+
+1. **The app is still running.** A running `ArabicAIAgent.exe` (or a leftover
+   child runtime) keeps the installed `ArabicAIAgent.exe` and `_internal\*` files
+   open, so setup cannot overwrite them. This is the common case.
+   *Fixed in the product:* the app now takes a per-user single-instance mutex
+   and the installer declares it as Inno Setup `AppMutex`, so a second launch
+   exits and the installer **waits** for the running copy to close instead of
+   failing. If it persists, close the app (including any tray instance) from Task
+   Manager and re-run setup.
+2. **A stale tree owned by another account.** A previous system-wide install or
+   an install that was once run elevated can leave `%LOCALAPPDATA%\ArabicAIAgent`
+   with files this user cannot overwrite. Remove that folder as the owning user
+   and reinstall.
+3. **Antivirus / EDR quarantine or Controlled Folder Access.** The installer is
+   **unsigned** (see §2), so Defender/EDR may quarantine the PyInstaller
+   bootloader, or Controlled Folder Access may block writes. Allow the app, or
+   sign the binary (§2) to remove the trigger.
+4. **Mark of the Web.** An installer copied from a network share or another
+   machine carries the Mark-of-the-Web; Windows can refuse to run it from a
+   restricted location. Copy it to a local folder and, if needed, unblock it
+   (`Unblock-File`).
+
+---
+
+## 9. Reporting
 
 After running on real Windows, report the Phase 10W matrix with a real
 `PASS`/`FAIL`/`NOT VERIFIED` per gate, the installer SHA-256, the exact model

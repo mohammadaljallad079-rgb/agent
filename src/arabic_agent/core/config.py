@@ -213,6 +213,61 @@ class Settings(BaseSettings):
     #: Minimum seconds between two print jobs.
     print_min_job_interval_seconds: float = Field(default=0.0, ge=0.0)
 
+    # --- Speech / voice (Gate 4B) ------------------------------------------
+    #: Whether the local runtime may use the microphone and speaker. Off by
+    #: default: recording and playback are physical side effects and opt-in.
+    #: Even when on, every action is still permission- and approval-gated.
+    speech_enabled: bool = False
+    #: Which audio backend to use. ``auto`` picks the platform backend (ALSA on
+    #: POSIX, WinMM on Windows); an unavailable backend is reported honestly.
+    speech_audio_backend: str = "auto"
+    #: Which speech-to-text engine to use: ``auto`` (prefer local), ``local``,
+    #: ``faster-whisper`` or ``cloud``. An unavailable engine is reported
+    #: honestly rather than failing mid-run.
+    speech_stt_engine: str = "auto"
+    #: Which text-to-speech engine to use: ``auto`` (prefer local), ``local``,
+    #: ``piper`` or ``cloud``.
+    speech_tts_engine: str = "auto"
+    #: Local Whisper model size for offline transcription (e.g. small, base).
+    speech_whisper_model: str = "small"
+    #: Device for local Whisper: ``cpu`` or ``cuda``.
+    speech_whisper_device: str = "cpu"
+    #: Path to a local Piper voice model (``.onnx``). Required for offline TTS.
+    speech_piper_voice_model: str = ""
+    #: Installed STT model id from the speech catalogue (e.g.
+    #: ``faster-whisper-small``). When set and installed, the engine loads that
+    #: verified artifact; empty falls back to ``speech_whisper_model``.
+    speech_whisper_model_id: str = ""
+    #: Installed TTS model id from the speech catalogue (e.g.
+    #: ``piper-ar-jo-kareem-medium``). When set and installed, its voice file is
+    #: used; empty falls back to ``speech_piper_voice_model``.
+    speech_tts_model_id: str = ""
+    #: Directory the desktop voice surface writes recordings and replies to,
+    #: relative to the run workspace (created on demand).
+    speech_workspace_subdir: str = "voice"
+    #: Whether cloud speech engines may be used at all. Off by default: enabling
+    #: this is the operator's explicit consent for audio/text to leave the
+    #: machine, and the per-request data boundary must also allow it.
+    speech_allow_cloud: bool = False
+    #: OpenAI-compatible base URL for cloud speech (empty disables it).
+    speech_cloud_base_url: str = ""
+    #: API key for cloud speech, referenced by environment-variable *name* only
+    #: (resolved through the credential resolver); never inlined here.
+    speech_cloud_api_key_env: str = ""
+    #: Cloud speech model names.
+    speech_cloud_stt_model: str = "whisper-1"
+    speech_cloud_tts_model: str = "tts-1"
+    speech_cloud_tts_voice: str = "alloy"
+    #: Longest single recording, in seconds.
+    speech_max_recording_seconds: float = Field(default=120.0, gt=0)
+    #: Per-run caps on speech actions (anti-runaway).
+    speech_max_recordings_per_run: int = Field(default=20, ge=1)
+    speech_max_syntheses_per_run: int = Field(default=50, ge=1)
+    #: Longest text that may be synthesized, in characters.
+    speech_max_synthesis_characters: int = Field(default=5000, ge=1)
+    #: Largest audio file (bytes) accepted for transcription or playback.
+    speech_max_audio_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+
     # --- Browser / web (Phase 8) -------------------------------------------
     #: Whether the agent may use the web through the browser tools. Off by
     #: default; when on, every action is still permission- and approval-gated.

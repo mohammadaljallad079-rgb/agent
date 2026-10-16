@@ -426,7 +426,9 @@ async def test_tool_step_pauses_for_approval_then_writes(make_platform, tmp_path
         principal=_principal(), approval_id=run.pending_approval_id, approve=True
     )
     assert resolved.status is WorkflowRunStatus.COMPLETED
-    assert (tmp_path / "ws" / "out.txt").read_text() == "مرحبا"
+    # Read as UTF-8 explicitly: the default text encoding is the host locale,
+    # which is cp1252 on Windows, and would mojibake the Arabic content.
+    assert (tmp_path / "ws" / "out.txt").read_text(encoding="utf-8") == "مرحبا"
 
 
 # ---------------------------------------------------------------------------

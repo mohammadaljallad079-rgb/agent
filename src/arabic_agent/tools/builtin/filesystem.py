@@ -71,6 +71,26 @@ class WriteFileTool(Tool):
     }
     permissions = (Permission.WRITE_FILE,)
 
+    async def preview(
+        self, arguments: dict[str, Any], context: ToolContext
+    ) -> dict[str, Any] | None:
+        path = resolve_workspace_path(context.workspace_dir, arguments["path"])
+        content = str(arguments.get("content", ""))
+        append = bool(arguments.get("append"))
+        preview: dict[str, Any] = {
+            "operation": "append_file" if append else "write_file",
+            "path": arguments["path"],
+            "bytes": len(content.encode("utf-8")),
+            "characters": len(content),
+            "will_change": True,
+        }
+        if append:
+            preview["append"] = True
+        elif path.exists():
+            preview["overwrites_existing"] = True
+            preview["existing_bytes"] = path.stat().st_size
+        return preview
+
     async def run(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         path = resolve_workspace_path(context.workspace_dir, arguments["path"])
         path.parent.mkdir(parents=True, exist_ok=True)

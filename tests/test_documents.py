@@ -162,6 +162,9 @@ async def test_csv_semicolon_delimiter(tmp_path: Path) -> None:
     assert doc.metadata.extra["delimiter"] == ";"
 
 
+@pytest.mark.skipif(
+    "html" not in supported_formats(), reason="beautifulsoup4 (documents extra) not installed"
+)
 async def test_html(tmp_path: Path) -> None:
     path = tmp_path / "page.html"
     path.write_text(
@@ -227,6 +230,9 @@ async def test_xlsx_sheets_and_ranges(tmp_path: Path) -> None:
 
 @pytest.mark.skipif("pptx" not in supported_formats(), reason="python-pptx not installed")
 async def test_pptx_slides_and_provenance(tmp_path: Path) -> None:
+    # python-pptx imports Pillow itself, so a build that has pptx but not
+    # Pillow cannot run this test either; skip honestly rather than error.
+    pytest.importorskip("PIL")
     path = tmp_path / "deck.pptx"
     _make_pptx(path)
     doc = load_document(path, display_path="deck.pptx")

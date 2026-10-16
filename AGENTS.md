@@ -80,6 +80,23 @@ if it makes a demo look better.
   The ranker is lexical and dependency-free, with an Arabic-first intent lexicon
   so English tool descriptions match Arabic goals. Do not make it call out to a
   model or an embedding service.
+- **A specialist is data, never a second engine.** A specialized agent is a
+  `specialists.Specialist` value object: an id, a system directive and a
+  declared tool scope. It is resolved by the same agent loop, executor, policy
+  engine and audit trail as the general agent — do not fork `AgentRunner`, add a
+  parallel tool executor, or build a per-domain app. To add a specialist, define
+  the profile in `specialists/builtin.py` and register it in the catalogue.
+- **A specialist's scope is a ceiling, enforced in two places.** The runner
+  *advertises* only the specialist's tools intersected with what the runtime
+  actually registered; if a model names an out-of-scope tool anyway, the loop
+  *refuses* it (a `DENIED` tool result) and records `specialist.scope.denied`.
+  An empty scope is the sentinel for "the whole registry" — that is what keeps
+  the general agent general-purpose, so never treat empty as "no tools".
+- **A declared-but-absent tool degrades a specialist; it does not fail a step.**
+  Optional extras vary by runtime, so a specialist advertises the intersection
+  of its scope with the registry and readiness reports `degraded` with the
+  missing names. Report readiness honestly — never claim a specialist is ready
+  when its tools are not registered.
 
 ## 4. Coding standards
 
@@ -155,6 +172,11 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
 - Never return internal error details in production responses.
 - New secrets go in `Settings` as `SecretStr` and in `.env.example` as an empty
   placeholder — never with a value.
+- The desktop app holds a per-user single-instance mutex
+  (`desktop.shell.SINGLE_INSTANCE_MUTEX`) and the installer declares the same
+  name as Inno Setup `AppMutex`. Keep the two in lock-step: a second running
+  copy otherwise locks `ArabicAIAgent.exe` / `_internal` and makes the next
+  install fail with "Access is denied".
 
 ## 8. Localization rules
 
@@ -363,6 +385,27 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   tray/background runtime and notifications. Build with
   `scripts/build_windows.ps1` (same flow as `.github/workflows/windows.yml`). See
   ARCHITECTURE.md §18a, `docs/WINDOWS_ACCEPTANCE.md` and TODO.md.
+- Windows-readiness closeout: real Windows-only defects from the
+  `windows-latest` run are fixed at root cause with regression tests, and the
+  packaging path is now proven end to end by an actual PyInstaller freeze on a
+  Linux host (not just a generated-spec check): (1) the spec embedded
+  `str(Path)` values, so it contained backslashes on Windows — every path is now
+  emitted via `Path.as_posix()` and the packaging test asserts the spec has no
+  backslash at all, so a spec generated on one platform builds on the other;
+  (2) a workflow test read a UTF-8 file with the host locale codec (cp1252 on
+  Windows), mojibaking Arabic — it now reads `encoding="utf-8"`; (3) tests that
+  need python-pptx (which imports Pillow) or reportlab now skip when the
+  `documents`/`docgen` extras are absent instead of erroring, so a bare checkout
+  is green (skips) rather than red; (4) the `documents` extra now declares
+  `pillow`, which `python-pptx` imports directly. The spec also collects the
+  optional document/model packages (modules *and* data files, each only when
+  importable) and `scripts/build_windows.ps1` installs the `documents`+`docgen`
+  extras, so the frozen installer really carries the document pipeline
+  (verified: a local freeze bundles `reportlab` fonts and the `pptx`/`docx`/
+  `pypdf`/`bs4`/`openpyxl`/`arabic_reshaper`/`bidi` modules and runs
+  `ArabicAIAgent version` → `0.1.0`). Test baseline: **1023 passed, 59 skipped,
+  0 failed** with extras, **973 passed, 109 skipped, 0 failed** without them;
+  `ruff` clean, `mypy --strict` clean (236 source files).
 - Local-model production pass: a real 0.5B GGUF model now drives the full
   platform end to end. `ModelProvider.context_window` is set by the local
   provider from the model descriptor, and `AgentRunner` passes it to
@@ -380,6 +423,54 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   is written, the run completes and the outcome is stored to memory. Regression
   tests: `test_context_manager_sizes_to_a_small_window_not_the_configured_budget`,
   `test_context_manager_without_a_window_keeps_the_configured_budget`.
+- Specialized-agent phase (Phase 04): one shared orchestration platform now
+  hosts several **specialist profiles** instead of per-domain apps. A
+  `specialists.Specialist` is declarative data — id, Arabic-first name,
+  directive, declared tool scope, required model capabilities — resolved by the
+  same agent loop, executor, policy engine and audit trail. Built-ins:
+  `general` (the SUPER AI AGENT; empty scope = the whole registry), `coding`,
+  `education`, `video`, `voice`. The scope is a ceiling enforced twice: the
+  runner advertises only `scope ∩ registered tools` (a declared-but-absent tool
+  *degrades* rather than fails — `SpecialistCatalogue.readiness()` reports
+  `available`/`degraded`/`unavailable` honestly), and a model that names an
+  out-of-scope tool is refused with a `DENIED` result plus a
+  `specialist.scope.denied` audit event. The specialist travels end to end
+  (`RunRequest.specialist` → `RunService` → `RunRecord`/`RunRow`/`LocalRunRow` →
+  `RunExecutor` → `build_runner`); unknown ids are a `404` before a run exists.
+  Discovery: `GET /specialists` and `GET /specialists/{id}`. The desktop UI
+  exposes a selector built from the live catalogue (delivered on
+  `/desktop/bootstrap` and `GET /desktop/specialists`) showing each profile's
+  description, tool count and honest readiness, and passes the chosen id on run
+  creation; a `coding` run that tries a general-only tool such as
+  `print_document` is refused at the executor (`specialist.scope.denied`), so
+  the choice is enforced, not merely displayed. Green.
+- Speech & voice (Phase 04, GATE 4B) is implemented for a local runtime:
+  `src/arabic_agent/speech/` holds the `AudioBackend` / `TranscriptionEngine` /
+  `SynthesisEngine` seams, the governed `SpeechRuntime` (workspace-confined
+  audio, length/budget bounds, cloud-consent + data-boundary gate, metadata-only
+  audit and store) and the five speech tools registered only when
+  `speech_enabled` is set. Real engines: WinMM capture/playback and SAPI5 Arabic
+  TTS on Windows, faster-whisper/Piper locally, OpenAI-compatible in the cloud.
+  A verified model catalogue (`speech/models.py`, `speech/model_store.py`) with
+  real sizes/digests installs through the existing resumable installer. The
+  desktop voice surface (`desktop/voice.py`, `/desktop/voice*`) drives a spoken
+  turn as an ordinary durable run under the `voice` specialist, with
+  `MICROPHONE_RECORD`/`SPEAKER_PLAYBACK` decided by the real policy engine
+  (approval-gated by default, never self-approved). A voice turn is
+  **cancellable**: `speech/cancel.py` holds a thread-safe `CancelToken` the
+  blocking audio loops poll, so a stop ends a recording/playback promptly; a
+  stopped action is persisted with the `CANCELLED` state and audited as
+  `speech.cancelled` (metadata only) rather than treated as a failure, and
+  `ErrorClass.CANCELLED` aborts recovery instead of retrying. The UI stop
+  button drives this through `/desktop/voice/stop`. The "what I heard" box is
+  **editable**, so a mis-heard command is corrected before it runs. Tests:
+  `tests/test_speech.py`, `tests/test_desktop_voice.py` (including a full
+  transcribe → run → approval → real `%PDF` → speak acceptance test through the
+  real `DesktopService` facade). `ArabicAIAgent.exe selfcheck` has a
+  `voice_surface` check that proves the speech modules, cancellable loops and
+  model catalogue ship in the frozen payload. Acceptance procedure and the
+  remaining interactive (real microphone/speaker) gates:
+  `docs/VOICE_ACCEPTANCE.md`.
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
   image/video tools, social connectors, and a cloud web UI (the Arabic-first
   desktop UI exists inside the pywebview shell and now includes a printing

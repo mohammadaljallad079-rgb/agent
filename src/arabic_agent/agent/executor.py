@@ -7,6 +7,7 @@ approval beats allow), records audit events, and returns a structured outcome.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,8 @@ from ..permissions.base import Permission, PolicyDecision, Principal
 from ..permissions.policy import PolicyEngine
 from ..tools.base import Tool, ToolContext, ToolResult
 from ..tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionOutcomeKind(StrEnum):
@@ -172,6 +175,7 @@ class ToolExecutor:
             (d for d in decisions if d.effect is PermissionEffect.REQUIRES_APPROVAL), None
         )
         if approval_decision is not None:
+            preview = await self._safe_preview(tool, arguments, context)
             approval = Approval.create(
                 tenant_id=context.tenant_id,
                 user_id=context.user_id,
@@ -180,6 +184,7 @@ class ToolExecutor:
                 permission=approval_decision.permission,
                 summary=self._approval_summary(tool_name, approval_decision),
                 arguments=arguments,
+                preview=preview,
                 ttl_seconds=self._ttl,
             )
             await self._approvals.add(approval)
@@ -452,6 +457,24 @@ class ToolExecutor:
             f"Approval required to run '{tool_name}' "
             f"({decision.permission.value}): {decision.reason}"
         )
+
+    async def _safe_preview(
+        self, tool: Tool, arguments: dict[str, object], context: ToolContext
+    ) -> dict[str, object]:
+        """Run the tool's read-only preview, never letting it break the approval.
+
+        A preview is a courtesy that makes the human's decision concrete; it must
+        never be the reason an approval fails to be raised. Any error (including a
+        misbehaving tool) degrades to "no preview" and is logged.
+        """
+        try:
+            preview = await tool.preview(dict(arguments), self._merge_context(context))
+        except Exception:  # a preview must never block an approval from being raised
+            logger.warning("tool preview failed for %s", tool.name, exc_info=True)
+            return {}
+        if not preview:
+            return {}
+        return preview
 
     @staticmethod
     def required_permissions(tool: Tool) -> tuple[Permission, ...]:

@@ -115,6 +115,15 @@ def test_file_urls_blocked_unless_allowed_and_within_roots(tmp_path):
     assert "permitted roots" in escape.reason
 
 
+def test_file_url_with_a_backslash_is_refused_as_non_canonical():
+    # ``as_uri()`` never emits a backslash; a backslash in a file URL is an
+    # untrusted alias that could otherwise dodge the root check on Windows.
+    policy = UrlPolicy(allow_file_urls=True, allowed_file_roots=("/tmp",))
+    decision = policy.evaluate("file:///tmp\\..\\etc\\passwd")
+    assert not decision.allowed
+    assert "backslash" in decision.reason
+
+
 def test_require_raises_on_blocked_url():
     with pytest.raises(PermissionDeniedError):
         UrlPolicy().require("javascript:alert(1)")

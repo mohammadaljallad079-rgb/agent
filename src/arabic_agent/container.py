@@ -18,6 +18,7 @@ The agent core depends only on the store/queue ABCs, never on these choices.
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 from pathlib import Path
 
@@ -81,6 +82,7 @@ from .local.persistence.stores import (
     LocalIdempotencyGuard,
     LocalPrintJobStore,
     LocalRunStore,
+    LocalSpeechActionStore,
     LocalSyncQueue,
     LocalWorkflowRunStore,
     LocalWorkflowStore,
@@ -130,6 +132,14 @@ from .printing.runtime import PrintRuntime
 from .printing.store import InMemoryPrintJobStore, PrintJobStore
 from .runs.store import InMemoryRunStore, RunStore
 from .runtime.boundary import RuntimeProfile
+from .specialists.base import Specialist
+from .specialists.catalogue import SpecialistCatalogue, default_catalogue
+from .speech.backends import build_audio_backend
+from .speech.engines import build_synthesis_engine, build_transcription_engine
+from .speech.model_store import stt_model_dir, tts_voice_file
+from .speech.policy import SpeechPolicy
+from .speech.runtime import SpeechRuntime
+from .speech.store import InMemorySpeechStore, SpeechStore
 from .tasks.engine import TaskEngine
 from .tasks.store import InMemoryTaskStore, TaskStore
 from .tools.base import Tool
@@ -142,6 +152,7 @@ from .tools.builtin import (
     EXTENDED_FILESYSTEM_TOOLS,
     PRINT_TOOLS,
     PROJECT_TOOLS,
+    SPEECH_TOOLS,
     EchoTool,
     ListDirectoryTool,
     ReadFileTool,
@@ -216,6 +227,7 @@ class Platform:
         computer_runtime: ComputerRuntime | None = None,
         browser_runtime: BrowserRuntime | None = None,
         print_runtime: PrintRuntime | None = None,
+        speech_runtime: SpeechRuntime | None = None,
         connector_runtime: ConnectorRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
@@ -224,6 +236,7 @@ class Platform:
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
         readiness: ReadinessService | None = None,
+        specialists: SpecialistCatalogue | None = None,
     ) -> None:
         self.settings = settings
         self.gateway = gateway
@@ -257,6 +270,7 @@ class Platform:
         self.computer_runtime = computer_runtime
         self.browser_runtime = browser_runtime
         self.print_runtime = print_runtime
+        self.speech_runtime = speech_runtime
         self.connector_runtime = connector_runtime
         self.attachment_provider = attachment_provider
         self.database = database
@@ -269,6 +283,7 @@ class Platform:
         self.readiness = readiness or ReadinessService(
             [], timeout_seconds=settings.readiness_timeout_seconds
         )
+        self.specialists = specialists or default_catalogue()
 
     @property
     def durable(self) -> bool:
@@ -284,8 +299,14 @@ class Platform:
         """Whether Redis-backed coordination (queue/rate limit/idempotency) is on."""
         return self.redis_client is not None
 
-    def build_runner(self, *, locale: Locale | None = None) -> AgentRunner:
-        """Create an agent runner bound to this platform's components."""
+    def build_runner(
+        self, *, locale: Locale | None = None, specialist: Specialist | None = None
+    ) -> AgentRunner:
+        """Create an agent runner bound to this platform's components.
+
+        ``specialist`` scopes which tools the runner advertises (and accepts);
+        ``None`` is the general agent with the whole registry.
+        """
         return AgentRunner(
             gateway=self.gateway,
             tools=self.tools,
@@ -299,6 +320,7 @@ class Platform:
             settings=self.settings,
             locale=locale or self.settings.default_locale,
             attachment_provider=self.attachment_provider,
+            specialist=specialist,
         )
 
     async def aclose(self) -> None:
@@ -371,12 +393,14 @@ class Platform:
         computer_runtime: ComputerRuntime | None = None,
         browser_runtime: BrowserRuntime | None = None,
         print_runtime: PrintRuntime | None = None,
+        speech_runtime: SpeechRuntime | None = None,
         attachment_provider: AttachmentProvider | None = None,
         database: Database | None = None,
         local_database: LocalDatabase | None = None,
         redis_client: aioredis.Redis | None = None,
         metrics: Metrics | None = None,
         tracer: Tracer | None = None,
+        specialists: SpecialistCatalogue | None = None,
     ) -> Platform:
         """Construct a platform from settings.
 
@@ -613,6 +637,15 @@ class Platform:
             if is_local and settings.printing_enabled
             else []
         )
+        # Gate 4B: speech / voice. Local-only and opt-in — recording and playback
+        # are physical side effects. On a cloud build, or when speech is
+        # disabled, the tools do not exist, so the model cannot even name them.
+        # Every action is still permission- and approval-gated once they do.
+        speech_tools = (
+            [tool_cls() for tool_cls in SPEECH_TOOLS]
+            if is_local and settings.speech_enabled
+            else []
+        )
         # Phase 9: external connectors and real-world actions. Opt-in. On a
         # cloud build the tools still exist (the cloud reaches SaaS APIs), but
         # only when connectors are enabled; every write/send is approval-gated.
@@ -635,6 +668,7 @@ class Platform:
                 *computer_tools,
                 *browser_tools,
                 *print_tools,
+                *speech_tools,
                 *connector_tools,
                 *(extra_tools or []),
             ]
@@ -935,6 +969,91 @@ class Platform:
         if print_runtime is not None:
             tool_metadata["print_runtime"] = print_runtime
 
+        # --- Speech / voice (Gate 4B) ----------------------------------
+        # The audio backend, the speech-to-text/text-to-speech engines and the
+        # runtime are assembled only for a local runtime, and only when speech
+        # is enabled. A cloud runtime therefore never exposes the speech tools at
+        # all. The runtime enforces policy, a per-run budget, the data boundary
+        # and audit; it is injected into every tool context, exactly like the
+        # print and computer runtimes.
+        if is_local and speech_runtime is None and settings.speech_enabled:
+            audio_backend = build_audio_backend(platform=detect_platform())
+            speech_cloud_key = ""
+            if settings.speech_allow_cloud and settings.speech_cloud_api_key_env:
+                speech_cloud_key = os.environ.get(settings.speech_cloud_api_key_env, "")
+            # Resolve installed local speech models so the engines load the exact
+            # artifact the product downloaded and verified, rather than letting a
+            # library silently fetch something else. A model that is not installed
+            # simply resolves to empty and the engine reports itself unavailable.
+            speech_storage = settings.local_model_storage_dir or str(
+                Path(settings.local_store_dir) / "models"
+            )
+            whisper_model_path = (
+                stt_model_dir(speech_storage, settings.speech_whisper_model_id)
+                if settings.speech_whisper_model_id
+                else None
+            ) or ""
+            piper_voice_path = (
+                tts_voice_file(speech_storage, settings.speech_tts_model_id)
+                if settings.speech_tts_model_id
+                else None
+            ) or settings.speech_piper_voice_model
+            transcription_engine = build_transcription_engine(
+                engine=settings.speech_stt_engine,
+                allow_cloud=settings.speech_allow_cloud,
+                cloud_base_url=settings.speech_cloud_base_url,
+                cloud_api_key=speech_cloud_key,
+                cloud_model=settings.speech_cloud_stt_model,
+                whisper_model_size=settings.speech_whisper_model,
+                whisper_device=settings.speech_whisper_device,
+                whisper_model_path=whisper_model_path,
+            )
+            synthesis_engine = build_synthesis_engine(
+                engine=settings.speech_tts_engine,
+                allow_cloud=settings.speech_allow_cloud,
+                cloud_base_url=settings.speech_cloud_base_url,
+                cloud_api_key=speech_cloud_key,
+                cloud_model=settings.speech_cloud_tts_model,
+                cloud_voice=settings.speech_cloud_tts_voice,
+                piper_voice_model=piper_voice_path,
+            )
+            speech_policy = SpeechPolicy(
+                max_recording_seconds=settings.speech_max_recording_seconds,
+                max_recordings_per_run=settings.speech_max_recordings_per_run,
+                max_syntheses_per_run=settings.speech_max_syntheses_per_run,
+                max_synthesis_characters=settings.speech_max_synthesis_characters,
+                max_audio_bytes=settings.speech_max_audio_bytes,
+            )
+            # Action metadata is durable whenever a local SQLite store exists, so
+            # a recording or spoken reply can be reviewed after a restart. A
+            # purely in-memory build (tests without a store) falls back to the
+            # in-memory store.
+            speech_store: SpeechStore = (
+                LocalSpeechActionStore(local_database)
+                if local_database is not None
+                else InMemorySpeechStore()
+            )
+            speech_runtime = SpeechRuntime(
+                backend=audio_backend,
+                transcription=transcription_engine,
+                synthesis=synthesis_engine,
+                policy=speech_policy,
+                audit=audit,
+                boundary=boundary,
+                store=speech_store,
+                allow_cloud=settings.speech_allow_cloud,
+            )
+            logger.info(
+                "speech backend: %s (available=%s, reason=%s); stt=%s tts=%s",
+                audio_backend.name,
+                audio_backend.available,
+                audio_backend.unavailable_reason or "-",
+                transcription_engine.name,
+                synthesis_engine.name,
+            )
+        if speech_runtime is not None:
+            tool_metadata["speech_runtime"] = speech_runtime
+
         # --- External connectors (Phase 9) -----------------------------
         # Built from declarative configuration. The runtime enforces the data
         # boundary, approval binding, the idempotency ledger and verification;
@@ -1050,6 +1169,7 @@ class Platform:
             computer_runtime=computer_runtime,
             browser_runtime=browser_runtime,
             print_runtime=print_runtime,
+            speech_runtime=speech_runtime,
             connector_runtime=connector_runtime,
             attachment_provider=attachment_provider,
             database=database,
@@ -1058,6 +1178,7 @@ class Platform:
             metrics=metrics,
             tracer=tracer,
             readiness=readiness,
+            specialists=specialists,
         )
         # The engine holds a reference to its platform (it reuses the runner,
         # executor, policy engine and audit log). Break the construction cycle

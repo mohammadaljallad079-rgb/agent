@@ -117,6 +117,40 @@ class EditFileTool(_WorkspaceTool):
     permissions = (Permission.WRITE_FILE,)
     side_effecting: ClassVar[bool] = True
 
+    async def preview(
+        self, arguments: dict[str, Any], context: ToolContext
+    ) -> dict[str, Any] | None:
+        path = self._read(context, arguments["path"])
+        old = str(arguments.get("old", ""))
+        new = str(arguments.get("new", ""))
+        preview: dict[str, Any] = {
+            "operation": "edit_file",
+            "path": arguments["path"],
+            "will_change": False,
+        }
+        if not path.is_file():
+            preview["note"] = "path is not a regular file"
+            return preview
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            preview["note"] = f"could not read file: {exc}"
+            return preview
+        occurrences = text.count(old) if old else 0
+        preview["occurrences"] = occurrences
+        preview["replace_all"] = bool(arguments.get("replace_all"))
+        preview["will_change"] = occurrences > 0 and (
+            bool(arguments.get("replace_all")) or occurrences == 1
+        )
+        if occurrences == 0:
+            preview["note"] = "'old' text was not found; the edit would fail"
+        elif occurrences > 1 and not arguments.get("replace_all"):
+            preview["note"] = f"'old' is ambiguous ({occurrences} matches); the edit would fail"
+        else:
+            preview["old"] = old[:200]
+            preview["new"] = new[:200]
+        return preview
+
     async def run(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         path = self._read(context, arguments["path"])
         if not path.is_file():

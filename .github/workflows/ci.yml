@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra documents --extra docgen --extra computer
       - name: Lint
         run: uv run ruff check .
       - name: Format check
@@ -53,7 +53,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra documents --extra docgen --extra computer
       - name: Migrations apply cleanly
         env:
           AAP_DATABASE_URL: postgresql+asyncpg://aap:aap_dev_password@localhost:5432/aap_test

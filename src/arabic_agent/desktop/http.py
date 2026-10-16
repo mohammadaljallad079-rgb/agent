@@ -24,6 +24,7 @@ Endpoints (all under ``/desktop``):
 * ``POST /desktop/models/{id}/verify`` / ``POST .../health`` / ``DELETE /desktop/models/{id}``
 * ``GET  /desktop/modes`` / ``POST /desktop/modes``
 * ``GET  /desktop/tools``          — the live tool registry with permissions
+* ``GET  /desktop/specialists``    — specialist profiles with real readiness
 * ``GET  /desktop/artifacts`` / ``GET /desktop/runs/{id}/artifacts``
 * ``POST /desktop/runs/{id}/artifacts/open`` — open a generated document
 * ``GET  /desktop/workflows`` / ``GET /desktop/workflows/{id}/runs``
@@ -51,6 +52,7 @@ from ..core.errors import (
     PlatformError,
     ValidationError,
 )
+from ..specialists.base import GENERAL
 from .events import sse_format
 from .service import DesktopService
 from .version import PRODUCT_VERSION
@@ -59,6 +61,8 @@ from .version import PRODUCT_VERSION
 class StartRunRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=8000)
     workspace_dir: str | None = None
+    #: Specialist profile id; omitted means the general agent (whole registry).
+    specialist: str = Field(default=GENERAL, max_length=64)
 
 
 class ApprovalDecision(BaseModel):
@@ -82,6 +86,46 @@ class SetupModelRequest(BaseModel):
 class TestInferenceRequest(BaseModel):
     #: Optional model id; omitted means "the active model".
     model_id: str | None = Field(default=None, max_length=200)
+
+
+class VoiceStartRequest(BaseModel):
+    goal: str = Field(min_length=1, max_length=8000)
+    workspace_dir: str | None = None
+
+
+class VoiceTranscribeRequest(BaseModel):
+    #: Optional run; omitted records a preview clip under the local store.
+    run_id: str | None = Field(default=None, max_length=200)
+    seconds: float = Field(default=5.0, gt=0, le=120)
+    device_id: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceSynthesizeRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    text: str = Field(min_length=1, max_length=5000)
+    voice: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceSpeakRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    text: str = Field(min_length=1, max_length=5000)
+    voice: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+    device_id: str = Field(default="", max_length=200)
+
+
+class VoicePlayRequest(BaseModel):
+    run_id: str | None = Field(default=None, max_length=200)
+    path: str = Field(min_length=1, max_length=1000)
+    device_id: str = Field(default="", max_length=200)
+    language: str = Field(default="ar", max_length=16)
+
+
+class VoiceStopRequest(BaseModel):
+    #: ``record`` or ``play``; omitted stops both.
+    op: str | None = Field(default=None, max_length=16)
 
 
 def create_desktop_app(
@@ -134,11 +178,14 @@ def create_desktop_app(
             "browser": service.browser_view(),
             "providers": service.providers_view(),
             "tools": service.tools_view(),
+            "specialists": service.specialists_view(),
             "artifacts": await service.list_artifacts(),
             "connectors": service.connectors_view(),
             "computer": service.computer_view(),
             "printing": service.printing_view(),
             "printJobs": await service.list_print_jobs(),
+            "voice": service.voice_view(),
+            "voiceModels": service.voice_models(),
             "workflows": await service.list_workflows(),
             "memory": await service.list_memory(),
             "diagnostics": service.diagnostics(),
@@ -155,7 +202,11 @@ def create_desktop_app(
     async def start_run(
         payload: StartRunRequest, _: None = Depends(authorize)
     ) -> dict[str, object]:
-        return await service.start_run(goal=payload.goal, workspace_dir=payload.workspace_dir)
+        return await service.start_run(
+            goal=payload.goal,
+            workspace_dir=payload.workspace_dir,
+            specialist=payload.specialist,
+        )
 
     @app.get("/desktop/runs/{run_id}")
     async def get_run(run_id: str, _: None = Depends(authorize)) -> dict[str, object]:
@@ -308,6 +359,12 @@ def create_desktop_app(
     async def get_tools(_: None = Depends(authorize)) -> dict[str, object]:
         return service.tools_view()
 
+    # -- Specialists -----------------------------------------------------
+    @app.get("/desktop/specialists")
+    async def get_specialists(_: None = Depends(authorize)) -> dict[str, object]:
+        """Specialist profiles with real readiness against the running tools."""
+        return service.specialists_view()
+
     # -- Generated artifacts ---------------------------------------------
     @app.get("/desktop/artifacts")
     async def list_artifacts(_: None = Depends(authorize)) -> dict[str, object]:
@@ -352,6 +409,90 @@ def create_desktop_app(
     @app.get("/desktop/printing/jobs")
     async def get_print_jobs(limit: int = 50, _: None = Depends(authorize)) -> dict[str, object]:
         return await service.list_print_jobs(limit=limit)
+
+    # -- Voice -----------------------------------------------------------
+    @app.get("/desktop/voice")
+    async def get_voice(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.voice_view()
+
+    @app.get("/desktop/voice/devices")
+    async def get_voice_devices(_: None = Depends(authorize)) -> dict[str, object]:
+        return await service.voice_devices()
+
+    @app.get("/desktop/voice/models")
+    async def get_voice_models(_: None = Depends(authorize)) -> dict[str, object]:
+        return service.voice_models()
+
+    @app.post("/desktop/voice/models/{model_id}/install")
+    async def install_voice_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return await service.install_voice_model(model_id)
+
+    @app.delete("/desktop/voice/models/{model_id}")
+    async def remove_voice_model(model_id: str, _: None = Depends(authorize)) -> dict[str, object]:
+        return service.remove_voice_model(model_id)
+
+    @app.get("/desktop/voice/actions")
+    async def get_voice_actions(
+        run_id: str | None = None, limit: int = 50, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_actions(run_id=run_id, limit=limit)
+
+    @app.post("/desktop/voice/start")
+    async def voice_start(
+        payload: VoiceStartRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_start(goal=payload.goal, workspace_dir=payload.workspace_dir)
+
+    @app.post("/desktop/voice/transcribe")
+    async def voice_transcribe(
+        payload: VoiceTranscribeRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_transcribe(
+            run_id=payload.run_id,
+            seconds=payload.seconds,
+            device_id=payload.device_id,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/synthesize")
+    async def voice_synthesize(
+        payload: VoiceSynthesizeRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_synthesize(
+            run_id=payload.run_id,
+            text=payload.text,
+            voice=payload.voice,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/speak")
+    async def voice_speak(
+        payload: VoiceSpeakRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_speak(
+            run_id=payload.run_id,
+            text=payload.text,
+            voice=payload.voice,
+            language=payload.language,
+            device_id=payload.device_id,
+        )
+
+    @app.post("/desktop/voice/play")
+    async def voice_play(
+        payload: VoicePlayRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return await service.voice_play(
+            run_id=payload.run_id,
+            path=payload.path,
+            device_id=payload.device_id,
+            language=payload.language,
+        )
+
+    @app.post("/desktop/voice/stop")
+    async def voice_stop(
+        payload: VoiceStopRequest, _: None = Depends(authorize)
+    ) -> dict[str, object]:
+        return service.voice_stop(op=payload.op)
 
     # -- Memory ----------------------------------------------------------
     @app.get("/desktop/memory")

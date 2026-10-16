@@ -21,6 +21,7 @@ from ..core.enums import ApprovalStatus, RunStatus
 from ..core.errors import ConflictError, NotFoundError, ValidationError
 from ..permissions.base import Principal
 from ..runs.base import RunRecord
+from ..specialists.base import GENERAL
 from ..worker.queue import Job, JobType
 from ..worker.runtime import RunExecutor
 
@@ -41,6 +42,7 @@ class RunService:
         goal: str,
         workspace_dir: str | None = None,
         idempotency_key: str | None = None,
+        specialist: str = GENERAL,
     ) -> RunRecord:
         """Persist a new run and either execute it inline or enqueue a job."""
         if idempotency_key:
@@ -50,6 +52,10 @@ class RunService:
             if existing is not None:
                 return existing
 
+        # Resolve the specialist up front so an unknown id fails the request with
+        # a clear 404 rather than persisting a run that cannot execute.
+        self._platform.specialists.get(specialist)
+
         workspace = self._resolve_workspace(workspace_dir)
         record = RunRecord(
             tenant_id=principal.tenant_id,
@@ -57,6 +63,7 @@ class RunService:
             goal=goal,
             workspace_dir=workspace,
             idempotency_key=idempotency_key,
+            specialist=specialist,
             roles=tuple(sorted(principal.roles)),
             granted_permissions=(
                 tuple(sorted(p.value for p in principal.granted_permissions))

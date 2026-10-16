@@ -62,6 +62,7 @@ from .schemas import (
     RunRequest,
     RunResponse,
     RunSummary,
+    SpecialistSummary,
     TaskSummary,
     ToolSummary,
     TriggerCreatedResponse,
@@ -97,6 +98,7 @@ def _run_response(record: RunRecord) -> RunResponse:
         verified=record.verified,
         pending_approval_id=record.pending_approval_id,
         error=record.error,
+        specialist=record.specialist,
         steps_executed=record.steps_executed,
         tool_calls=record.tool_calls,
         retries=record.retries,
@@ -403,6 +405,57 @@ def create_app(
             )
         return summaries
 
+    # --- Specialists ----------------------------------------------------
+    @app.get("/specialists", response_model=list[SpecialistSummary])
+    async def list_specialists(
+        principal: Principal = Depends(principal_dep),
+    ) -> list[SpecialistSummary]:
+        """Every specialist profile, with readiness against the running tools."""
+        available = frozenset(platform.tools.names())
+        readiness = {str(row["id"]): row for row in platform.specialists.readiness(available)}
+        summaries: list[SpecialistSummary] = []
+        for specialist in platform.specialists.all():
+            row = readiness.get(specialist.id, {})
+            scope = specialist.scoped_names(available)
+            summaries.append(
+                SpecialistSummary(
+                    id=specialist.id,
+                    name_ar=specialist.name_ar,
+                    name_en=specialist.name_en,
+                    description_ar=specialist.description_ar,
+                    description_en=specialist.description_en,
+                    domains=list(specialist.domains),
+                    required_capabilities=sorted(c.value for c in specialist.required_capabilities),
+                    tool_scope=sorted(scope),
+                    status=str(row.get("status", "available")),
+                    missing_tools=[str(m) for m in row.get("missing_tools", [])],
+                )
+            )
+        return summaries
+
+    @app.get("/specialists/{specialist_id}", response_model=SpecialistSummary)
+    async def get_specialist(
+        specialist_id: str, principal: Principal = Depends(principal_dep)
+    ) -> SpecialistSummary:
+        specialist = platform.specialists.get(specialist_id)
+        available = frozenset(platform.tools.names())
+        row = next(
+            (r for r in platform.specialists.readiness(available) if r["id"] == specialist.id),
+            {},
+        )
+        return SpecialistSummary(
+            id=specialist.id,
+            name_ar=specialist.name_ar,
+            name_en=specialist.name_en,
+            description_ar=specialist.description_ar,
+            description_en=specialist.description_en,
+            domains=list(specialist.domains),
+            required_capabilities=sorted(c.value for c in specialist.required_capabilities),
+            tool_scope=sorted(specialist.scoped_names(available)),
+            status=str(row.get("status", "available")),
+            missing_tools=[str(m) for m in row.get("missing_tools", [])],
+        )
+
     # --- Runs -----------------------------------------------------------
     @app.post("/runs", response_model=RunResponse)
     async def start_run(
@@ -413,6 +466,7 @@ def create_app(
             goal=payload.goal,
             workspace_dir=payload.workspace_dir,
             idempotency_key=payload.idempotency_key,
+            specialist=payload.specialist,
         )
         return _run_response(record)
 
@@ -431,6 +485,7 @@ def create_app(
                 run_id=r.id,
                 status=r.status,
                 goal=r.goal,
+                specialist=r.specialist,
                 created_at=r.created_at.isoformat(),
                 updated_at=r.updated_at.isoformat(),
             )
@@ -500,6 +555,7 @@ def create_app(
                 created_at=a.created_at.isoformat(),
                 expires_at=a.expires_at.isoformat(),
                 arguments=dict(a.arguments),
+                preview=dict(a.preview),
             )
             for a in pending
         ]

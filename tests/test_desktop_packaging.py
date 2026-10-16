@@ -96,7 +96,9 @@ def test_pyinstaller_entry_is_a_real_script_path(tmp_path):
     assert script.parent.name == "arabic_agent"
 
     text = build_pyinstaller_spec(output=tmp_path / "ArabicAIAgent.spec").read_text("utf-8")
-    assert f"Analysis(\n    [{str(script)!r}]" in text
+    # The entry is emitted in POSIX form so a spec generated on one platform
+    # builds on another (``str(Path)`` would embed backslashes on Windows).
+    assert f"Analysis(\n    [{script.as_posix()!r}]" in text
     # The old, broken module-name form must not come back.
     assert "Analysis(['arabic_agent.__main__']" not in text
     assert "'arabic_agent.__main__'" not in text
@@ -107,7 +109,14 @@ def test_pyinstaller_spec_collects_data_and_entry(tmp_path):
 
     spec = build_pyinstaller_spec(output=tmp_path / "ArabicAIAgent.spec")
     text = spec.read_text(encoding="utf-8")
-    assert str(entry_script()) in text  # real entry script on disk
+    # The spec must reference the real entry script in the POSIX form
+    # PyInstaller expects; on Windows ``str(Path)`` would emit backslashes.
+    entry = entry_script().as_posix()
+    assert entry in text
+    assert "\\" not in entry  # a forward-slash path is the portable form
+    # The whole spec is portable: no Windows-style separators anywhere, so a
+    # spec generated on one platform builds on another.
+    assert "\\" not in text
     assert "arabic_agent/desktop/ui" in text
     assert "arabic_agent/_migrations_local" in text
     assert "console=False" in text
@@ -180,6 +189,52 @@ def test_pyinstaller_spec_declares_dynamic_hidden_imports(tmp_path):
     assert "'arabic_agent.desktop.installer'" in text
 
 
+def test_documents_extra_declares_pptx_transitive_dependencies():
+    """The pptx parser's own imports must be declared, not assumed.
+
+    Regression: ``python-pptx`` imports Pillow directly, so a resolver that did
+    not pull it transitively left the pptx parser raising ``ModuleNotFoundError:
+    No module named 'PIL'`` — seen on the Windows CI run. The extra must name it.
+    """
+    import tomllib
+
+    from arabic_agent.desktop.packaging import _repo_root
+
+    data = tomllib.loads((_repo_root() / "pyproject.toml").read_text(encoding="utf-8"))
+    documents = data["project"]["optional-dependencies"]["documents"]
+    assert any(spec.startswith("python-pptx") for spec in documents)
+    assert any(spec.startswith("pillow") for spec in documents), documents
+
+
+def test_optional_data_packages_are_collected_only_when_installed(tmp_path):
+    """Document/model data must ship when installed, and never break a bare build.
+
+    The frozen installer is only useful if the document parsers and generators
+    are actually inside it; but the spec must also generate on a checkout that
+    has none of them (the unit-test job), so each package is collected only if
+    it is importable.
+    """
+    import arabic_agent.desktop.packaging as packaging
+
+    text = packaging.build_pyinstaller_spec(output=tmp_path / "a.spec").read_text("utf-8")
+    installed = packaging.optional_data_packages()
+    if installed:
+        assert "collect_submodules(_pkg" in text
+        assert "collect_data_files(_pkg" in text
+        for name in installed:
+            assert f"{name!r}" in text
+    # A host without them must still produce a valid spec.
+    original = packaging.optional_data_packages
+    packaging.optional_data_packages = lambda: []
+    try:
+        bare = packaging.build_pyinstaller_spec(output=tmp_path / "b.spec").read_text("utf-8")
+        compile(bare, "spec", "exec")
+        assert "for _pkg in [" not in bare
+    finally:
+        packaging.optional_data_packages = original
+    compile(text, "spec", "exec")
+
+
 def test_installer_source_dir_matches_pyinstaller_output(tmp_path):
     """Regression: Inno's SourceDir must equal PyInstaller's one-folder output."""
     out = tmp_path / "ArabicAIAgent.spec"
@@ -222,6 +277,24 @@ def test_installer_script_is_per_user_and_uninstallable(tmp_path):
     assert "ArabicAIAgent-Setup-{#AppVersion}" in text
     assert "ArabicAIAgent.exe" in text
     assert "[Icons]" in text and "userstartup" in text
+
+
+def test_installer_declares_the_single_instance_app_mutex(tmp_path):
+    """The installer must wait for a running app, not fail with access denied.
+
+    Overwriting a running ``ArabicAIAgent.exe`` fails on Windows; declaring the
+    app's single-instance mutex makes Inno Setup wait for it to close instead.
+    The name must match the one the shell acquires.
+    """
+    from arabic_agent.desktop.shell import SINGLE_INSTANCE_MUTEX
+
+    iss = build_installer_script(
+        output=tmp_path / "ArabicAIAgent.iss",
+        app_version="1.2.3",
+        source_dir=tmp_path / "payload",
+    )
+    text = iss.read_text(encoding="utf-8")
+    assert f"AppMutex={SINGLE_INSTANCE_MUTEX}" in text
 
 
 def test_packaging_cli_writes_both_inputs(tmp_path):

@@ -40,6 +40,11 @@ class Approval(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     #: Localized, human-readable prompt (Arabic-first by default).
     summary: str
+    #: Structured, non-secret, read-only preview of the operation's concrete
+    #: effect, produced by the tool before it runs (e.g. the target file and the
+    #: exact text change). Empty when the tool has no preview to offer. This is
+    #: what makes the approval a real decision rather than a yes/no on a name.
+    preview: dict[str, Any] = Field(default_factory=dict)
     status: ApprovalStatus = ApprovalStatus.PENDING
     created_at: datetime = Field(default_factory=_utcnow)
     expires_at: datetime
@@ -65,6 +70,7 @@ class Approval(BaseModel):
         permission: Permission,
         summary: str,
         arguments: dict[str, Any] | None = None,
+        preview: dict[str, Any] | None = None,
         ttl_seconds: int = 3600,
     ) -> Approval:
         now = _utcnow()
@@ -76,6 +82,7 @@ class Approval(BaseModel):
             permission=permission,
             arguments=redact(arguments or {}),
             summary=summary,
+            preview=redact(preview or {}),
             created_at=now,
             expires_at=now + timedelta(seconds=ttl_seconds),
         )

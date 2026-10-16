@@ -18,6 +18,7 @@ from ..core.enums import (
     WorkflowRunStatus,
     WorkflowStatus,
 )
+from ..specialists.base import GENERAL
 
 
 class WorkflowStepRequest(BaseModel):
@@ -229,6 +230,8 @@ class RunRequest(BaseModel):
     workspace_dir: str | None = None
     #: Optional key making run creation idempotent across retries.
     idempotency_key: str | None = Field(default=None, max_length=200)
+    #: Specialist profile to run under (Phase 04). Defaults to the general agent.
+    specialist: str = Field(default=GENERAL, max_length=64)
 
 
 class RunResponse(BaseModel):
@@ -240,6 +243,7 @@ class RunResponse(BaseModel):
     verified: bool = False
     pending_approval_id: str | None = None
     error: str | None = None
+    specialist: str = GENERAL
     steps_executed: int = 0
     tool_calls: int = 0
     retries: int = 0
@@ -258,6 +262,7 @@ class RunSummary(BaseModel):
     run_id: str
     status: RunStatus
     goal: str
+    specialist: str = GENERAL
     created_at: str
     updated_at: str
 
@@ -274,6 +279,10 @@ class ApprovalSummary(BaseModel):
     created_at: str
     expires_at: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    #: Structured, read-only description of the operation's concrete effect,
+    #: shown to the approver so the decision is informed rather than a blind
+    #: yes/no on a tool name. Non-secret by construction (redacted at creation).
+    preview: dict[str, Any] = Field(default_factory=dict)
 
 
 class ApprovalDecision(BaseModel):
@@ -369,3 +378,21 @@ class ReadinessResponse(BaseModel):
 
     ready: bool
     checks: list[ReadinessProbeResponse]
+
+
+class SpecialistSummary(BaseModel):
+    """A specialist profile as exposed over the API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name_ar: str
+    name_en: str
+    description_ar: str
+    description_en: str
+    domains: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    tool_scope: list[str] = Field(default_factory=list)
+    #: ``available`` | ``degraded`` | ``unavailable`` against the running tools.
+    status: str = "available"
+    missing_tools: list[str] = Field(default_factory=list)

@@ -22,6 +22,7 @@ _DEFAULT_ACTIONS: dict[ErrorClass, RecoveryAction] = {
     ErrorClass.CONFLICT: RecoveryAction.RETRY,
     ErrorClass.RESOURCE: RecoveryAction.ABORT,
     ErrorClass.EXTERNAL: RecoveryAction.RETRY,
+    ErrorClass.CANCELLED: RecoveryAction.ABORT,
     ErrorClass.INTERNAL: RecoveryAction.ABORT,
 }
 

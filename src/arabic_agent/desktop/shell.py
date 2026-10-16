@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from ..core.resources import PACKAGE_DIR
+from ..specialists.base import GENERAL
 from .runtime_manager import DesktopRuntimeManager, RuntimeStartError
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,11 @@ logger = logging.getLogger(__name__)
 #: importable package so it is found in a source tree, an installed wheel and a
 #: PyInstaller freeze alike (see :mod:`arabic_agent.core.resources`).
 UI_DIR = PACKAGE_DIR / "desktop" / "ui"
+
+#: Name of the per-user single-instance mutex. The shell acquires it and the
+#: generated Inno Setup script declares it as ``AppMutex``, so the two must stay
+#: in lock-step (see :mod:`arabic_agent.desktop.packaging`).
+SINGLE_INSTANCE_MUTEX = "ArabicAIAgent.SingleInstance"
 
 
 class DesktopBridge:
@@ -76,6 +82,9 @@ class DesktopBridge:
     async def list_runs(self) -> Any:
         return await self._get("/desktop/runs")
 
+    async def get_run(self, run_id: str) -> Any:
+        return await self._get(f"/desktop/runs/{run_id}")
+
     async def run_timeline(self, run_id: str) -> Any:
         return await self._get(f"/desktop/runs/{run_id}/timeline")
 
@@ -110,8 +119,16 @@ class DesktopBridge:
         return await self._get("/desktop/version")
 
     # -- Write surface ---------------------------------------------------
-    async def start_run(self, goal: str, workspace_dir: str | None = None) -> Any:
-        return await self._post("/desktop/runs", {"goal": goal, "workspace_dir": workspace_dir})
+    async def start_run(
+        self,
+        goal: str,
+        workspace_dir: str | None = None,
+        specialist: str = GENERAL,
+    ) -> Any:
+        return await self._post(
+            "/desktop/runs",
+            {"goal": goal, "workspace_dir": workspace_dir, "specialist": specialist},
+        )
 
     async def cancel_run(self, run_id: str) -> Any:
         return await self._post(f"/desktop/runs/{run_id}/cancel")
@@ -156,6 +173,9 @@ class DesktopBridge:
     async def tools(self) -> Any:
         return await self._get("/desktop/tools")
 
+    async def specialists(self) -> Any:
+        return await self._get("/desktop/specialists")
+
     async def artifacts(self) -> Any:
         return await self._get("/desktop/artifacts")
 
@@ -179,6 +199,89 @@ class DesktopBridge:
 
     async def print_jobs(self) -> Any:
         return await self._get("/desktop/printing/jobs")
+
+    async def voice(self) -> Any:
+        return await self._get("/desktop/voice")
+
+    async def voice_devices(self) -> Any:
+        return await self._get("/desktop/voice/devices")
+
+    async def voice_models(self) -> Any:
+        return await self._get("/desktop/voice/models")
+
+    async def install_voice_model(self, model_id: str) -> Any:
+        return await self._post(f"/desktop/voice/models/{model_id}/install")
+
+    async def remove_voice_model(self, model_id: str) -> Any:
+        return await self._delete(f"/desktop/voice/models/{model_id}")
+
+    async def voice_actions(self, run_id: str | None = None) -> Any:
+        path = "/desktop/voice/actions" + (f"?run_id={run_id}" if run_id else "")
+        return await self._get(path)
+
+    async def voice_start(self, goal: str, workspace_dir: str | None = None) -> Any:
+        return await self._post(
+            "/desktop/voice/start", {"goal": goal, "workspace_dir": workspace_dir}
+        )
+
+    async def voice_transcribe(
+        self,
+        run_id: str | None = None,
+        seconds: float = 5.0,
+        device_id: str = "",
+        language: str = "ar",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/transcribe",
+            {
+                "run_id": run_id,
+                "seconds": seconds,
+                "device_id": device_id,
+                "language": language,
+            },
+        )
+
+    async def voice_synthesize(
+        self,
+        text: str,
+        run_id: str | None = None,
+        voice: str = "",
+        language: str = "ar",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/synthesize",
+            {"run_id": run_id, "text": text, "voice": voice, "language": language},
+        )
+
+    async def voice_speak(
+        self,
+        text: str,
+        run_id: str | None = None,
+        voice: str = "",
+        language: str = "ar",
+        device_id: str = "",
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/speak",
+            {
+                "run_id": run_id,
+                "text": text,
+                "voice": voice,
+                "language": language,
+                "device_id": device_id,
+            },
+        )
+
+    async def voice_play(
+        self, path: str, run_id: str | None = None, device_id: str = "", language: str = "ar"
+    ) -> Any:
+        return await self._post(
+            "/desktop/voice/play",
+            {"run_id": run_id, "path": path, "device_id": device_id, "language": language},
+        )
+
+    async def voice_stop(self, op: str | None = None) -> Any:
+        return await self._post("/desktop/voice/stop", {"op": op})
 
     async def memory(self) -> Any:
         return await self._get("/desktop/memory")
@@ -213,6 +316,43 @@ def _load_index_html() -> str:
     return index.read_text(encoding="utf-8")
 
 
+def _single_instance_guard() -> Any | None:
+    """Hold a per-user single-instance lock for the life of the shell.
+
+    Returns the held lock handle, or ``None`` where the platform offers no such
+    primitive (every non-Windows host, so tests and Linux are unaffected).
+
+    This is a correctness guard, not a nicety: if a second copy of the app is
+    started while the first is still running, two runtimes race for the same
+    per-user database and — on Windows — the second copy keeps the installed
+    ``ArabicAIAgent.exe`` and ``_internal`` files open, so the next installer
+    run fails with "Access is denied" when it tries to overwrite them. The
+    installer also declares the same name as an ``AppMutex``, so it waits for
+    this lock to clear instead of failing.
+
+    Implemented with ``ctypes`` (stdlib) rather than ``pywin32`` so the guard
+    works in the frozen payload without an extra dependency.
+    """
+    if not sys.platform.startswith("win"):  # pragma: no cover - POSIX
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        handle = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+        if not handle:
+            return None
+        # ERROR_ALREADY_EXISTS (183): another instance already holds the mutex.
+        if ctypes.get_last_error() == 183:
+            return None
+        return handle
+    except (OSError, AttributeError, ImportError):  # pragma: no cover - defensive
+        return None
+
+
 def launch_shell(
     *,
     manager: DesktopRuntimeManager | None = None,
@@ -233,6 +373,7 @@ def launch_shell(
 
     import asyncio
 
+    _single_instance = _single_instance_guard()
     runtime_manager = manager or DesktopRuntimeManager()
     try:
         handle = asyncio.run(runtime_manager.start())
@@ -262,4 +403,4 @@ def main() -> None:
     raise SystemExit(code)
 
 
-__all__ = ["UI_DIR", "DesktopBridge", "launch_shell", "main"]
+__all__ = ["SINGLE_INSTANCE_MUTEX", "UI_DIR", "DesktopBridge", "launch_shell", "main"]

@@ -27,6 +27,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -60,6 +61,9 @@ class RunRow(Base):
     workspace_dir: Mapped[str] = mapped_column(Text, nullable=False, default="")
     idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     parent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    specialist: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="general", server_default="general"
+    )
     roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     granted_permissions: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
@@ -174,6 +178,10 @@ class ApprovalRow(Base):
     permission: Mapped[str] = mapped_column(String(64), nullable=False)
     arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Structured, non-secret preview of the operation, shown to the approver.
+    preview: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
