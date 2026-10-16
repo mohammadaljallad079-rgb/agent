@@ -336,6 +336,8 @@ def build_installer_script(
     """
     source = source_dir if source_dir is not None else _default_source_dir(output)
     installer_out = output_dir if output_dir is not None else _default_installer_output_dir(output)
+    from .shell import SINGLE_INSTANCE_MUTEX
+
     script = f"""; Arabic AI Agent Platform — Inno Setup script (generated)
 ; Build the payload first (PyInstaller spec), then compile with ISCC.exe.
 
@@ -352,6 +354,10 @@ AppPublisher=Arabic AI Agent Platform
 DefaultDirName={{localappdata}}\\ArabicAIAgent
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+; Wait for a running copy to release the single-instance mutex (see
+; arabic_agent.desktop.shell) instead of failing to overwrite the locked
+; ArabicAIAgent.exe / _internal files with "Access is denied".
+AppMutex={SINGLE_INSTANCE_MUTEX}
 OutputBaseFilename=ArabicAIAgent-Setup-{{#AppVersion}}
 OutputDir="{installer_out}"
 Compression=lzma2

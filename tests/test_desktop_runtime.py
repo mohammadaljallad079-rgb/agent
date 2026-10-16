@@ -518,3 +518,48 @@ def test_launch_shell_without_pywebview_reports_clearly(monkeypatch: pytest.Monk
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(RuntimeStartError):
         shell.launch_shell()
+
+
+def test_single_instance_guard_is_a_noop_off_windows(monkeypatch: pytest.MonkeyPatch):
+    """The guard must never touch non-Windows hosts, where it has no primitive."""
+    import arabic_agent.desktop.shell as shell
+
+    monkeypatch.setattr(shell.sys, "platform", "linux")
+    assert shell._single_instance_guard() is None
+
+
+def test_second_instance_does_not_hold_the_single_instance_mutex(monkeypatch: pytest.MonkeyPatch):
+    """A second copy of the shell must not keep the installed files locked.
+
+    When ``CreateMutexW`` reports ERROR_ALREADY_EXISTS the guard returns ``None``
+    so the new process exits instead of racing the running one (and blocking the
+    next install). ``ctypes`` is faked because ``kernel32`` does not exist here.
+    """
+    import sys as _sys
+    import types
+
+    import arabic_agent.desktop.shell as shell
+
+    created: list[object] = []
+
+    class _FakeFunc:
+        restype: object = None
+        argtypes: object = None
+
+        def __call__(self, *_args: object) -> int:
+            created.append(True)
+            return 1
+
+    class _FakeKernel32:
+        CreateMutexW = _FakeFunc()
+
+    fake_wintypes = types.SimpleNamespace(HANDLE=int, LPVOID=object, BOOL=int, LPCWSTR=str)
+    fake_ctypes = types.ModuleType("ctypes")
+    fake_ctypes.WinDLL = lambda *a, **k: _FakeKernel32()  # type: ignore[attr-defined]
+    fake_ctypes.get_last_error = lambda: 183  # ERROR_ALREADY_EXISTS  # type: ignore[attr-defined]
+    fake_ctypes.wintypes = fake_wintypes  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(_sys, "platform", "win32")
+    monkeypatch.setitem(_sys.modules, "ctypes", fake_ctypes)
+    assert shell._single_instance_guard() is None
+    assert created, "the guard must have attempted to create the mutex"

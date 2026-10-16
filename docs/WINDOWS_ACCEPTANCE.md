@@ -371,7 +371,37 @@ were not provided.
 
 ---
 
-## 8. Reporting
+## 8. Troubleshooting: the installer reports "Access is denied"
+
+The installer is per-user (`PrivilegesRequired=lowest`, `{localappdata}`), so it
+never needs administrator rights and never writes to `Program Files`. When a
+user still sees **"Access is denied"**, it is one of the following — none of
+which is fixed by "run as administrator":
+
+1. **The app is still running.** A running `ArabicAIAgent.exe` (or a leftover
+   child runtime) keeps the installed `ArabicAIAgent.exe` and `_internal\*` files
+   open, so setup cannot overwrite them. This is the common case.
+   *Fixed in the product:* the app now takes a per-user single-instance mutex
+   and the installer declares it as Inno Setup `AppMutex`, so a second launch
+   exits and the installer **waits** for the running copy to close instead of
+   failing. If it persists, close the app (including any tray instance) from Task
+   Manager and re-run setup.
+2. **A stale tree owned by another account.** A previous system-wide install or
+   an install that was once run elevated can leave `%LOCALAPPDATA%\ArabicAIAgent`
+   with files this user cannot overwrite. Remove that folder as the owning user
+   and reinstall.
+3. **Antivirus / EDR quarantine or Controlled Folder Access.** The installer is
+   **unsigned** (see §2), so Defender/EDR may quarantine the PyInstaller
+   bootloader, or Controlled Folder Access may block writes. Allow the app, or
+   sign the binary (§2) to remove the trigger.
+4. **Mark of the Web.** An installer copied from a network share or another
+   machine carries the Mark-of-the-Web; Windows can refuse to run it from a
+   restricted location. Copy it to a local folder and, if needed, unblock it
+   (`Unblock-File`).
+
+---
+
+## 9. Reporting
 
 After running on real Windows, report the Phase 10W matrix with a real
 `PASS`/`FAIL`/`NOT VERIFIED` per gate, the installer SHA-256, the exact model

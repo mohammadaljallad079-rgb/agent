@@ -279,6 +279,24 @@ def test_installer_script_is_per_user_and_uninstallable(tmp_path):
     assert "[Icons]" in text and "userstartup" in text
 
 
+def test_installer_declares_the_single_instance_app_mutex(tmp_path):
+    """The installer must wait for a running app, not fail with access denied.
+
+    Overwriting a running ``ArabicAIAgent.exe`` fails on Windows; declaring the
+    app's single-instance mutex makes Inno Setup wait for it to close instead.
+    The name must match the one the shell acquires.
+    """
+    from arabic_agent.desktop.shell import SINGLE_INSTANCE_MUTEX
+
+    iss = build_installer_script(
+        output=tmp_path / "ArabicAIAgent.iss",
+        app_version="1.2.3",
+        source_dir=tmp_path / "payload",
+    )
+    text = iss.read_text(encoding="utf-8")
+    assert f"AppMutex={SINGLE_INSTANCE_MUTEX}" in text
+
+
 def test_packaging_cli_writes_both_inputs(tmp_path):
     import subprocess
     import sys

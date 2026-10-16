@@ -172,6 +172,11 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
 - Never return internal error details in production responses.
 - New secrets go in `Settings` as `SecretStr` and in `.env.example` as an empty
   placeholder — never with a value.
+- The desktop app holds a per-user single-instance mutex
+  (`desktop.shell.SINGLE_INSTANCE_MUTEX`) and the installer declares the same
+  name as Inno Setup `AppMutex`. Keep the two in lock-step: a second running
+  copy otherwise locks `ArabicAIAgent.exe` / `_internal` and makes the next
+  install fail with "Access is denied".
 
 ## 8. Localization rules
 
