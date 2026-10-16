@@ -51,7 +51,7 @@ def create_local_app(
 ) -> FastAPI:
     """Build the loopback-only local control app."""
     app = FastAPI(
-        title="Arabic AI Agent — Local Runtime Control",
+        title="Super AI Agent — Local Runtime Control",
         version="0.1.0",
         description="Secure loopback control surface for the local agent runtime.",
     )

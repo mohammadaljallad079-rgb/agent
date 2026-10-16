@@ -136,7 +136,7 @@ def create_desktop_app(
 ) -> FastAPI:
     """Build the desktop app, reusing the control app's ``authorize`` dependency."""
     app = FastAPI(
-        title="Arabic AI Agent — Desktop",
+        title="Super AI Agent — Desktop",
         version=PRODUCT_VERSION,
         description="Product surface for the Arabic-first agent desktop.",
     )

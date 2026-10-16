@@ -266,7 +266,7 @@ coll = COLLECT(
 )
 """
 
-    spec = f"""# Arabic AI Agent Platform — PyInstaller spec (generated)
+    spec = f"""# Super AI Agent — PyInstaller spec (generated)
 # Build: pyinstaller --clean --noconfirm {name}.spec
 # The frozen executable is {script.name} and dispatches subcommands via the
 # {PACKAGE_NAME} package.
@@ -316,7 +316,7 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 def build_installer_script(
     *,
     output: Path,
-    app_name: str = "Arabic AI Agent",
+    app_name: str = "Super AI Agent",
     app_version: str = PRODUCT_VERSION,
     exe_name: str = PRODUCT_EXE_NAME,
     source_dir: Path | None = None,
@@ -338,7 +338,7 @@ def build_installer_script(
     installer_out = output_dir if output_dir is not None else _default_installer_output_dir(output)
     from .shell import SINGLE_INSTANCE_MUTEX
 
-    script = f"""; Arabic AI Agent Platform — Inno Setup script (generated)
+    script = f"""; Super AI Agent — Inno Setup script (generated)
 ; Build the payload first (PyInstaller spec), then compile with ISCC.exe.
 
 #define AppName "{app_name}"
@@ -350,7 +350,7 @@ def build_installer_script(
 AppId={{{{8F4B6C1E-2A7D-4E3B-9C5A-1D2E3F4A5B6C}}}}
 AppName={{#AppName}}
 AppVersion={{#AppVersion}}
-AppPublisher=Arabic AI Agent Platform
+AppPublisher=SUPER AI
 DefaultDirName={{localappdata}}\\ArabicAIAgent
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest

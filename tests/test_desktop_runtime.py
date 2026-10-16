@@ -368,7 +368,11 @@ def test_ui_assets_are_arabic_first_and_isolated():
     assert 'lang="ar"' in html
     assert "Content-Security-Policy" in html
     assert "connect-src 'none'" in html
-    assert "الوكيل العربي" in html
+    assert "سوبر إي آي" in html
+    # The product was renamed to Super AI Agent / SUPER AI; the old wordmark must
+    # be gone from the page, not merely joined by the new one.
+    assert "الوكيل العربي" not in html
+    assert "SUPER AI" in html
     # The control token must never be baked into the page.
     assert TOKEN not in html
 

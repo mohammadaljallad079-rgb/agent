@@ -264,7 +264,7 @@ def create_app(
     trigger_service = platform.trigger_service
 
     app = FastAPI(
-        title="Arabic AI Agent Platform",
+        title="Super AI Agent Platform",
         version="0.2.0",
         description="Arabic-first Agent Operating Platform API.",
     )

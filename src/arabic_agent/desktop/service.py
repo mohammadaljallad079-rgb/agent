@@ -30,6 +30,7 @@ from typing import Any
 
 from ..api.service import RunService
 from ..audit.base import AuditEventType
+from ..branding import PRODUCT_ID
 from ..browser.provisioning import BrowserProvisioner
 from ..container import Platform
 from ..core.enums import (
@@ -1227,7 +1228,7 @@ class DesktopService:
         if isinstance(runtime, dict):
             runtime.pop("device_id", None)
         return {
-            "product": "Arabic AI Agent Platform",
+            "product": PRODUCT_ID,
             "export_kind": "diagnostics",
             "diagnostics": diag,
         }

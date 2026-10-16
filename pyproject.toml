@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "arabic-ai-agent-platform"
 version = "0.1.0"
-description = "Arabic-first Agent Operating Platform: runtime, tools, permissions, tasks, memory and model gateway."
+description = "Super AI Agent — an Arabic-first Agent Operating Platform: runtime, tools, permissions, tasks, memory and model gateway."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
-authors = [{ name = "Arabic AI Agent Platform" }]
+authors = [{ name = "SUPER AI" }]
 keywords = ["ai", "agent", "arabic", "rtl", "automation", "llm"]
 
 dependencies = [
