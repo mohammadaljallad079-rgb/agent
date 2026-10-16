@@ -297,6 +297,24 @@ def test_installer_declares_the_single_instance_app_mutex(tmp_path):
     assert f"AppMutex={SINGLE_INSTANCE_MUTEX}" in text
 
 
+def test_installer_uses_the_branding_source_of_truth(tmp_path):
+    """The installer's display name comes from branding, not a copied literal."""
+    from arabic_agent.branding import PRODUCT
+
+    iss = build_installer_script(
+        output=tmp_path / "ArabicAIAgent.iss",
+        app_version="1.2.3",
+        source_dir=tmp_path / "payload",
+    )
+    text = iss.read_text(encoding="utf-8")
+    assert f'#define AppName "{PRODUCT}"' in text
+    assert "AppPublisher=SUPER AI" in text
+    # The on-disk names stay put: an upgrade must land in the same directory and
+    # overwrite the same executable.
+    assert "ArabicAIAgent-Setup-{#AppVersion}" in text
+    assert "ArabicAIAgent.exe" in text
+
+
 def test_packaging_cli_writes_both_inputs(tmp_path):
     import subprocess
     import sys

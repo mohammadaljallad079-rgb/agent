@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..branding import PRODUCT
 from .version import PRODUCT_VERSION
 
 #: The product executable name produced by the Windows build.
@@ -316,7 +317,7 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 def build_installer_script(
     *,
     output: Path,
-    app_name: str = "Super AI Agent",
+    app_name: str = PRODUCT,
     app_version: str = PRODUCT_VERSION,
     exe_name: str = PRODUCT_EXE_NAME,
     source_dir: Path | None = None,
