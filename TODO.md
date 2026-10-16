@@ -212,6 +212,44 @@ and secrets are reported by kind + locator only, never by value.
       incrementally.
 - [x] File move/delete tools (`MOVE_FILE`, `DELETE_FILE`), approval-gated.
 
+## Phase 12 — Super AI Agent branding & premium command-center UI (done)
+
+The product is renamed for the public to **Super AI Agent**, under the
+**SUPER AI** brand, and the desktop page is rebuilt as an Arabic-first premium
+command center. The rename is *presentation only*: the on-disk identity (data
+directory, uninstall key, single-instance mutex, Python distribution name) is
+deliberately unchanged so an upgrade keeps a user's runs, memory and documents.
+A test pins that, because changing storage identity would be a data migration.
+
+- [x] Single source of truth for the public identity
+      (`arabic_agent/branding.py`): `PRODUCT` / `BRAND` / `PRODUCT_ID` /
+      `WINDOW_TITLE` and locale helpers (`product_name`, `brand_name`). The
+      window title, the installer manifest, the service's product field and the
+      About panel all read from it, so they cannot drift apart.
+- [x] Desktop page rebuilt (`desktop/ui/index.html`): six destinations (home,
+      agents, projects, activity, voice, settings) instead of a long tab list;
+      operational surfaces (browser, tools, connectors, computer, printing)
+      grouped under Settings → Advanced; home is a command bar with a real
+      readiness strip and a live activity feed polled from the bridge.
+- [x] Assistant presence: the character renders in every voice state and its
+      mouth is animated from the shipped viseme map (`character.visemes`), so the
+      presenter shares the character's own data — no second animation engine and
+      no random flap.
+- [x] Arabic voice surface: listen/stop/speak/run-heard, device picker,
+      speech-model install/remove and an action log, all wired to real bridge
+      methods. The spoken reply is the run's stored result, never a predicted
+      string.
+- [x] Design tokens in one block with a light-theme override; logical properties
+      keep one stylesheet correct for RTL and LTR; 360→1920 responsive. The
+      isolation CSP is unchanged (`default-src 'none'`, `connect-src 'none'`).
+- [x] Self-check now fails a stale or unbranded packaged UI, so a build that
+      shipped an older page cannot pass by the directory merely existing.
+- [x] Tests: `tests/test_branding.py` (brand constants, Arabic-first identity,
+      on-disk identity preserved, assistant presence, voice wiring, honest
+      readiness, no network origin); desktop tests updated for the rename.
+- [ ] Real Windows user acceptance of the rebranded installer (Phase 10W): the
+      published `v0.1.0-rc.1`/`rc.2` artifacts predate this work.
+
 ## Phase 4 — Integrations
 
 - [ ] ERP connector (generic adapter + at least one concrete ERP).

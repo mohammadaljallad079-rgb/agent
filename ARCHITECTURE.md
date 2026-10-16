@@ -1249,6 +1249,69 @@ otherwise. No step embeds a secret; nothing here requires network access.
 window, `desktop/shell.py`); `python -m arabic_agent.desktop.installer` installs
 and `... installer uninstall` removes.
 
+## 13e-bis. Branding & the premium command-center UI (Phase 12)
+
+The product's **public** identity is *Super AI Agent* under the *SUPER AI*
+brand. It lives in one module, `arabic_agent/branding.py` (`PRODUCT`, `BRAND`,
+`PRODUCT_ID`, `WINDOW_TITLE`, plus `product_name`/`brand_name` locale helpers),
+so the window title, the installer manifest, the service's product field and the
+About panel cannot drift apart. Arabic is authored first: the Arabic wordmark and
+product name are the defaults.
+
+The rename is **presentation only**. The on-disk identity — the data directory,
+the uninstall registry key, the single-instance mutex and the Python
+distribution name — is deliberately unchanged, so a user upgrading from an
+earlier build keeps their runs, settings, memory and generated documents.
+Changing storage identity would be a data migration and none is needed; a test
+pins this so a future rename cannot quietly strand a user's data.
+
+### The command-center page (`desktop/ui/index.html`)
+
+One page, served into the pywebview shell, still under the isolation CSP
+(`default-src 'none'`, `connect-src 'none'`) and still holding no control token.
+It is organised as six destinations rather than a flat tab list:
+
+| Destination | Purpose |
+| --- | --- |
+| Home | The command bar: type or dictate a goal, pick a specialist, see a readiness strip (local model, microphone, task count) and a live activity feed polled from the bridge. |
+| Agents | One card per specialist, plus a readiness table. Status is the service's real `available`/`degraded`/`unavailable`, and missing tools are named — a degraded agent is shown degraded, never hidden. |
+| Projects | Runs grouped by their real workspace directory, with the generated documents and the workflow list. |
+| Activity | The approval center, the selected run's audit timeline, and memory. |
+| Voice | The assistant surface (below). |
+| Settings | Tabs for appearance, voice, local model manager, providers, permissions, workspace, advanced tools and about. |
+
+Operational surfaces (browser provisioning, the tool catalogue, connectors,
+computer control, printing) are grouped under Settings → Advanced, so the
+primary navigation stays small.
+
+### The assistant character
+
+The character is the same data the API and any future presenter read:
+`speech/character.py::SUPER_AI_CHARACTER`, whose `to_public_dict()` is what the
+desktop bridge serialises to the page. The page renders the character in every
+visual state the spec declares (`idle`, `listening`, `thinking`, `speaking`,
+`waiting_approval`, `error`, `success`) and animates its mouth from the
+character's **own viseme map** — the same Arabic-aware set that keeps emphatic
+and pharyngeal consonants distinct. There is no second animation engine and no
+random flap: the presenter and the character share one definition.
+
+### The Arabic voice surface
+
+Listen, stop, speak, and run-what-I-heard, plus an audio-device picker, speech
+model install/remove and an action log — every control calls a real bridge
+method (`voice_transcribe`, `voice_stop`, `voice_speak`, `voice_start`,
+`voice_models`, `voice_devices`, `install_voice_model`, `remove_voice_model`).
+The spoken reply is the run's **stored** result (`get_run(...).result`), never a
+predicted string, and the mouth animates from that same text.
+
+### Styling
+
+Colour, spacing, radius, type and motion are design tokens in one `:root`
+block; the light theme overrides only the colour tokens, so there is one
+stylesheet, not two. Layout uses logical properties (`inset-inline`,
+`border-inline-start`), so a single stylesheet is correct in RTL and LTR. The
+page is responsive from 360 to 1920 px and honours `prefers-reduced-motion`.
+
 ## 13f. Printing (Phase 11)
 
 Printing is an outbound *physical* side effect, so it reuses the connector

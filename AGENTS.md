@@ -364,6 +364,27 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   'none'`. `recommend`/`health_check` are honest gates, not benchmarks. The
   installer `verify` step really invokes the installed entry point as a
   subprocess (never a green state from a version constant).
+- Branding & premium command-center UI (Phase 12) is implemented. The public
+  identity is **Super AI Agent** under the **SUPER AI** brand, owned by one
+  module (`arabic_agent/branding.py`: `PRODUCT`, `BRAND`, `PRODUCT_ID`,
+  `WINDOW_TITLE`, `product_name`, `brand_name`). The window title, installer
+  manifest, service product field and About panel read from it, so they cannot
+  drift. The rename is **presentation only**: the on-disk identity (data
+  directory, uninstall key, single-instance mutex, distribution name) is
+  deliberately unchanged so an upgrade keeps a user's runs, memory and
+  documents — `tests/test_branding.py` pins that. `desktop/ui/index.html` is
+  rebuilt as an Arabic-first command center: six destinations (home, agents,
+  projects, activity, voice, settings) with operational surfaces grouped under
+  Settings → Advanced; the home surface is a command bar with a real readiness
+  strip and a live activity feed. The assistant character renders in every voice
+  state and its mouth is animated from the character's own viseme map
+  (`character.visemes`) — no second animation engine, no random flap. Design
+  tokens live in one block with a light-theme override; logical properties keep
+  one stylesheet correct for RTL and LTR. The isolation CSP is unchanged
+  (`default-src 'none'`, `connect-src 'none'`). The self-check now fails a stale
+  or unbranded packaged UI instead of passing on the directory existing. The
+  published `v0.1.0-rc.1`/`rc.2` installers predate this work; real Windows
+  acceptance of the rebranded build is still outstanding (Phase 10W).
 - Phase 10W (real Windows acceptance) is **not** run: the development host is
   headless Linux (no Windows/Wine/KVM/display), so no Windows flow is claimed.
   A static audit + clean-venv install fixed two host-independent defects: the

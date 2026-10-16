@@ -90,6 +90,7 @@ class SelfCheckReport:
 # ---------------------------------------------------------------------------
 def check_bundled_resources(report: SelfCheckReport) -> None:
     """The desktop UI and both migration chains must be resolvable."""
+    from arabic_agent.branding import BRAND, PRODUCT
     from arabic_agent.core.resources import (
         PACKAGE_DIR,
         packaged_migrations_dir,
@@ -105,8 +106,23 @@ def check_bundled_resources(report: SelfCheckReport) -> None:
             missing.append(f"{name} migration chain")
     if missing:
         report.add("bundled_resources", FAILED, "; ".join(missing))
-    else:
-        report.add("bundled_resources", OK, f"resolved under {PACKAGE_DIR}")
+        return
+
+    # The shipped page must carry the product identity and the assistant
+    # surface, not a stale build of an older UI.
+    index = ui / "index.html"
+    try:
+        page = index.read_text(encoding="utf-8") if index.is_file() else ""
+    except OSError as exc:
+        report.add("bundled_resources", FAILED, f"cannot read {index}: {exc}")
+        return
+    absent = [token for token in (PRODUCT, BRAND) if token not in page]
+    if 'id="character"' not in page:
+        absent.append("assistant character surface")
+    if absent:
+        report.add("bundled_resources", FAILED, "UI is missing: " + ", ".join(absent))
+        return
+    report.add("bundled_resources", OK, f"resolved under {PACKAGE_DIR}, brand {PRODUCT}")
 
 
 def check_document_generation(report: SelfCheckReport, workdir: Path) -> None:

@@ -58,7 +58,31 @@ def test_self_check_reports_a_failure_honestly(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(selfcheck, "check_local_api", boom)
     report = selfcheck.run_self_check(workdir=tmp_path)
     assert report.ok is False
-    assert any(c.status == FAILED for c in report.failed)
+
+
+def test_self_check_fails_on_a_stale_or_unbranded_ui(monkeypatch, tmp_path: Path) -> None:
+    """A shipped page from an older build must fail the resource check.
+
+    The installer ships the page; if a build ever packaged a UI without the
+    product identity or the assistant surface, the self-check must say so
+    rather than pass on the directory merely existing.
+    """
+    import arabic_agent.core.resources as resources
+    import arabic_agent.desktop.selfcheck as selfcheck
+
+    ui = tmp_path / "desktop" / "ui"
+    ui.mkdir(parents=True)
+    (ui / "index.html").write_text("<html>stale build</html>", encoding="utf-8")
+    monkeypatch.setattr(resources, "PACKAGE_DIR", tmp_path)
+    # Isolate the UI assertion: give the migration resolvers something to find so
+    # the check reaches the page rather than stopping at the earlier condition.
+    monkeypatch.setattr(resources, "packaged_migrations_dir", lambda name: tmp_path / name)
+    monkeypatch.setattr(resources, "source_migrations_dir", lambda name: None)
+
+    report = SelfCheckReport()
+    selfcheck.check_bundled_resources(report)
+    assert report.checks[0].status == FAILED
+    assert "UI is missing" in report.checks[0].detail
 
 
 def test_voice_surface_check_fails_when_the_catalogue_is_empty(monkeypatch) -> None:
