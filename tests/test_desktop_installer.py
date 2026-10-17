@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from arabic_agent.branding import PRODUCT_ID
 from arabic_agent.desktop.installer import (
     LAUNCHER_NAME,
     InstallReport,
@@ -85,7 +86,7 @@ def test_install_writes_launcher_manifest_and_verifies(tmp_path: Path):
 
     manifest = json.loads((target / "install-manifest.json").read_text(encoding="utf-8"))
     assert manifest["version"] == PRODUCT_VERSION
-    assert manifest["product"] == "Arabic AI Agent Platform"
+    assert manifest["product"] == PRODUCT_ID
     assert manifest["python"]
 
     if is_windows():

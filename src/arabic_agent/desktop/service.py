@@ -29,7 +29,15 @@ from pathlib import Path
 from typing import Any
 
 from ..api.service import RunService
+from ..artifacts import (
+    OPENABLE_SUFFIXES,
+    launch_with_system,
+    list_artifacts,
+    resolve_artifact,
+    run_workspace,
+)
 from ..audit.base import AuditEventType
+from ..branding import PRODUCT_ID
 from ..browser.provisioning import BrowserProvisioner
 from ..container import Platform
 from ..core.enums import (
@@ -558,56 +566,9 @@ class DesktopService:
         return {"specialists": items, "default": GENERAL, "count": len(items)}
 
     # -- Generated artifacts ---------------------------------------------
-    #: Formats the UI can open in the operating system's default application.
-    _OPENABLE_SUFFIXES = frozenset({".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".txt"})
-    #: Extensions that select a document the runtime can generate.
-    _ARTIFACT_SUFFIXES = frozenset(
-        {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".md", ".markdown", ".txt", ".html", ".json"}
-    )
-
     def _run_workspace(self, record: Any) -> Path | None:
         """The run's workspace, resolved through the filesystem sandbox."""
-        from ..local.sandbox import FilesystemPolicy, FilesystemSandbox
-
-        workspace = str(getattr(record, "workspace_dir", "") or "")
-        if not workspace:
-            return None
-        sandbox = FilesystemSandbox(FilesystemPolicy.workspace_only(workspace))
-        try:
-            return sandbox.resolve_for_read(".")
-        except Exception:
-            return None
-
-    def _list_artifacts(self, root: Path, *, run_id: str) -> list[dict[str, Any]]:
-        """Real generated files under a run workspace, newest first."""
-        artifacts: list[dict[str, Any]] = []
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            suffix = path.suffix.lower()
-            if suffix not in self._ARTIFACT_SUFFIXES:
-                continue
-            try:
-                stat = path.stat()
-            except OSError:  # a file that vanished between glob and stat
-                continue
-            try:
-                relative = path.relative_to(root).as_posix()
-            except ValueError:
-                continue
-            artifacts.append(
-                {
-                    "name": path.name,
-                    "path": relative,
-                    "format": suffix.lstrip("."),
-                    "bytes": stat.st_size,
-                    "modified_at": stat.st_mtime,
-                    "openable": suffix in self._OPENABLE_SUFFIXES,
-                    "run_id": run_id,
-                }
-            )
-        artifacts.sort(key=lambda a: float(a["modified_at"]), reverse=True)
-        return artifacts
+        return run_workspace(str(getattr(record, "workspace_dir", "") or ""))
 
     async def run_artifacts(self, run_id: str) -> dict[str, object]:
         """Documents a run generated into its workspace.
@@ -620,7 +581,7 @@ class DesktopService:
         root = self._run_workspace(record)
         if root is None or not root.is_dir():
             return {"run_id": run_id, "artifacts": [], "count": 0}
-        artifacts = self._list_artifacts(root, run_id=run_id)
+        artifacts = list_artifacts(root, run_id=run_id)
         return {"run_id": run_id, "artifacts": artifacts, "count": len(artifacts)}
 
     async def list_artifacts(self, *, limit: int = 20) -> dict[str, object]:
@@ -631,7 +592,7 @@ class DesktopService:
             root = self._run_workspace(record)
             if root is None or not root.is_dir():
                 continue
-            collected.extend(self._list_artifacts(root, run_id=record.id))
+            collected.extend(list_artifacts(root, run_id=record.id))
         collected.sort(key=lambda a: float(str(a["modified_at"])), reverse=True)
         return {"artifacts": collected, "count": len(collected)}
 
@@ -645,18 +606,8 @@ class DesktopService:
         launcher is reported honestly rather than pretending the file opened.
         """
         record = await self._runs.get(run_id, tenant_id=self._principal.tenant_id)
-        root = self._run_workspace(record)
-        if root is None or not root.is_dir():
-            raise NotFoundError("run workspace is not available", details={"run_id": run_id})
-        from ..local.sandbox import FilesystemPolicy, FilesystemSandbox
-
-        sandbox = FilesystemSandbox(FilesystemPolicy.workspace_only(str(root)))
-        resolved = sandbox.resolve_for_read(relative_path)
-        if not resolved.is_file():
-            raise NotFoundError(
-                "artifact does not exist", details={"run_id": run_id, "path": relative_path}
-            )
-        if resolved.suffix.lower() not in self._OPENABLE_SUFFIXES:
+        resolved = resolve_artifact(str(getattr(record, "workspace_dir", "") or ""), relative_path)
+        if resolved.suffix.lower() not in OPENABLE_SUFFIXES:
             raise ValidationError(
                 "this artifact type cannot be opened in a system application",
                 details={"path": relative_path},
@@ -669,7 +620,7 @@ class DesktopService:
             message="generated artifact opened in the system application",
             data={"path": relative_path},
         )
-        opened = _launch_with_system(resolved)
+        opened = launch_with_system(resolved)
         return {"run_id": run_id, "path": relative_path, "opened": opened}
 
     # -- Workflows -------------------------------------------------------
@@ -1227,7 +1178,7 @@ class DesktopService:
         if isinstance(runtime, dict):
             runtime.pop("device_id", None)
         return {
-            "product": "Arabic AI Agent Platform",
+            "product": PRODUCT_ID,
             "export_kind": "diagnostics",
             "diagnostics": diag,
         }
@@ -1253,42 +1204,6 @@ class DesktopService:
             "updated_at": record.updated_at.isoformat(),
             "finished_at": record.finished_at.isoformat() if record.finished_at else None,
         }
-
-
-def _launch_with_system(path: Path) -> bool:
-    """Open ``path`` in the OS default application. Returns whether it launched.
-
-    The desktop UI runs inside a native webview with no network origin, so it
-    cannot open a file itself; this is the one place a generated artifact is
-    handed to the operating system. A missing launcher is reported as ``False``
-    rather than raising, so the UI can say so honestly.
-    """
-    import subprocess
-    import sys
-
-    try:
-        if sys.platform.startswith("win"):
-            import os
-
-            # ``os.startfile`` exists only on Windows; resolving it via
-            # ``getattr`` keeps the behaviour identical without a platform-
-            # specific ignore that POSIX mypy would flag as unused.
-            startfile = getattr(os, "startfile", None)
-            if startfile is None:
-                return False
-            startfile(str(path))
-            return True
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        subprocess.Popen(  # noqa: S603 - fixed opener, no shell, sandbox-resolved path
-            [opener, str(path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return True
-    except (OSError, subprocess.SubprocessError):
-        logger.warning("could not open artifact in a system application", exc_info=True)
-        return False
 
 
 def build_model_manager(platform: Platform) -> ModelManager:

@@ -28,6 +28,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from ..branding import PRODUCT_ID
 from .version import PRODUCT_VERSION
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,10 @@ logger = logging.getLogger(__name__)
 #: Registry key (per-user) used to register the uninstall entry on Windows.
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\ArabicAIAgent"
 #: The launcher filename created in the install directory.
-LAUNCHER_NAME = "Arabic AI Agent.cmd"
+LAUNCHER_NAME = "Super AI Agent.cmd"
+#: Launcher names from earlier builds. Uninstall removes them too, so renaming
+#: the product does not leave an orphaned launcher behind on an upgraded machine.
+LEGACY_LAUNCHER_NAMES: tuple[str, ...] = ("Arabic AI Agent.cmd",)
 
 
 class InstallError(RuntimeError):
@@ -80,7 +84,7 @@ def _launcher_script(*, python: str, package: str = "arabic_agent.desktop.shell"
     Written as a ``.cmd`` for Windows; on POSIX a ``.sh`` twin is produced for
     local verification. The launcher never embeds a token or a secret.
     """
-    return f'@echo off\r\nrem Arabic AI Agent desktop launcher\r\n"{python}" -m {package}\r\n'
+    return f'@echo off\r\nrem Super AI Agent desktop launcher\r\n"{python}" -m {package}\r\n'
 
 
 def _posix_launcher(*, python: str, package: str = "arabic_agent.desktop.shell") -> str:
@@ -103,7 +107,7 @@ def write_manifest(install_dir: Path, *, extra: dict[str, object] | None = None)
     """Write an install manifest (version + launcher + interpreter)."""
     install_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, object] = {
-        "product": "Arabic AI Agent Platform",
+        "product": PRODUCT_ID,
         "version": PRODUCT_VERSION,
         "python": sys.executable,
         "launcher": LAUNCHER_NAME if is_windows() else "arabic-ai-agent.sh",
@@ -209,7 +213,7 @@ def _register_uninstall(target: Path) -> tuple[str, str, str]:
     try:
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
         with key:
-            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "Arabic AI Agent")
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "Super AI Agent")
             winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, PRODUCT_VERSION)
             winreg.SetValueEx(key, "InstallLocation", 0, winreg.REG_SZ, str(target))
             winreg.SetValueEx(
@@ -244,7 +248,13 @@ def uninstall(*, install_dir: Path | None = None, keep_data: bool = True) -> Ins
     target = install_dir or default_install_dir()
     report = InstallReport(ok=True, install_dir=str(target))
 
-    for name in (LAUNCHER_NAME, "arabic-ai-agent.sh", "install-manifest.json"):
+    removable = (
+        LAUNCHER_NAME,
+        *LEGACY_LAUNCHER_NAMES,
+        "arabic-ai-agent.sh",
+        "install-manifest.json",
+    )
+    for name in removable:
         path = target / name
         if path.exists():
             try:

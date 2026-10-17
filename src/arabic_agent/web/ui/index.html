@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Super AI Agent — SUPER AI</title>
+  <style>
+    /* ============================================================
+       SUPER AI — Command Center (browser-served)
+       Same design tokens as the desktop shell so the two surfaces
+       read as one product. Logical properties keep this one
+       stylesheet correct for both RTL (default) and LTR.
+       ============================================================ */
+    :root {
+      --brand: #0f766e; --brand-strong: #0b5c56; --brand-soft: rgba(15,118,110,.14);
+      --accent: #f59e0b; --accent-soft: rgba(245,158,11,.16);
+      --ok: #22c55e; --warn: #f59e0b; --danger: #ef4444; --info: #38bdf8;
+      --bg: #0b1220; --bg-2: #0e1626; --panel: #131c2e; --panel-2: #1a2438;
+      --line: #24314a; --line-soft: #1c2740;
+      --fg: #e9edf5; --muted: #93a1ba; --muted-2: #6b7a95;
+      --shadow: 0 10px 30px rgba(0,0,0,.35); --shadow-sm: 0 2px 10px rgba(0,0,0,.25);
+      --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+      --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
+      --t-fast: 120ms ease; --t: 220ms ease;
+      --font: "Segoe UI", Tahoma, "Noto Naskh Arabic", "Noto Sans Arabic", system-ui, sans-serif;
+      --fs-xs: 11px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
+      --rail: 244px;
+    }
+    [data-theme="light"] {
+      --bg: #f6f7f9; --bg-2: #eef1f5; --panel: #ffffff; --panel-2: #f3f5f8;
+      --line: #dde3ec; --line-soft: #e8ecf2; --fg: #101828; --muted: #5b6b83;
+      --muted-2: #8494a9; --brand-soft: rgba(15,118,110,.10); --accent-soft: rgba(245,158,11,.14);
+      --shadow: 0 10px 30px rgba(16,24,40,.10); --shadow-sm: 0 2px 10px rgba(16,24,40,.08);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { background: var(--bg); color: var(--fg); font-family: var(--font);
+      font-size: var(--fs-md); line-height: 1.55; display: grid;
+      grid-template-columns: var(--rail) 1fr; grid-template-rows: 60px 1fr; height: 100vh; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+    header { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s-3);
+      padding: 0 var(--s-4); background: linear-gradient(180deg, var(--panel), var(--bg-2));
+      border-bottom: 1px solid var(--line); }
+    .wordmark { display: flex; align-items: center; gap: var(--s-2); font-weight: 800; letter-spacing: .4px; }
+    .wordmark .dot { width: 10px; height: 10px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, var(--accent), var(--brand)); }
+    .wordmark .brand { font-size: var(--fs-lg); }
+    .wordmark .sub { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+    header .spacer { flex: 1; }
+    .badge { font-size: var(--fs-xs); padding: 3px 9px; border-radius: var(--r-pill);
+      background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+    .badge.ok { color: var(--ok); border-color: rgba(34,197,94,.35); }
+    .badge.warn { color: var(--warn); border-color: rgba(245,158,11,.35); }
+    .badge.danger { color: var(--danger); border-color: rgba(239,68,68,.35); }
+    .iconbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+      border-radius: var(--r-sm); padding: 7px 10px; cursor: pointer; font: inherit;
+      font-size: var(--fs-sm); transition: background var(--t-fast), border-color var(--t-fast); }
+    .iconbtn:hover { background: var(--panel); border-color: var(--muted-2); }
+    .iconbtn.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+    .iconbtn.primary:hover { background: var(--brand-strong); }
+    .iconbtn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .iconbtn:disabled { opacity: .5; cursor: not-allowed; }
+
+    nav { background: var(--panel); border-inline-end: 1px solid var(--line);
+      padding: var(--s-3) var(--s-2); display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+    nav .navlabel { font-size: var(--fs-xs); color: var(--muted-2); padding: var(--s-3) var(--s-3) var(--s-1);
+      text-transform: uppercase; letter-spacing: .6px; font-weight: 700; }
+    nav button { display: flex; align-items: center; gap: var(--s-3); text-align: start;
+      background: transparent; color: var(--fg); border: 0; padding: 10px 12px;
+      border-radius: var(--r-sm); cursor: pointer; font: inherit; font-size: var(--fs-md);
+      transition: background var(--t-fast), color var(--t-fast); }
+    nav button:hover { background: var(--panel-2); }
+    nav button.active { background: var(--brand-soft); font-weight: 600; box-shadow: inset 3px 0 0 var(--brand); }
+    [dir="rtl"] nav button.active { box-shadow: inset -3px 0 0 var(--brand); }
+
+    main { overflow: auto; padding: var(--s-5); }
+    section { display: none; max-width: 1100px; margin: 0 auto; }
+    section.active { display: block; }
+    h1 { font-size: var(--fs-2xl); margin: 0 0 var(--s-1); }
+    h2 { font-size: var(--fs-xl); margin: var(--s-5) 0 var(--s-3); }
+    .lede { color: var(--muted); margin: 0 0 var(--s-5); }
+
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
+      padding: var(--s-4); box-shadow: var(--shadow-sm); }
+    .grid { display: grid; gap: var(--s-3); grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .kpi .k { color: var(--muted); font-size: var(--fs-sm); }
+    .kpi .v { font-size: var(--fs-xl); font-weight: 700; margin-top: var(--s-1); }
+
+    form.composer { display: grid; gap: var(--s-3); }
+    label { font-size: var(--fs-sm); color: var(--muted); display: block; margin-bottom: var(--s-1); }
+    input[type=text], input[type=password], select, textarea {
+      width: 100%; background: var(--bg-2); color: var(--fg); border: 1px solid var(--line);
+      border-radius: var(--r-sm); padding: 10px 12px; font: inherit; font-size: var(--fs-md); }
+    textarea { min-height: 96px; resize: vertical; }
+    .row { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; }
+
+    table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    th, td { text-align: start; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .5px; }
+    tbody tr:hover { background: var(--panel-2); }
+    .empty { color: var(--muted-2); padding: var(--s-4); text-align: center; }
+    .pill { font-size: var(--fs-xs); padding: 2px 8px; border-radius: var(--r-pill);
+      background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+    .pill.ok { color: var(--ok); border-color: rgba(34,197,94,.35); }
+    .pill.warn { color: var(--warn); border-color: rgba(245,158,11,.35); }
+    .pill.danger { color: var(--danger); border-color: rgba(239,68,68,.35); }
+    .pill.info { color: var(--info); border-color: rgba(56,189,248,.35); }
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: var(--fs-sm); }
+    .actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+    .timeline { display: flex; flex-direction: column; gap: 0; }
+    .event { display: grid; grid-template-columns: 150px 1fr; gap: var(--s-3); padding: 7px 0;
+      border-bottom: 1px dashed var(--line-soft); font-size: var(--fs-sm); }
+    .event .when { color: var(--muted-2); font-size: var(--fs-xs); }
+    .preview { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3); margin-top: var(--s-2); font-size: var(--fs-sm); }
+
+    #toast { position: fixed; inset-block-end: var(--s-5); inset-inline-start: 50%;
+      transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line);
+      color: var(--fg); padding: 10px 16px; border-radius: var(--r-pill); box-shadow: var(--shadow);
+      opacity: 0; pointer-events: none; transition: opacity var(--t); z-index: 50; max-width: 90vw; }
+    [dir="rtl"] #toast { transform: translateX(50%); }
+    #toast.show { opacity: 1; }
+    .login { max-width: 460px; margin: 10vh auto 0; }
+    .hidden { display: none !important; }
+    @media (max-width: 780px) {
+      body { grid-template-columns: 1fr; grid-template-rows: 60px auto 1fr; }
+      nav { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); }
+      nav .navlabel { display: none; }
+      .event { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wordmark">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="brand" id="brand">سوبر إي آي</span>
+      <span class="sub" id="brandSub">SUPER AI AGENT</span>
+    </div>
+    <span class="spacer"></span>
+    <span class="badge" id="envBadge">—</span>
+    <span class="badge" id="runtimeBadge">—</span>
+    <span class="badge" id="modelBadge">—</span>
+    <button class="iconbtn" id="themeBtn" type="button" title="المظهر">◐</button>
+    <button class="iconbtn" id="langBtn" type="button" title="اللغة">EN</button>
+    <button class="iconbtn" id="logoutBtn" type="button">خروج</button>
+  </header>
+
+  <nav aria-label="التنقل">
+    <div class="navlabel" id="navLabel">القائمة</div>
+    <button type="button" data-view="home" class="active">⌂ <span id="navHome">لوحة القيادة</span></button>
+    <button type="button" data-view="new">＋ <span id="navNew">مهمة جديدة</span></button>
+    <button type="button" data-view="runs">☰ <span id="navRuns">المهام</span></button>
+    <button type="button" data-view="approvals">✔ <span id="navApprovals">الموافقات</span></button>
+    <button type="button" data-view="artifacts">⬇ <span id="navArtifacts">المستندات</span></button>
+    <button type="button" data-view="models">⚙ <span id="navModels">النماذج</span></button>
+    <button type="button" data-view="settings">⚒ <span id="navSettings">الإعدادات</span></button>
+  </nav>
+
+  <main>
+    <!-- Login / key entry -->
+    <section id="view-login" class="active">
+      <div class="card login">
+        <h1 id="loginTitle">تسجيل الدخول</h1>
+        <p class="lede" id="loginLede">أدخل مفتاح الواجهة البرمجية للوصول إلى مساحة عملك.</p>
+        <form class="composer" id="loginForm">
+          <div>
+            <label for="apiKey" id="keyLabel">مفتاح الواجهة البرمجية</label>
+            <input type="password" id="apiKey" autocomplete="off" spellcheck="false" />
+          </div>
+          <button class="iconbtn primary" type="submit" id="loginBtn">دخول</button>
+          <p class="muted" id="loginHint" style="margin:0"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- Dashboard -->
+    <section id="view-home">
+      <h1 id="homeTitle">لوحة القيادة</h1>
+      <p class="lede" id="homeLede">حالة النظام الحقيقية من الواجهة البرمجية.</p>
+      <div class="grid" id="kpis"></div>
+      <h2 id="recentTitle">أحدث المهام</h2>
+      <div class="card"><div id="recentRuns"></div></div>
+    </section>
+
+    <!-- New task -->
+    <section id="view-new">
+      <h1 id="newTitle">مهمة جديدة</h1>
+      <p class="lede" id="newLede">اكتب هدفك بالعربية. سيتولى الوكيل التخطيط والتنفيذ والتحقق.</p>
+      <form class="card composer" id="runForm">
+        <div>
+          <label for="goal" id="goalLabel">الهدف</label>
+          <textarea id="goal" required placeholder="مثال: أنشئ تقريرًا بصيغة PDF عن خطة العمل"></textarea>
+        </div>
+        <div class="row">
+          <div style="flex:1;min-width:220px">
+            <label for="specialist" id="specialistLabel">الوكيل المتخصص</label>
+            <select id="specialist"></select>
+          </div>
+          <div style="flex:1;min-width:220px">
+            <label for="workspace" id="workspaceLabel">مجلد العمل (اختياري)</label>
+            <input type="text" id="workspace" placeholder="/workspace/run" />
+          </div>
+        </div>
+        <div class="row">
+          <button class="iconbtn primary" type="submit" id="runBtn">ابدأ المهمة</button>
+          <span class="muted" id="runStatus"></span>
+        </div>
+      </form>
+      <div class="card hidden" id="runResultCard" style="margin-top:16px">
+        <div id="runResult"></div>
+      </div>
+    </section>
+
+    <!-- Runs -->
+    <section id="view-runs">
+      <h1 id="runsTitle">المهام</h1>
+      <p class="lede" id="runsLede">كل مهمة في مساحة عملك.</p>
+      <div class="card"><div id="runsList"></div></div>
+    </section>
+
+    <!-- Approvals -->
+    <section id="view-approvals">
+      <h1 id="approvalsTitle">مركز الموافقات</h1>
+      <p class="lede" id="approvalsLede">العمليات الحساسة تتوقف حتى تقرر. راجع الأثر الفعلي قبل الموافقة.</p>
+      <div class="card"><div id="approvalsList"></div></div>
+    </section>
+
+    <!-- Artifacts -->
+    <section id="view-artifacts">
+      <h1 id="artifactsTitle">المستندات</h1>
+      <p class="lede" id="artifactsLede">الملفات الحقيقية التي أنشأتها المهام في مساحات عملها.</p>
+      <div class="card"><div id="artifactsList"></div></div>
+    </section>
+
+    <!-- Models -->
+    <section id="view-models">
+      <h1 id="modelsTitle">النماذج</h1>
+      <p class="lede" id="modelsLede">مزوّدو النماذج المسجّلون وحالة جاهزيتهم الفعلية.</p>
+      <div class="card"><div id="modelsList"></div></div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings">
+      <h1 id="settingsTitle">الإعدادات</h1>
+      <div class="card" id="settingsBody"></div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+  "use strict";
+  // ---- i18n (Arabic first) ------------------------------------------------
+  const I18N = {
+    ar: {
+      navHome: "لوحة القيادة", navNew: "مهمة جديدة", navRuns: "المهام",
+      navApprovals: "الموافقات", navArtifacts: "المستندات", navModels: "النماذج",
+      navSettings: "الإعدادات", navLabel: "القائمة",
+      loginTitle: "تسجيل الدخول",
+      loginLede: "أدخل مفتاح الواجهة البرمجية للوصول إلى مساحة عملك.",
+      keyLabel: "مفتاح الواجهة البرمجية", loginBtn: "دخول",
+      homeTitle: "لوحة القيادة", homeLede: "حالة النظام الحقيقية من الواجهة البرمجية.",
+      newTitle: "مهمة جديدة",
+      newLede: "اكتب هدفك بالعربية. سيتولى الوكيل التخطيط والتنفيذ والتحقق.",
+      goalLabel: "الهدف", specialistLabel: "الوكيل المتخصص",
+      workspaceLabel: "مجلد العمل (اختياري)", runBtn: "ابدأ المهمة",
+      runsTitle: "المهام", runsLede: "كل مهمة في مساحة عملك.",
+      approvalsTitle: "مركز الموافقات",
+      approvalsLede: "العمليات الحساسة تتوقف حتى تقرر. راجع الأثر الفعلي قبل الموافقة.",
+      artifactsTitle: "المستندات",
+      artifactsLede: "الملفات الحقيقية التي أنشأتها المهام في مساحات عملها.",
+      modelsTitle: "النماذج", modelsLede: "مزوّدو النماذج المسجّلون وحالة جاهزيتهم الفعلية.",
+      settingsTitle: "الإعدادات", recentTitle: "أحدث المهام",
+      logout: "خروج", approve: "موافقة", deny: "رفض", open: "فتح", download: "تنزيل",
+      refresh: "تحديث", viewPlan: "الخطة", viewAudit: "السجل", back: "رجوع",
+      noData: "لا توجد بيانات بعد.", loading: "جارٍ التحميل…",
+      colGoal: "الهدف", colStatus: "الحالة", colSpecialist: "الوكيل",
+      colUpdated: "آخر تحديث", colActions: "إجراءات",
+      colTool: "الأداة", colSummary: "الوصف", colCreated: "أُنشئت",
+      colName: "الاسم", colFormat: "الصيغة", colSize: "الحجم", colRun: "المهمة",
+      colProvider: "المزوّد", colUsable: "الجاهزية", colDetail: "التفاصيل",
+      kTools: "الأدوات", kSpecialists: "الوكلاء", kPending: "بانتظار الموافقة",
+      kRuns: "المهام", kArtifacts: "المستندات",
+      toastKeySaved: "تم حفظ المفتاح", toastBadKey: "مفتاح غير صالح",
+      toastStarted: "بدأت المهمة", toastApproved: "تمت الموافقة", toastDenied: "تم الرفض",
+      toastError: "تعذّر إتمام العملية: ", toastDownloaded: "بدأ التنزيل",
+      status: { pending:"بالانتظار", planning:"تخطيط", running:"قيد التنفيذ",
+        waiting_approval:"بانتظار الموافقة", retrying:"إعادة محاولة",
+        completed:"مكتملة", failed:"فاشلة", cancelled:"ملغاة" },
+    },
+    en: {
+      navHome: "Dashboard", navNew: "New task", navRuns: "Tasks",
+      navApprovals: "Approvals", navArtifacts: "Documents", navModels: "Models",
+      navSettings: "Settings", navLabel: "Menu",
+      loginTitle: "Sign in",
+      loginLede: "Enter your API key to reach your workspace.",
+      keyLabel: "API key", loginBtn: "Sign in",
+      homeTitle: "Dashboard", homeLede: "Real platform state from the API.",
+      newTitle: "New task",
+      newLede: "Describe your goal. The agent plans, executes and verifies.",
+      goalLabel: "Goal", specialistLabel: "Specialist",
+      workspaceLabel: "Workspace (optional)", runBtn: "Start task",
+      runsTitle: "Tasks", runsLede: "Every task in your workspace.",
+      approvalsTitle: "Approval center",
+      approvalsLede: "Sensitive operations pause for your decision. Review the real effect first.",
+      artifactsTitle: "Documents",
+      artifactsLede: "Real files tasks generated in their workspaces.",
+      modelsTitle: "Models", modelsLede: "Registered providers and their real readiness.",
+      settingsTitle: "Settings", recentTitle: "Recent tasks",
+      logout: "Sign out", approve: "Approve", deny: "Deny", open: "Open", download: "Download",
+      refresh: "Refresh", viewPlan: "Plan", viewAudit: "Audit", back: "Back",
+      noData: "Nothing yet.", loading: "Loading…",
+      colGoal: "Goal", colStatus: "Status", colSpecialist: "Specialist",
+      colUpdated: "Updated", colActions: "Actions",
+      colTool: "Tool", colSummary: "Summary", colCreated: "Created",
+      colName: "Name", colFormat: "Format", colSize: "Size", colRun: "Task",
+      colProvider: "Provider", colUsable: "Ready", colDetail: "Detail",
+      kTools: "Tools", kSpecialists: "Specialists", kPending: "Pending approvals",
+      kRuns: "Tasks", kArtifacts: "Documents",
+      toastKeySaved: "Key saved", toastBadKey: "Invalid key",
+      toastStarted: "Task started", toastApproved: "Approved", toastDenied: "Denied",
+      toastError: "Could not complete: ", toastDownloaded: "Download started",
+      status: { pending:"Pending", planning:"Planning", running:"Running",
+        waiting_approval:"Waiting approval", retrying:"Retrying",
+        completed:"Completed", failed:"Failed", cancelled:"Cancelled" },
+    },
+  };
+  let LANG = localStorage.getItem("aap_lang") || "ar";
+  const t = (k) => (I18N[LANG][k] !== undefined ? I18N[LANG][k] : k);
+  const statusLabel = (s) => (I18N[LANG].status[s] || s);
+  const dir = () => (LANG === "ar" ? "rtl" : "ltr");
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, text) => { const n = document.createElement(tag);
+    if (text !== undefined) n.textContent = String(text); return n; };
+
+  // ---- API client (real HTTP, same origin) --------------------------------
+  const KEY_STORE = "aap_api_key";
+  let API_KEY = localStorage.getItem(KEY_STORE) || "";
+
+  async function api(path, options) {
+    const opts = Object.assign({ headers: {} }, options || {});
+    if (API_KEY) opts.headers["X-API-Key"] = API_KEY;
+    if (opts.body !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(opts.body);
+    }
+    const response = await fetch(path, opts);
+    if (response.status === 401) { showLogin(); throw new Error("unauthorized"); }
+    if (!response.ok) {
+      let detail = response.status + " " + response.statusText;
+      try { const body = await response.json(); if (body && body.detail) detail = body.detail; }
+      catch (e) { /* non-JSON error body */ }
+      throw new Error(detail);
+    }
+    const type = response.headers.get("content-type") || "";
+    return type.includes("application/json") ? response.json() : response;
+  }
+
+  // ---- chrome -------------------------------------------------------------
+  function applyI18n() {
+    document.documentElement.lang = LANG;
+    document.documentElement.dir = dir();
+    $("langBtn").textContent = LANG === "ar" ? "EN" : "ع";
+    $("brand").textContent = LANG === "ar" ? "سوبر إي آي" : "SUPER AI";
+    $("brandSub").textContent = LANG === "ar" ? "SUPER AI AGENT" : "سوبر إي آي";
+    $("logoutBtn").textContent = t("logout");
+    ["navHome","navNew","navRuns","navApprovals","navArtifacts","navModels",
+     "navSettings","navLabel","loginTitle","loginLede","keyLabel","loginBtn",
+     "homeTitle","homeLede","newTitle","newLede","goalLabel","specialistLabel",
+     "workspaceLabel","runBtn","runsTitle","runsLede","approvalsTitle","approvalsLede",
+     "artifactsTitle","artifactsLede","modelsTitle","modelsLede","settingsTitle",
+     "recentTitle"].forEach((id) => { const n = $(id); if (n) n.textContent = t(id); });
+    const q = $("goal");
+    if (q) q.placeholder = LANG === "ar"
+      ? "مثال: أنشئ تقريرًا بصيغة PDF عن خطة العمل"
+      : "e.g. Create a PDF report about the business plan";
+  }
+
+  function toast(message) {
+    const node = $("toast");
+    node.textContent = message;
+    node.classList.add("show");
+    clearTimeout(node._timer);
+    node._timer = setTimeout(() => node.classList.remove("show"), 2600);
+  }
+
+  function badge(node, text, kind) {
+    node.textContent = text;
+    node.className = "badge" + (kind ? " " + kind : "");
+  }
+
+  function statusPill(status) {
+    const kind = { completed: "ok", failed: "danger", cancelled: "danger",
+      waiting_approval: "warn", retrying: "warn", running: "info" }[status] || "";
+    const span = el("span", statusLabel(status));
+    span.className = "pill" + (kind ? " " + kind : "");
+    return span;
+  }
+
+  function emptyRow(table, columns, message) {
+    const row = el("tr");
+    const cell = el("td", message || t("noData"));
+    cell.colSpan = columns;
+    cell.className = "empty";
+    row.appendChild(cell);
+    table.tBodies[0].appendChild(row);
+  }
+
+  function table(columns) {
+    const node = el("table");
+    const head = el("thead"); const hrow = el("tr");
+    columns.forEach((c) => hrow.appendChild(el("th", t(c))));
+    head.appendChild(hrow);
+    node.appendChild(head);
+    node.appendChild(el("tbody"));
+    return node;
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+
+  // ---- views --------------------------------------------------------------
+  function show(id) {
+    document.querySelectorAll("section").forEach((s) => s.classList.remove("active"));
+    $(id).classList.add("active");
+    document.querySelectorAll("nav button").forEach((b) =>
+      b.classList.toggle("active", "view-" + b.dataset.view === id));
+  }
+
+  function showLogin() {
+    show("view-login");
+    $("loginHint").textContent = LANG === "ar"
+      ? "يتطلب هذا النظام مصادقة. المفتاح يُخزَّن في متصفحك فقط."
+      : "This deployment requires authentication. The key stays in your browser.";
+  }
+
+  async function refreshChrome() {
+    try {
+      const health = await api("/health");
+      badge($("envBadge"), health.environment);
+      badge($("runtimeBadge"), health.runtime, health.runtime === "local" ? "ok" : "");
+      const status = await api("/models").catch(() => null);
+      if (status) {
+        const ready = status.providers.filter((p) => p.usable).length;
+        badge($("modelBadge"), status.default_model,
+          ready > 0 ? "ok" : "warn");
+      }
+    } catch (e) { /* a chrome badge must not break the page */ }
+  }
+
+  async function loadHome() {
+    show("view-home");
+    const grid = $("kpis");
+    grid.replaceChildren();
+    const kpis = [
+      ["kTools", "—"], ["kSpecialists", "—"], ["kRuns", "—"],
+      ["kPending", "—"], ["kArtifacts", "—"],
+    ];
+    const nodes = {};
+    kpis.forEach(([key]) => {
+      const card = el("div", undefined); card.className = "card kpi";
+      card.appendChild(el("div", t(key))).className = "k";
+      const value = el("div", "—"); value.className = "v";
+      card.appendChild(value); grid.appendChild(card); nodes[key] = value;
+    });
+    try {
+      const [tools, specialists, runs, approvals, artifacts] = await Promise.all([
+        api("/tools"), api("/specialists"), api("/runs"),
+        api("/approvals"), api("/artifacts"),
+      ]);
+      nodes.kTools.textContent = tools.length;
+      nodes.kSpecialists.textContent = specialists.length;
+      nodes.kRuns.textContent = runs.length;
+      nodes.kPending.textContent = approvals.length;
+      nodes.kArtifacts.textContent = artifacts.count;
+    } catch (e) { toast(t("toastError") + e.message); }
+    const table_ = table(["colGoal", "colStatus", "colSpecialist", "colUpdated"]);
+    try {
+      const runs = await api("/runs");
+      if (!runs.length) emptyRow(table_, 4);
+      runs.slice(0, 8).forEach((r) => {
+        const row = el("tr");
+        row.appendChild(el("td", r.goal));
+        const s = el("td"); s.appendChild(statusPill(r.status)); row.appendChild(s);
+        row.appendChild(el("td", r.specialist));
+        row.appendChild(el("td", new Date(r.updated_at).toLocaleString(
+          LANG === "ar" ? "ar" : "en")));
+        table_.tBodies[0].appendChild(row);
+      });
+    } catch (e) { emptyRow(table_, 4, t("toastError") + e.message); }
+    $("recentRuns").replaceChildren(table_);
+  }
+
+  async function loadSpecialists() {
+    try {
+      const specialists = await api("/specialists");
+      const select = $("specialist");
+      select.replaceChildren();
+      specialists.forEach((s) => {
+        const option = el("option", LANG === "ar" ? s.name_ar : s.name_en);
+        option.value = s.id;
+        if (s.status !== "available") option.textContent += " — " + s.status;
+        select.appendChild(option);
+      });
+    } catch (e) { /* the default specialist still works */ }
+  }
+
+  async function startRun(event) {
+    event.preventDefault();
+    const goal = $("goal").value.trim();
+    if (!goal) return;
+    $("runStatus").textContent = t("loading");
+    $("runBtn").disabled = true;
+    const body = { goal };
+    if ($("specialist").value) body.specialist = $("specialist").value;
+    if ($("workspace").value.trim()) body.workspace_dir = $("workspace").value.trim();
+    try {
+      const run = await api("/runs", { method: "POST", body });
+      $("runStatus").textContent = "";
+      toast(t("toastStarted"));
+      renderRunResult(run);
+    } catch (e) {
+      $("runStatus").textContent = "";
+      toast(t("toastError") + e.message);
+    } finally { $("runBtn").disabled = false; }
+  }
+
+  function renderRunResult(run) {
+    const card = $("runResultCard"); card.classList.remove("hidden");
+    const box = $("runResult"); box.replaceChildren();
+    const head = el("div"); head.className = "row";
+    head.appendChild(el("strong", run.run_id));
+    head.appendChild(statusPill(run.status));
+    if (run.verified) { const p = el("span", LANG === "ar" ? "متحقَّق" : "verified");
+      p.className = "pill ok"; head.appendChild(p); }
+    box.appendChild(head);
+    if (run.result) { const p = el("p", run.result); box.appendChild(p); }
+    if (run.error) { const p = el("p", run.error); p.className = "muted"; box.appendChild(p); }
+    const actions = el("div"); actions.className = "actions";
+    const plan = el("button", t("viewPlan")); plan.className = "iconbtn";
+    plan.onclick = () => loadPlan(run.run_id); actions.appendChild(plan);
+    const audit = el("button", t("viewAudit")); audit.className = "iconbtn";
+    audit.onclick = () => loadAudit(run.run_id); actions.appendChild(audit);
+    box.appendChild(actions);
+    box.appendChild(el("div", undefined)).id = "runDetail";
+  }
+
+  async function loadPlan(runId) {
+    try {
+      const plan = await api("/runs/" + encodeURIComponent(runId) + "/plan");
+      const table_ = table(["colStatus", "colGoal"]);
+      plan.steps.forEach((s) => {
+        const row = el("tr");
+        const c = el("td"); c.appendChild(statusPill(s.status)); row.appendChild(c);
+        row.appendChild(el("td", s.description));
+        table_.tBodies[0].appendChild(row);
+      });
+      const detail = $("runDetail"); detail.replaceChildren(el("h2", t("viewPlan")), table_);
+    } catch (e) { toast(t("toastError") + e.message); }
+  }
+
+  async function loadAudit(runId) {
+    try {
+      const events = await api("/runs/" + encodeURIComponent(runId) + "/audit");
+      const list = el("div"); list.className = "timeline";
+      events.forEach((e) => {
+        const item = el("div"); item.className = "event";
+        const when = el("div", new Date(e.timestamp).toLocaleTimeString(
+          LANG === "ar" ? "ar" : "en")); when.className = "when";
+        item.appendChild(when);
+        const what = el("div");
+        what.appendChild(el("strong", e.type));
+        what.appendChild(el("span", " — " + e.message));
+        item.appendChild(what);
+        list.appendChild(item);
+      });
+      const detail = $("runDetail");
+      detail.replaceChildren(el("h2", t("viewAudit")), list);
+    } catch (e) { toast(t("toastError") + e.message); }
+  }
+
+  async function loadRuns() {
+    show("view-runs");
+    const table_ = table(["colGoal", "colStatus", "colSpecialist", "colUpdated", "colActions"]);
+    try {
+      const runs = await api("/runs");
+      if (!runs.length) emptyRow(table_, 5);
+      runs.forEach((r) => {
+        const row = el("tr");
+        row.appendChild(el("td", r.goal));
+        const s = el("td"); s.appendChild(statusPill(r.status)); row.appendChild(s);
+        row.appendChild(el("td", r.specialist));
+        row.appendChild(el("td", new Date(r.updated_at).toLocaleString(
+          LANG === "ar" ? "ar" : "en")));
+        const actions = el("td"); const box = el("div"); box.className = "actions";
+        const detail = el("button", t("viewPlan")); detail.className = "iconbtn";
+        detail.onclick = async () => {
+          const run = await api("/runs/" + encodeURIComponent(r.run_id));
+          $("runResultCard").classList.remove("hidden");
+          renderRunResult(run); show("view-new");
+        };
+        box.appendChild(detail); actions.appendChild(box); row.appendChild(actions);
+        table_.tBodies[0].appendChild(row);
+      });
+    } catch (e) { emptyRow(table_, 5, t("toastError") + e.message); }
+    $("runsList").replaceChildren(table_);
+  }
+
+  async function loadApprovals() {
+    show("view-approvals");
+    const container = $("approvalsList"); container.replaceChildren();
+    try {
+      const approvals = await api("/approvals");
+      if (!approvals.length) { container.appendChild(el("div", t("noData"))).className = "empty"; return; }
+      approvals.forEach((a) => {
+        const card = el("div"); card.className = "card"; card.style.marginBottom = "12px";
+        const head = el("div"); head.className = "row";
+        head.appendChild(el("strong", a.tool_name));
+        const perm = el("span", a.permission); perm.className = "pill warn"; head.appendChild(perm);
+        head.appendChild(el("span", a.run_id)).className = "muted mono";
+        card.appendChild(head);
+        card.appendChild(el("p", a.summary));
+        if (a.preview && Object.keys(a.preview).length) {
+          const preview = el("div", JSON.stringify(a.preview, null, 2));
+          preview.className = "preview mono"; card.appendChild(preview);
+        }
+        const actions = el("div"); actions.className = "actions";
+        const approve = el("button", t("approve")); approve.className = "iconbtn primary";
+        approve.onclick = () => decide(a.id, true);
+        const deny = el("button", t("deny")); deny.className = "iconbtn danger";
+        deny.onclick = () => decide(a.id, false);
+        actions.appendChild(approve); actions.appendChild(deny); card.appendChild(actions);
+        container.appendChild(card);
+      });
+    } catch (e) { container.appendChild(el("div", t("toastError") + e.message)); }
+  }
+
+  async function decide(approvalId, approve) {
+    try {
+      await api("/approvals/" + encodeURIComponent(approvalId) + "/decide",
+        { method: "POST", body: { approve } });
+      toast(approve ? t("toastApproved") : t("toastDenied"));
+      loadApprovals();
+    } catch (e) { toast(t("toastError") + e.message); }
+  }
+
+  async function loadArtifacts() {
+    show("view-artifacts");
+    const table_ = table(["colName", "colFormat", "colSize", "colRun", "colActions"]);
+    try {
+      const body = await api("/artifacts");
+      if (!body.count) emptyRow(table_, 5);
+      body.artifacts.forEach((a) => {
+        const row = el("tr");
+        row.appendChild(el("td", a.name));
+        row.appendChild(el("td", a.format));
+        row.appendChild(el("td", formatBytes(a.bytes)));
+        row.appendChild(el("td", a.run_id)).className = "mono muted";
+        const actions = el("td"); const link = el("a", t("download"));
+        link.className = "iconbtn";
+        link.href = "/runs/" + encodeURIComponent(a.run_id) +
+          "/artifacts/download?path=" + encodeURIComponent(a.path);
+        link.onclick = () => { fetchArtifact(a); return false; };
+        actions.appendChild(link); row.appendChild(actions);
+        table_.tBodies[0].appendChild(row);
+      });
+    } catch (e) { emptyRow(table_, 5, t("toastError") + e.message); }
+    $("artifactsList").replaceChildren(table_);
+  }
+
+  async function fetchArtifact(a) {
+    // Fetch with the API key header, then hand the bytes to the browser as a
+    // download. A plain link would omit the key, so the download must be
+    // authenticated the same way as every other call.
+    try {
+      const response = await fetch(
+        "/runs/" + encodeURIComponent(a.run_id) + "/artifacts/download?path=" +
+        encodeURIComponent(a.path), { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
+      if (!response.ok) throw new Error(response.status + " " + response.statusText);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = a.name;
+      document.body.appendChild(link); link.click(); link.remove();
+      URL.revokeObjectURL(url);
+      toast(t("toastDownloaded"));
+    } catch (e) { toast(t("toastError") + e.message); }
+  }
+
+  async function loadModels() {
+    show("view-models");
+    const table_ = table(["colProvider", "colUsable", "colDetail"]);
+    try {
+      const status = await api("/models");
+      status.providers.forEach((p) => {
+        const row = el("tr");
+        row.appendChild(el("td", p.name + (p.is_local ? " (local)" : "")));
+        const usable = el("td");
+        const pill = el("span", p.usable ? (LANG === "ar" ? "جاهز" : "ready")
+          : (LANG === "ar" ? "غير مُهيّأ" : "not configured"));
+        pill.className = "pill " + (p.usable ? "ok" : "warn");
+        usable.appendChild(pill); row.appendChild(usable);
+        row.appendChild(el("td", p.detail || (p.usable ? "—" : "")));
+        table_.tBodies[0].appendChild(row);
+      });
+      const note = el("p", (LANG === "ar" ? "النموذج الافتراضي: " : "Default model: ") +
+        status.default_model); note.className = "muted";
+      $("modelsList").replaceChildren(note, table_);
+    } catch (e) { emptyRow(table_, 3, t("toastError") + e.message);
+      $("modelsList").replaceChildren(table_); }
+  }
+
+  async function loadSettings() {
+    show("view-settings");
+    const body = $("settingsBody"); body.replaceChildren();
+    try {
+      const [health, voice] = await Promise.all([
+        api("/health"), api("/voice/status"),
+      ]);
+      const rows = [
+        [LANG === "ar" ? "البيئة" : "Environment", health.environment],
+        [LANG === "ar" ? "النسخة" : "Version", health.version],
+        [LANG === "ar" ? "وقت التشغيل" : "Runtime", health.runtime],
+        [LANG === "ar" ? "المصادقة" : "Auth", health.auth_enabled
+          ? (LANG === "ar" ? "مفعّلة" : "enabled") : (LANG === "ar" ? "معطّلة" : "disabled")],
+        [LANG === "ar" ? "وضع التنفيذ" : "Execution mode", health.execution_mode],
+        [LANG === "ar" ? "تخزين دائم" : "Durable", health.durable ? "yes" : "no"],
+        [LANG === "ar" ? "موزّع" : "Distributed", health.distributed ? "yes" : "no"],
+        [LANG === "ar" ? "الصوت" : "Voice", voice.enabled
+          ? (LANG === "ar" ? "متاح" : "available") : voice.reason],
+      ];
+      const table_ = el("table");
+      const tbody = el("tbody");
+      rows.forEach(([k, v]) => {
+        const row = el("tr");
+        row.appendChild(el("td", k)).className = "muted";
+        row.appendChild(el("td", v)).className = "mono";
+        tbody.appendChild(row);
+      });
+      table_.appendChild(tbody);
+      body.appendChild(table_);
+    } catch (e) { body.appendChild(el("div", t("toastError") + e.message)); }
+  }
+
+  // ---- wiring -------------------------------------------------------------
+  const ROUTES = { home: loadHome, new: () => { show("view-new"); loadSpecialists(); },
+    runs: loadRuns, approvals: loadApprovals, artifacts: loadArtifacts,
+    models: loadModels, settings: loadSettings };
+
+  document.querySelectorAll("nav button").forEach((button) => {
+    button.onclick = () => { const view = button.dataset.view;
+      if (ROUTES[view]) ROUTES[view](); };
+  });
+  $("themeBtn").onclick = () => {
+    const light = document.documentElement.dataset.theme === "light";
+    document.documentElement.dataset.theme = light ? "dark" : "light";
+    localStorage.setItem("aap_theme", document.documentElement.dataset.theme);
+  };
+  $("langBtn").onclick = () => {
+    LANG = LANG === "ar" ? "en" : "ar";
+    localStorage.setItem("aap_lang", LANG); applyI18n();
+  };
+  $("logoutBtn").onclick = () => {
+    localStorage.removeItem(KEY_STORE); API_KEY = ""; showLogin();
+  };
+  $("loginForm").onsubmit = async (event) => {
+    event.preventDefault();
+    API_KEY = $("apiKey").value.trim();
+    localStorage.setItem(KEY_STORE, API_KEY);
+    try {
+      await api("/runs");
+      toast(t("toastKeySaved"));
+      $("apiKey").value = "";
+      boot();
+    } catch (e) {
+      toast(t("toastBadKey")); API_KEY = ""; localStorage.removeItem(KEY_STORE);
+    }
+  };
+  $("runForm").onsubmit = startRun;
+
+  async function boot() {
+    applyI18n();
+    await refreshChrome();
+    await loadHome();
+    loadSpecialists();
+    setInterval(refreshChrome, 30000);
+  }
+
+  document.documentElement.dataset.theme = localStorage.getItem("aap_theme") || "dark";
+  applyI18n();
+  if (API_KEY) { boot(); } else { showLogin(); }
+  </script>
+</body>
+</html>

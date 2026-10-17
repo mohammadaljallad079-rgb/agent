@@ -364,6 +364,27 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   'none'`. `recommend`/`health_check` are honest gates, not benchmarks. The
   installer `verify` step really invokes the installed entry point as a
   subprocess (never a green state from a version constant).
+- Branding & premium command-center UI (Phase 12) is implemented. The public
+  identity is **Super AI Agent** under the **SUPER AI** brand, owned by one
+  module (`arabic_agent/branding.py`: `PRODUCT`, `BRAND`, `PRODUCT_ID`,
+  `WINDOW_TITLE`, `product_name`, `brand_name`). The window title, installer
+  manifest, service product field and About panel read from it, so they cannot
+  drift. The rename is **presentation only**: the on-disk identity (data
+  directory, uninstall key, single-instance mutex, distribution name) is
+  deliberately unchanged so an upgrade keeps a user's runs, memory and
+  documents — `tests/test_branding.py` pins that. `desktop/ui/index.html` is
+  rebuilt as an Arabic-first command center: six destinations (home, agents,
+  projects, activity, voice, settings) with operational surfaces grouped under
+  Settings → Advanced; the home surface is a command bar with a real readiness
+  strip and a live activity feed. The assistant character renders in every voice
+  state and its mouth is animated from the character's own viseme map
+  (`character.visemes`) — no second animation engine, no random flap. Design
+  tokens live in one block with a light-theme override; logical properties keep
+  one stylesheet correct for RTL and LTR. The isolation CSP is unchanged
+  (`default-src 'none'`, `connect-src 'none'`). The self-check now fails a stale
+  or unbranded packaged UI instead of passing on the directory existing. The
+  published `v0.1.0-rc.1`/`rc.2` installers predate this work; real Windows
+  acceptance of the rebranded build is still outstanding (Phase 10W).
 - Phase 10W (real Windows acceptance) is **not** run: the development host is
   headless Linux (no Windows/Wine/KVM/display), so no Windows flow is claimed.
   A static audit + clean-venv install fixed two host-independent defects: the
@@ -471,10 +492,35 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   model catalogue ship in the frozen payload. Acceptance procedure and the
   remaining interactive (real microphone/speaker) gates:
   `docs/VOICE_ACCEPTANCE.md`.
+- Browser-served Command Center (Phase 12 online surface): `web/` serves an
+  Arabic-first RTL page (`agent-web` entry point, `arabic_agent.web.app:main`)
+  that drives the *real* HTTP API — health, runs, approvals, artifacts, models,
+  specialists and tools — with no placeholder controls. Every panel names a
+  route that exists; `tests/test_web_ui.py` fails if a panel points at nothing
+  or if a `TODO`/`data-todo` control appears. The page is served with a
+  same-origin policy (`default-src 'none'`, `connect-src 'self'`), so it is a
+  static shell over the same authenticated API rather than a second security
+  surface. Artifacts are listable per-run and per-tenant
+  (`GET /runs/{id}/artifacts`, `GET /artifacts`) and downloadable
+  (`GET /runs/{id}/artifacts/download`) through
+  `artifacts.resolve_artifact`, which refuses path escapes and absolute paths
+  (403) and records an `ARTIFACT_DOWNLOADED` audit event. `GET /models` reports
+  each provider's real usability (`_provider_usability`: a remote provider needs
+  a credential, a local one needs a healthy engine) — an honest gate, not a
+  benchmark. `create_app()` now runs a lifespan that calls `platform.initialize()`
+  once at startup and `platform.aclose()` on shutdown: the local model backend
+  loads its weights lazily, so without the startup load `/models` reported the
+  configured model as unavailable until the first request, and that first
+  request paid the multi-second load inside a run's deadline. The UI assets live
+  under `src/arabic_agent/web/ui`, inside the packaged package tree, so they ship
+  with the wheel without a `force-include` (a duplicate entry there makes
+  hatchling refuse the build — verified by building and installing the wheel).
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
-  image/video tools, social connectors, and a cloud web UI (the Arabic-first
-  desktop UI exists inside the pywebview shell and now includes a printing
-  panel; a browser-served multi-tenant frontend does not). Document *generation*
+  image/video tools, social connectors, and a multi-tenant SaaS frontend with
+  login/tenant switching (the Arabic-first desktop UI exists inside the
+  pywebview shell and now includes a printing panel, and a browser-served
+  Command Center over the real API exists; a multi-tenant login/billing
+  frontend does not). Document *generation*
   is implemented for PDF/DOCX/PPTX/XLSX/CSV/Markdown/HTML/JSON (see
   `documents/generation.py` and the `generate_document` / `create_spreadsheet` /
   `create_presentation` tools). Printing (Phase 11) and calendar (Phase 9)

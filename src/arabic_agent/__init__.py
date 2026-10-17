@@ -1,4 +1,4 @@
-"""Arabic AI Agent Platform.
+"""Super AI Agent.
 
 An Arabic-first *Agent Operating Platform*: the value lives in the runtime,
 tools, permissions, task engine, memory, integrations and model gateway — not

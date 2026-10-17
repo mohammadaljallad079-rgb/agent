@@ -5,87 +5,200 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!--
     Strong isolation: the shell renders untrusted agent/browser/email content as
-    text only. No inline scripts, no remote origins, no frames. The control token
-    never reaches this document (it lives in the Python bridge).
+    text only. No inline scripts from remote origins, no remote origins at all,
+    no frames. The control token never reaches this document (it lives in the
+    Python bridge).
   -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>الوكيل العربي | Arabic AI Agent</title>
+  <title>Super AI Agent — SUPER AI</title>
   <style>
+    /* ============================================================
+       SUPER AI — design tokens (single source of truth)
+       Colour/spacing/radius/type/motion live here. The light theme
+       overrides only the colour tokens. Logical properties keep one
+       stylesheet correct for both RTL and LTR.
+       ============================================================ */
     :root {
-      --bg: #0f1116; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
-      --fg: #e8eaf0; --muted: #9aa3b2; --accent: #4f8cff; --ok: #2ecc71;
-      --warn: #f5a623; --danger: #e74c3c; --radius: 10px;
+      --brand: #0f766e;          /* primary — from the character */
+      --brand-strong: #0b5c56;
+      --brand-soft: rgba(15,118,110,.14);
+      --accent: #f59e0b;         /* voice / attention */
+      --accent-soft: rgba(245,158,11,.16);
+
+      --ok: #22c55e; --warn: #f59e0b; --danger: #ef4444; --info: #38bdf8;
+
+      --bg: #0b1220; --bg-2: #0e1626; --panel: #131c2e; --panel-2: #1a2438;
+      --line: #24314a; --line-soft: #1c2740;
+      --fg: #e9edf5; --muted: #93a1ba; --muted-2: #6b7a95;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --shadow-sm: 0 2px 10px rgba(0,0,0,.25);
+
+      --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+      --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
+
+      --t-fast: 120ms ease; --t: 220ms ease; --t-enter: 400ms cubic-bezier(.2,.7,.3,1);
+      --font: "Segoe UI", Tahoma, "Noto Naskh Arabic", "Noto Sans Arabic", system-ui, sans-serif;
+      --fs-xs: 11px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
+
+      --rail: 244px;
     }
+    [data-theme="light"] {
+      --bg: #f6f7f9; --bg-2: #eef1f5; --panel: #ffffff; --panel-2: #f3f5f8;
+      --line: #dde3ec; --line-soft: #e8ecf2;
+      --fg: #101828; --muted: #5b6b83; --muted-2: #8494a9;
+      --brand-soft: rgba(15,118,110,.10); --accent-soft: rgba(245,158,11,.14);
+      --shadow: 0 10px 30px rgba(16,24,40,.10); --shadow-sm: 0 2px 10px rgba(16,24,40,.08);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
-      font-family: "Segoe UI", Tahoma, "Noto Naskh Arabic", system-ui, sans-serif; }
-    body { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
-    header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px;
-      padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
-    header .brand { font-weight: 700; font-size: 16px; }
+    html, body { margin: 0; height: 100%; }
+    body { background: var(--bg); color: var(--fg); font-family: var(--font);
+      font-size: var(--fs-md); line-height: 1.55; display: grid;
+      grid-template-columns: var(--rail) 1fr; grid-template-rows: 60px 1fr; height: 100vh; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+    /* ---- top bar ---- */
+    header { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s-3);
+      padding: 0 var(--s-4); background: linear-gradient(180deg, var(--panel), var(--bg-2));
+      border-bottom: 1px solid var(--line); }
+    .wordmark { display: flex; align-items: center; gap: var(--s-2); font-weight: 800; letter-spacing: .4px; }
+    .wordmark .dot { width: 10px; height: 10px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, var(--accent), var(--brand)); }
+    .wordmark .brand { font-size: var(--fs-lg); }
+    .wordmark .sub { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
     header .spacer { flex: 1; }
-    .badge { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--panel-2);
-      border: 1px solid var(--line); color: var(--muted); }
-    .badge.ok { color: var(--ok); border-color: #234; }
-    nav { background: var(--panel); border-inline-end: 1px solid var(--line); padding: 12px 8px;
-      display: flex; flex-direction: column; gap: 4px; overflow: auto; }
-    nav button { text-align: start; background: transparent; color: var(--fg); border: 0;
-      padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    .badge { font-size: var(--fs-xs); padding: 3px 9px; border-radius: var(--r-pill);
+      background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+    .badge.ok { color: var(--ok); border-color: rgba(34,197,94,.35); }
+    .badge.warn { color: var(--warn); border-color: rgba(245,158,11,.35); }
+    .badge.danger { color: var(--danger); border-color: rgba(239,68,68,.35); }
+    .iconbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+      border-radius: var(--r-sm); padding: 7px 10px; cursor: pointer; font: inherit; font-size: var(--fs-sm);
+      transition: background var(--t-fast), border-color var(--t-fast); }
+    .iconbtn:hover { background: var(--panel); border-color: var(--muted-2); }
+    .iconbtn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+    /* ---- rail navigation ---- */
+    nav { background: var(--panel); border-inline-end: 1px solid var(--line);
+      padding: var(--s-3) var(--s-2); display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+    nav .navlabel { font-size: var(--fs-xs); color: var(--muted-2); padding: var(--s-3) var(--s-3) var(--s-1);
+      text-transform: uppercase; letter-spacing: .6px; font-weight: 700; }
+    nav button { display: flex; align-items: center; gap: var(--s-3); text-align: start;
+      background: transparent; color: var(--fg); border: 0; padding: 10px 12px;
+      border-radius: var(--r-sm); cursor: pointer; font: inherit; font-size: var(--fs-md);
+      transition: background var(--t-fast), color var(--t-fast); }
     nav button:hover { background: var(--panel-2); }
-    nav button.active { background: var(--accent); color: #fff; }
-    main { padding: 16px; overflow: auto; }
-    section { display: none; }
+    nav button.active { background: var(--brand-soft); color: var(--fg); font-weight: 600;
+      box-shadow: inset 3px 0 0 var(--brand); }
+    [dir="rtl"] nav button.active { box-shadow: inset -3px 0 0 var(--brand); }
+    nav button svg { width: 18px; height: 18px; flex: 0 0 auto; opacity: .9; }
+    nav .navfoot { margin-top: auto; }
+
+    /* ---- main ---- */
+    main { padding: var(--s-5); overflow: auto; }
+    section { display: none; animation: fade var(--t-enter); }
     section.active { display: block; }
-    h2 { margin: 0 0 12px; font-size: 18px; }
-    h3 { margin: 18px 0 8px; font-size: 14px; color: var(--muted); font-weight: 600; }
-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 14px; margin-bottom: 12px; }
-    .row { display: flex; gap: 10px; align-items: center; }
+    @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    h1 { margin: 0 0 var(--s-2); font-size: var(--fs-2xl); letter-spacing: -.3px; }
+    h2 { margin: 0 0 var(--s-3); font-size: var(--fs-xl); }
+    h3 { margin: var(--s-5) 0 var(--s-2); font-size: var(--fs-sm); color: var(--muted);
+      font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+    p.lead { color: var(--muted); margin: 0 0 var(--s-5); max-width: 70ch; }
+
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
+      padding: var(--s-4); margin-bottom: var(--s-3); box-shadow: var(--shadow-sm); }
+    .card.tight { padding: var(--s-3); }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--s-3); }
+    .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--s-3); }
+    .row { display: flex; gap: var(--s-3); align-items: center; }
     .row.wrap { flex-wrap: wrap; }
-    textarea, input[type=text] { width: 100%; background: var(--panel-2); color: var(--fg);
-      border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; resize: vertical; }
-    button.btn { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
-      padding: 9px 14px; cursor: pointer; font: inherit; }
-    button.btn.ghost { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); }
-    button.btn.danger { background: var(--danger); }
+    .row.between { justify-content: space-between; }
+    .muted { color: var(--muted); font-size: var(--fs-sm); }
+    .muted.tiny { font-size: var(--fs-xs); color: var(--muted-2); }
+    .stack { display: flex; flex-direction: column; gap: var(--s-2); }
+
+    textarea, input[type=text], input[type=number], select {
+      width: 100%; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+      border-radius: var(--r-sm); padding: 10px 12px; font: inherit; }
+    textarea { resize: vertical; min-height: 52px; }
+    select { cursor: pointer; }
+    button.btn { background: var(--brand); color: #fff; border: 1px solid var(--brand-strong);
+      border-radius: var(--r-sm); padding: 9px 15px; cursor: pointer; font: inherit;
+      transition: filter var(--t-fast), transform var(--t-fast); }
+    button.btn:hover { filter: brightness(1.08); }
+    button.btn:active { transform: translateY(1px); }
+    button.btn.ghost { background: var(--panel-2); color: var(--fg); border-color: var(--line); }
+    button.btn.accent { background: var(--accent); border-color: var(--accent); color: #241a02; }
+    button.btn.danger { background: var(--danger); border-color: var(--danger); }
     button.btn:disabled { opacity: .5; cursor: not-allowed; }
-    .muted { color: var(--muted); font-size: 13px; }
-    .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
-    .pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.danger { color: var(--danger); }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: start; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; }
+    .pill { font-size: var(--fs-xs); padding: 2px 9px; border-radius: var(--r-pill);
+      border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+    .pill.ok { color: var(--ok); border-color: rgba(34,197,94,.4); }
+    .pill.warn { color: var(--warn); border-color: rgba(245,158,11,.4); }
+    .pill.danger { color: var(--danger); border-color: rgba(239,68,68,.4); }
+    .pill.brand { color: var(--brand); border-color: var(--brand); background: var(--brand-soft); }
+    [data-theme="light"] .pill.brand { color: var(--brand-strong); }
+
+    table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    th, td { text-align: start; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+    th { color: var(--muted); font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+
     .timeline { list-style: none; padding: 0; margin: 0; }
-    .timeline li { padding: 8px 10px; border-inline-start: 3px solid var(--line); margin-bottom: 6px;
-      background: var(--panel-2); border-radius: 6px; }
-    .timeline li .t { font-size: 11px; color: var(--muted); }
-    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-    .empty { color: var(--muted); padding: 20px; text-align: center; border: 1px dashed var(--line);
-      border-radius: var(--radius); }
-    .toast { position: fixed; inset-block-start: 68px; inset-inline-end: 20px; background: var(--panel-2);
-      border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; max-width: 360px; display: none; }
-    .toast.show { display: block; }
-    progress { width: 100%; height: 10px; }
-    /* ---- Voice experience ---- */
-    .voice-stage { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-    .character { position: relative; width: 148px; height: 148px; border-radius: 50%;
-      background: radial-gradient(circle at 32% 28%, var(--accent), var(--panel-2) 72%);
+    .timeline li { padding: 9px 12px; border-inline-start: 3px solid var(--line);
+      margin-bottom: 6px; background: var(--panel-2); border-radius: var(--r-sm); }
+    .timeline li.ok { border-inline-start-color: var(--ok); }
+    .timeline li.warn { border-inline-start-color: var(--warn); }
+    .timeline li.danger { border-inline-start-color: var(--danger); }
+    .timeline li .t { font-size: var(--fs-xs); color: var(--muted-2); }
+    .empty { color: var(--muted); padding: var(--s-5); text-align: center;
+      border: 1px dashed var(--line); border-radius: var(--r-md); }
+    .toast { position: fixed; inset-block-start: 72px; inset-inline-end: 20px; background: var(--panel-2);
+      border: 1px solid var(--line); border-inline-start: 3px solid var(--accent);
+      border-radius: var(--r-sm); padding: 11px 15px; max-width: 380px; display: none;
+      box-shadow: var(--shadow); z-index: 50; }
+    .toast.show { display: block; animation: fade var(--t); }
+    progress { width: 100%; height: 8px; border-radius: var(--r-pill); }
+    pre { margin: 0; }
+
+    /* ---- command bar (home) ---- */
+    .command { background: linear-gradient(180deg, var(--panel), var(--bg-2));
+      border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-4);
+      box-shadow: var(--shadow); }
+    .command .bar { display: flex; gap: var(--s-2); align-items: flex-end; }
+    .command .bar .grow { flex: 1; }
+    .command .meta { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap;
+      margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+
+    /* ---- assistant presence + character ---- */
+    .presence { display: flex; gap: var(--s-5); align-items: center; flex-wrap: wrap; }
+    .character { position: relative; width: 132px; height: 132px; border-radius: 50%;
+      background: radial-gradient(circle at 32% 28%, var(--brand), var(--panel-2) 72%);
       border: 2px solid var(--line); flex: 0 0 auto; display: grid; place-items: center;
-      transition: box-shadow .25s ease, transform .25s ease; }
-    .character[data-state="listening"] { box-shadow: 0 0 0 10px rgba(79,140,255,.18); transform: scale(1.03); }
+      transition: box-shadow var(--t), transform var(--t); }
+    .character[data-state="idle"] { box-shadow: 0 0 0 0 transparent; }
+    .character[data-state="listening"] { box-shadow: 0 0 0 10px var(--brand-soft); transform: scale(1.03); }
     .character[data-state="thinking"] { animation: breathe 1.4s ease-in-out infinite; }
-    .character[data-state="speaking"] { box-shadow: 0 0 0 14px rgba(46,204,113,.18); }
-    .character[data-state="waiting_approval"] { box-shadow: 0 0 0 12px rgba(245,166,35,.22); }
-    .character[data-state="error"] { box-shadow: 0 0 0 12px rgba(231,76,60,.22); }
-    .character[data-state="success"] { box-shadow: 0 0 0 12px rgba(46,204,113,.22); }
-    @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
-    .character .eyes { display: flex; gap: 26px; margin-top: -12px; }
+    .character[data-state="speaking"] { box-shadow: 0 0 0 14px rgba(34,197,94,.16); }
+    .character[data-state="waiting_approval"] { box-shadow: 0 0 0 12px var(--accent-soft); }
+    .character[data-state="error"] { box-shadow: 0 0 0 12px rgba(239,68,68,.2); }
+    .character[data-state="success"] { box-shadow: 0 0 0 12px rgba(34,197,94,.2); }
+    @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.045); } }
+    .character .face { display: grid; place-items: center; gap: 8px; }
+    .character .eyes { display: flex; gap: 26px; }
     .character .eyes i { width: 12px; height: 12px; border-radius: 50%; background: var(--fg);
-      display: inline-block; }
-    .character[data-state="listening"] .eyes i, .character[data-state="speaking"] .eyes i { background: #fff; }
-    .character .mouth { width: 40px; height: 12px; margin-top: 8px; border-radius: 8px;
-      background: var(--bg); border: 2px solid var(--fg); transition: all .09s linear; }
+      display: inline-block; transition: background var(--t-fast); }
+    .character[data-state="listening"] .eyes i,
+    .character[data-state="speaking"] .eyes i { background: #fff; }
+    .character .mouth { width: 40px; height: 12px; border-radius: 8px; background: var(--bg);
+      border: 2px solid var(--fg); transition: all 90ms linear; }
     .character .mouth[data-shape="open"] { height: 26px; border-radius: 50%; }
     .character .mouth[data-shape="wide"] { width: 54px; height: 10px; }
     .character .mouth[data-shape="round"] { width: 24px; height: 24px; border-radius: 50%; }
@@ -96,70 +209,208 @@
     .character .mouth[data-shape="emphatic"] { width: 50px; height: 16px; }
     .character .mouth[data-shape="trill"] { width: 38px; height: 12px; }
     .character .mouth[data-shape="sh"] { width: 44px; height: 12px; }
+    .presence .who { flex: 1 1 300px; min-width: 240px; }
+    .presence .who .name { font-size: var(--fs-xl); font-weight: 700; }
+    .presence .who .tagline { color: var(--muted); margin: 4px 0 10px; }
+
+    .voice-stage { display: flex; gap: var(--s-5); align-items: center; flex-wrap: wrap; }
     .voice-meta { flex: 1 1 320px; min-width: 260px; }
-    .voice-name { font-size: 18px; font-weight: 700; }
-    .voice-tagline { color: var(--muted); margin: 4px 0 10px; }
-    .voice-heard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-      padding: 10px; min-height: 42px; white-space: pre-wrap; width: 100%; box-sizing: border-box;
-      color: var(--fg); font: inherit; resize: vertical; }
-    .voice-reply { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-      padding: 10px; min-height: 42px; white-space: pre-wrap; margin-top: 8px; }
-    .voice-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
-    @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; }
-      nav { flex-direction: row; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); } }
+    .voice-heard, .voice-reply { background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: var(--r-sm); padding: 11px; min-height: 46px; white-space: pre-wrap;
+      width: 100%; box-sizing: border-box; color: var(--fg); font: inherit; resize: vertical; }
+    .voice-reply { margin-top: var(--s-2); }
+    .voice-controls { display: flex; gap: var(--s-2); flex-wrap: wrap; align-items: center; margin-top: var(--s-3); }
+    .mic-hero { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center;
+      background: var(--brand); color: #fff; border: 0; cursor: pointer; box-shadow: var(--shadow);
+      transition: transform var(--t-fast), box-shadow var(--t); }
+    .mic-hero[data-active="true"] { background: var(--danger); box-shadow: 0 0 0 12px rgba(239,68,68,.18); }
+    .mic-hero svg { width: 32px; height: 32px; }
+
+    .stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
+      padding: var(--s-3) var(--s-4); box-shadow: var(--shadow-sm); }
+    .stat .k { font-size: var(--fs-xs); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .stat .v { font-size: var(--fs-xl); font-weight: 700; margin-top: 2px; }
+
+    .agentcard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
+      padding: var(--s-4); box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: var(--s-2); }
+    .agentcard.sel { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+    .agentcard .head { display: flex; align-items: center; gap: var(--s-2); }
+    .agentcard .ico { width: 36px; height: 36px; border-radius: var(--r-sm); display: grid;
+      place-items: center; background: var(--brand-soft); color: var(--brand); flex: 0 0 auto; }
+    [data-theme="light"] .agentcard .ico { color: var(--brand-strong); }
+    .agentcard .ico svg { width: 20px; height: 20px; }
+    .agentcard .nm { font-weight: 700; }
+    .agentcard .desc { color: var(--muted); font-size: var(--fs-sm); flex: 1; }
+
+    .fieldset { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-4);
+      background: var(--panel); margin-bottom: var(--s-3); }
+    .fieldset > legend { color: var(--muted); font-size: var(--fs-sm); font-weight: 700;
+      padding: 0 8px; text-transform: uppercase; letter-spacing: .5px; }
+    .field { display: grid; grid-template-columns: 1fr auto; gap: var(--s-2) var(--s-3);
+      align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+    .field:last-child { border-bottom: 0; }
+    .field .lbl { color: var(--fg); }
+    .field .lbl .hint { display: block; color: var(--muted-2); font-size: var(--fs-xs); }
+    .field .ctl { min-width: 160px; text-align: end; }
+
+    .tabs { display: flex; gap: 2px; flex-wrap: wrap; margin-bottom: var(--s-3);
+      border-bottom: 1px solid var(--line); }
+    .tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent;
+      color: var(--muted); padding: 9px 13px; cursor: pointer; font: inherit; }
+    .tabs button.active { color: var(--fg); border-bottom-color: var(--brand); font-weight: 600; }
+
+    .progress-track { height: 8px; background: var(--panel-2); border-radius: var(--r-pill); overflow: hidden; }
+    .progress-track > i { display: block; height: 100%; background: var(--brand); }
+
+    .artifact { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3);
+      border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); }
+    .artifact .ft { font-size: var(--fs-xs); font-weight: 700; color: var(--brand);
+      background: var(--brand-soft); border-radius: 6px; padding: 4px 7px; min-width: 46px; text-align: center; }
+
+    /* ---- responsive: 360 → 1920 ---- */
+    @media (max-width: 1024px) { :root { --rail: 200px; } main { padding: var(--s-4); } }
+    @media (max-width: 760px) {
+      body { grid-template-columns: 1fr; grid-template-rows: 60px auto 1fr; }
+      nav { flex-direction: row; overflow-x: auto; border-inline-end: 0;
+        border-bottom: 1px solid var(--line); padding: var(--s-2); }
+      nav .navlabel, nav .navfoot { display: none; }
+      nav button span.txt { display: none; }
+      main { padding: var(--s-3); }
+      .character { width: 104px; height: 104px; }
+    }
+    @media (min-width: 1600px) { :root { --rail: 268px; } main { padding: var(--s-6); } }
   </style>
 </head>
 <body>
+  <a class="sr-only" href="#main" data-i18n="skipToMain">تخطَّ إلى المحتوى</a>
   <header>
-    <span class="brand" id="brand">الوكيل العربي</span>
+    <span class="wordmark">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="brand" id="brand">سوبر إي آي</span>
+      <span class="sub" id="brandSub">SUPER AI AGENT</span>
+    </span>
     <span class="badge" id="verBadge">—</span>
     <span class="badge" id="modeBadge">—</span>
     <span class="badge" id="runtimeBadge">—</span>
     <span class="spacer"></span>
-    <button class="btn danger" id="stopBtn" title="إيقاف طارئ">إيقاف</button>
-    <button class="btn ghost" id="langBtn">EN</button>
+    <button class="iconbtn" id="themeBtn" data-i18n-title="theme" title="المظهر">
+      <span id="themeIcon" aria-hidden="true">◐</span><span class="txt" data-i18n="themeShort">المظهر</span>
+    </button>
+    <button class="iconbtn" id="langBtn" aria-label="Switch language">EN</button>
+    <button class="iconbtn danger" id="stopBtn" data-i18n="stop">إيقاف</button>
   </header>
 
-  <nav id="nav"></nav>
+  <nav id="nav" aria-label="التنقل الرئيسي"></nav>
 
-  <main>
-    <section id="s-workspace" class="active">
-      <h2 data-i18n="workspace">مساحة العمل</h2>
-      <div class="card">
-        <div class="row wrap">
-          <textarea id="goal" rows="2" placeholder="اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا" data-i18n-ph="goalPh"></textarea>
+  <main id="main">
+    <!-- ============ HOME ============ -->
+    <section id="s-home" class="active">
+      <h1 data-i18n="homeTitle">مركز القيادة</h1>
+      <p class="lead" data-i18n="homeLead">اكتب هدفك أو تحدّث به، وسيتولّى الوكيل التخطيط والتنفيذ والتحقق.</p>
+
+      <div class="command">
+        <div class="bar">
+          <div class="grow">
+            <label class="sr-only" for="goal" data-i18n="goalLabel">هدف المهمة</label>
+            <textarea id="goal" rows="2" placeholder="اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا" data-i18n-ph="goalPh"></textarea>
+          </div>
+          <button class="iconbtn" id="micBtn" data-i18n-title="listen" title="استمع" aria-label="استمع">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+          </button>
           <button class="btn" id="runBtn" data-i18n="start">ابدأ المهمة</button>
         </div>
-        <div class="row wrap" style="margin-top:8px">
-          <label for="specialistSelect" data-i18n="specialist">الوكيل المتخصص</label>
-          <select id="specialistSelect"></select>
+        <div class="meta">
+          <label class="muted" for="specialistSelect" data-i18n="specialist">الوكيل المتخصص</label>
+          <select id="specialistSelect" style="max-width:260px"></select>
           <span class="pill" id="specialistPill">—</span>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn ghost" id="homeVoiceBtn" data-i18n="openVoice">المساعد الصوتي</button>
         </div>
         <div class="muted" id="specialistDetail"></div>
         <div class="muted" id="specialistMissing"></div>
       </div>
+
+      <h3 data-i18n="readiness">الجاهزية</h3>
+      <div class="grid3">
+        <div class="stat"><div class="k" data-i18n="localModel">النموذج المحلي</div>
+          <div class="v" id="homeModelState">—</div><div class="muted tiny" id="homeModelDetail"></div></div>
+        <div class="stat"><div class="k" data-i18n="microphone">الميكروفون</div>
+          <div class="v" id="homeMicState">—</div><div class="muted tiny" id="homeMicDetail"></div></div>
+        <div class="stat"><div class="k" data-i18n="tasks">المهام</div>
+          <div class="v" id="homeRunsCount">0</div><div class="muted tiny" id="homeRunsDetail"></div></div>
+      </div>
+
       <div class="grid2">
-        <div class="card">
-          <h3 data-i18n="sessions">المهام</h3>
-          <div id="runs"></div>
+        <div>
+          <h3 data-i18n="activeTasks">المهام النشطة</h3>
+          <div class="card tight"><div id="runs"></div></div>
         </div>
-        <div class="card">
+        <div>
           <h3 data-i18n="activity">سجل النشاط الحيّ</h3>
-          <ul class="timeline" id="live"></ul>
+          <div class="card tight"><ul class="timeline" id="live"><li class="empty" data-i18n="noActivity">لا يوجد نشاط بعد</li></ul></div>
         </div>
       </div>
-      <div class="card">
-        <h3 data-i18n="timeline">الخط الزمني للمهمة</h3>
-        <ul class="timeline" id="timeline"><li class="empty" data-i18n="selectRun">اختر مهمة لعرض تفاصيلها</li></ul>
+
+      <h3 data-i18n="specialistsTitle">الوكلاء المتخصصون</h3>
+      <div class="grid3" id="homeSpecialists"></div>
+
+      <h3 data-i18n="recentArtifacts">أحدث المستندات</h3>
+      <div class="card tight"><div id="homeArtifacts"></div></div>
+    </section>
+
+    <!-- ============ AGENT HUB ============ -->
+    <section id="s-agents">
+      <h1 data-i18n="agentsTitle">الوكلاء المتخصصون</h1>
+      <p class="lead" data-i18n="agentsLead">كل وكيل هو نطاق أدوات فوق النواة نفسها. الحالة معروضة كما هي الحقيقة في هذه البيئة.</p>
+      <div class="card"><div class="muted" id="agentsSummary"></div></div>
+      <div class="grid2" id="agents"></div>
+      <h3 data-i18n="specialistTable">جدول الجهوزية</h3>
+      <div class="card tight"><div id="agentsTable"></div></div>
+    </section>
+
+    <!-- ============ PROJECTS & ARTIFACTS ============ -->
+    <section id="s-projects">
+      <h1 data-i18n="projectsTitle">المشاريع والمستندات</h1>
+      <p class="lead" data-i18n="projectsLead">مهامك مجمّعة حسب مساحة العمل، ومستنداتها الناتجة قابلة للفتح مباشرة.</p>
+      <div class="row wrap">
+        <input type="text" id="projectFilter" data-i18n-ph="filter" placeholder="تصفية…" style="max-width:320px" />
+        <button class="btn ghost" id="refreshProjects" data-i18n="refresh">تحديث</button>
+      </div>
+      <h3 data-i18n="byWorkspace">حسب مساحة العمل</h3>
+      <div id="projects"></div>
+      <h3 data-i18n="artifacts">المستندات الناتجة</h3>
+      <div id="s-artifacts" class="card tight"><div class="muted" id="artifactsCount"></div><div id="artifacts"></div></div>
+      <h3 data-i18n="workflows">سير العمل</h3>
+      <div class="card tight"><div id="workflows"></div></div>
+    </section>
+
+    <!-- ============ ACTIVITY / EXECUTION ============ -->
+    <section id="s-activity">
+      <h1 data-i18n="activityTitle">مركز التنفيذ والنشاط</h1>
+      <p class="lead" data-i18n="activityLead">ما يجري الآن، الخطوات، الأدوات، الموافقات، والأخطاء — كلها من سجل التدقيق الحقيقي.</p>
+      <h3 data-i18n="approvals">مركز الموافقات</h3>
+      <div id="approvals"></div>
+      <div class="grid2">
+        <div>
+          <h3 data-i18n="timeline">الخط الزمني للمهمة</h3>
+          <div class="card tight"><ul class="timeline" id="timeline"><li class="empty" data-i18n="selectRun">اختر مهمة لعرض تفاصيلها</li></ul></div>
+        </div>
+        <div>
+          <h3 data-i18n="memory">الذاكرة</h3>
+          <div class="card tight"><div id="memory"></div></div>
+        </div>
       </div>
     </section>
 
+    <!-- ============ VOICE ============ -->
     <section id="s-voice">
-      <h2 data-i18n="voice">المساعد الصوتي</h2>
+      <h1 data-i18n="voice">المساعد الصوتي</h1>
+      <p class="lead" data-i18n="voiceLead">تحدّث بأمرك، فيُفهم ويُنفّذ عبر الأدوات نفسها، ثم يجيبك بصوت.</p>
+
       <div class="card">
         <div class="voice-stage">
-          <div class="character" id="character" data-state="idle" aria-hidden="true">
-            <div>
+          <div class="character" id="character" data-state="idle" role="img" aria-label="المساعد الذكي الخارق">
+            <div class="face">
               <div class="eyes"><i></i><i></i></div>
               <div class="mouth" id="characterMouth" data-shape="closed"></div>
             </div>
@@ -174,18 +425,20 @@
               <span class="muted" id="voiceEngines"></span>
             </div>
             <div class="muted" id="voiceReason"></div>
+            <div class="voice-controls">
+              <button class="mic-hero" id="voiceListenBtn" data-active="false" data-i18n-title="listen" title="استمع" aria-label="استمع">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+              </button>
+              <button class="btn ghost" id="voiceStopBtn" data-i18n="stopListening">إيقاف</button>
+              <button class="btn ghost" id="voiceSpeakBtn" data-i18n="sayIt">انطق الردّ</button>
+            </div>
+            <div class="voice-controls">
+              <label class="muted" for="voiceSeconds" data-i18n="listenFor">مدّة الاستماع (ثوانٍ)</label>
+              <input type="number" id="voiceSeconds" value="5" min="1" max="60" style="max-width:96px" />
+              <label class="muted" for="voiceDevice" data-i18n="audioDevice">جهاز الصوت</label>
+              <select id="voiceDevice" style="max-width:260px"></select>
+            </div>
           </div>
-        </div>
-        <div class="voice-controls">
-          <button class="btn" id="voiceListenBtn" data-i18n="listen">استمع</button>
-          <button class="btn ghost" id="voiceStopBtn" data-i18n="stopListening">إيقاف</button>
-          <button class="btn ghost" id="voiceSpeakBtn" data-i18n="sayIt">انطق الردّ</button>
-        </div>
-        <div class="row wrap" style="margin-top:10px">
-          <label for="voiceSeconds" data-i18n="listenFor">مدّة الاستماع (ثوانٍ)</label>
-          <input type="text" id="voiceSeconds" value="5" style="max-width:90px" />
-          <label for="voiceDevice" data-i18n="microphone">الميكروفون</label>
-          <select id="voiceDevice"></select>
         </div>
       </div>
 
@@ -193,8 +446,8 @@
         <div class="card">
           <h3 data-i18n="heard">ما سمعته</h3>
           <textarea class="voice-heard" id="voiceHeard" rows="3" spellcheck="false">—</textarea>
-          <div class="muted" data-i18n="heardHint">يمكنك تعديل النص قبل التنفيذ</div>
-          <div class="row wrap" style="margin-top:10px">
+          <div class="muted tiny" data-i18n="heardHint">يمكنك تعديل النص قبل التنفيذ</div>
+          <div class="voice-controls">
             <button class="btn" id="voiceRunBtn" data-i18n="runHeard">نفّذ ما سمعته</button>
           </div>
         </div>
@@ -204,135 +457,120 @@
         </div>
       </div>
 
-      <div class="card">
-        <h3 data-i18n="voiceModels">أصوات ونماذج الكلام</h3>
-        <div class="muted" id="voiceModelsNote"></div>
-        <div id="voiceModels"></div>
-      </div>
-
-      <div class="card">
-        <h3 data-i18n="voiceLog">سجل الإجراءات الصوتية</h3>
-        <div class="muted" id="voiceActionsCount"></div>
-        <div id="voiceActions"></div>
-      </div>
+      <h3 data-i18n="voiceModels">أصوات ونماذج الكلام</h3>
+      <div class="muted" id="voiceModelsNote"></div>
+      <div id="voiceModels"></div>
+      <h3 data-i18n="voiceLog">سجل الإجراءات الصوتية</h3>
+      <div class="card tight"><div class="muted" id="voiceActionsCount"></div><div id="voiceActions"></div></div>
     </section>
 
-    <section id="s-approvals">
-      <h2 data-i18n="approvals">مركز الموافقات</h2>
-      <div id="approvals"></div>
-    </section>
-
-    <section id="s-models">
-      <h2 data-i18n="models">مدير الذكاء المحلي</h2>
-      <div class="card">
-        <div class="row wrap">
-          <strong data-i18n="readiness">الجاهزية</strong>
-          <span class="pill" id="readyPill">—</span>
-          <span class="muted" id="activeModelLine"></span>
-          <button class="btn" id="setupBtn" data-i18n="runSetup" style="display:none">إعداد النموذج</button>
-          <button class="btn ghost" id="inferBtn" data-i18n="testInference">اختبار الاستدلال</button>
-        </div>
-        <div class="muted" id="readinessDetail"></div>
-      </div>
-      <div class="card"><div id="recommendation" class="muted"></div></div>
-      <div id="models"></div>
-    </section>
-
-    <section id="s-tools">
-      <h2 data-i18n="tools">الأدوات</h2>
-      <div class="card"><div class="muted" id="toolsCount"></div></div>
-      <div id="tools"></div>
-    </section>
-
-    <section id="s-artifacts">
-      <h2 data-i18n="artifacts">المستندات الناتجة</h2>
-      <div class="card"><div class="muted" id="artifactsCount"></div></div>
-      <div id="artifacts"></div>
-    </section>
-
-    <section id="s-workflows">
-      <h2 data-i18n="workflows">سير العمل</h2>
-      <div id="workflows"></div>
-    </section>
-
-    <section id="s-connectors">
-      <h2 data-i18n="connectors">الموصّلات</h2>
-      <div class="card"><div class="muted" id="connectorsState"></div></div>
-      <div id="connectors"></div>
-    </section>
-
-    <section id="s-computer">
-      <h2 data-i18n="computer">التحكم بالحاسوب</h2>
-      <div class="card"><div id="computer" class="muted"></div></div>
-    </section>
-
-    <section id="s-printing">
-      <h2 data-i18n="printing">الطباعة</h2>
-      <div class="card"><div id="printing" class="muted"></div></div>
-      <div class="card">
-        <h3 data-i18n="printJobs">مهام الطباعة</h3>
-        <div class="muted" id="printJobsCount"></div>
-        <div id="printJobs"></div>
-      </div>
-    </section>
-
-    <section id="s-memory">
-      <h2 data-i18n="memory">الذاكرة</h2>
-      <div id="memory"></div>
-    </section>
-
-    <section id="s-providers">
-      <h2 data-i18n="providers">مزوّدو الذكاء السحابي</h2>
-      <div class="card">
-        <div class="muted" id="providersDefault"></div>
-      </div>
-      <div id="providers"></div>
-    </section>
-
-    <section id="s-browser">
-      <h2 data-i18n="browser">متصفح الويب</h2>
-      <div class="card">
-        <div class="row wrap">
-          <span class="pill" id="browserState">—</span>
-          <button class="btn" id="provisionBtn" data-i18n="provision">تجهيز المتصفح</button>
-          <button class="btn ghost" id="cancelProvisionBtn" data-i18n="cancel">إلغاء</button>
-        </div>
-        <div class="muted" id="browserDetail"></div>
-        <pre class="muted" id="browserLog" style="white-space:pre-wrap; word-break:break-word;"></pre>
-      </div>
-      <div class="card"><h3 data-i18n="privacy">الخصوصية</h3><div id="browserPrivacy" class="muted"></div></div>
-    </section>
-
+    <!-- ============ SETTINGS ============ -->
     <section id="s-settings">
-      <h2 data-i18n="settings">الإعدادات</h2>
-      <div class="grid2">
-        <div class="card"><h3 data-i18n="privacy">الخصوصية</h3><div id="privacy"></div></div>
-        <div class="card"><h3 data-i18n="permissions">الصلاحيات</h3><div id="permissions"></div></div>
-      </div>
-      <div class="card"><h3 data-i18n="modes">وضع التشغيل</h3><div class="row wrap" id="modeRow"></div></div>
-      <div class="card"><h3 data-i18n="general">عام</h3><div id="settings"></div></div>
-    </section>
-
-    <section id="s-diagnostics">
-      <h2 data-i18n="diagnostics">التشخيص</h2>
-      <div class="card">
-        <div class="row"><button class="btn ghost" id="exportBtn" data-i18n="export">تصدير التشخيص (منقّح)</button></div>
-        <pre class="muted" id="diag" style="white-space:pre-wrap; word-break:break-word;"></pre>
+      <h1 data-i18n="settings">الإعدادات</h1>
+      <div class="tabs" id="settingsTabs" role="tablist"></div>
+      <div id="settingsPanes">
+        <div data-pane="appearance">
+          <fieldset class="fieldset"><legend data-i18n="appearance">المظهر</legend>
+            <div class="field"><span class="lbl" data-i18n="theme">السمة<span class="hint" data-i18n="themeHint">فاتح أو داكن</span></span>
+              <span class="ctl"><select id="setTheme"><option value="dark">داكن</option><option value="light">فاتح</option></select></span></div>
+            <div class="field"><span class="lbl" data-i18n="language">اللغة</span>
+              <span class="ctl"><select id="setLang"><option value="ar">العربية</option><option value="en">English</option></select></span></div>
+          </fieldset>
+        </div>
+        <div data-pane="voice" hidden>
+          <fieldset class="fieldset"><legend data-i18n="voice">الصوت</legend>
+            <div class="field"><span class="lbl" data-i18n="audioDevice">جهاز الصوت</span>
+              <span class="ctl"><select id="setDevice"></select></span></div>
+            <div class="field"><span class="lbl" data-i18n="privacy">الخصوصية</span><span class="ctl" id="setVoicePrivacy"></span></div>
+          </fieldset>
+          <div id="voiceSettingsModels"></div>
+        </div>
+        <div data-pane="models" hidden>
+          <fieldset class="fieldset"><legend data-i18n="models">مدير الذكاء المحلي</legend>
+            <div class="row wrap">
+              <span class="pill" id="readyPill">—</span>
+              <span class="muted" id="activeModelLine"></span>
+              <button class="btn" id="setupBtn" data-i18n="runSetup" style="display:none">إعداد النموذج</button>
+              <button class="btn ghost" id="inferBtn" data-i18n="testInference">اختبار الاستدلال</button>
+            </div>
+            <div class="muted" id="readinessDetail"></div>
+          </fieldset>
+          <div class="card"><div id="recommendation" class="muted"></div></div>
+          <div id="models"></div>
+        </div>
+        <div id="s-providers" data-pane="providers" hidden>
+          <div class="card"><div class="muted" id="providersDefault"></div></div>
+          <div id="providers"></div>
+        </div>
+        <div data-pane="permissions" hidden>
+          <div class="grid2">
+            <div class="card"><h3 data-i18n="privacy">الخصوصية</h3><div id="privacy"></div></div>
+            <div class="card"><h3 data-i18n="permissions">الصلاحيات</h3><div id="permissions"></div></div>
+          </div>
+          <div class="card"><h3 data-i18n="modes">وضع التشغيل</h3><div class="row wrap" id="modeRow"></div></div>
+        </div>
+        <div data-pane="workspace" hidden>
+          <fieldset class="fieldset"><legend data-i18n="general">عام</legend><div id="settings"></div></fieldset>
+        </div>
+        <div data-pane="advanced" hidden>
+          <p class="muted" data-i18n="advancedHint">أدوات متقدمة وواجهات تشغيلية. لا تتغيّر هنا إلا عند الحاجة.</p>
+          <h3 data-i18n="browser">متصفح الويب</h3>
+          <div id="s-browser" class="card">
+            <div class="row wrap">
+              <span class="pill" id="browserState">—</span>
+              <button class="btn" id="provisionBtn" data-i18n="provision">تجهيز المتصفح</button>
+              <button class="btn ghost" id="cancelProvisionBtn" data-i18n="cancel">إلغاء</button>
+            </div>
+            <div class="muted" id="browserDetail"></div>
+            <pre class="muted" id="browserLog" style="white-space:pre-wrap; word-break:break-word;"></pre>
+          </div>
+          <h3 data-i18n="tools">الأدوات</h3>
+          <div class="card tight"><div class="muted" id="toolsCount"></div><div id="tools"></div></div>
+          <h3 data-i18n="connectors">الموصّلات</h3>
+          <div class="card tight"><div class="muted" id="connectorsState"></div><div id="connectors"></div></div>
+          <h3 data-i18n="computer">التحكم بالحاسوب</h3>
+          <div class="card tight"><div id="computer" class="muted"></div></div>
+          <h3 data-i18n="printing">الطباعة</h3>
+          <div id="s-printing">
+            <div class="card tight"><div id="printing" class="muted"></div></div>
+            <div class="card tight"><div class="muted" id="printJobsCount"></div><div id="printJobs"></div></div>
+          </div>
+        </div>
+        <div data-pane="about" hidden>
+          <fieldset class="fieldset"><legend data-i18n="about">حول</legend>
+            <div class="field"><span class="lbl" data-i18n="product">المنتج</span><span class="ctl" id="aboutProduct">Super AI Agent</span></div>
+            <div class="field"><span class="lbl" data-i18n="brand">العلامة</span><span class="ctl">SUPER AI</span></div>
+            <div class="field"><span class="lbl" data-i18n="version">الإصدار</span><span class="ctl" id="aboutVersion">—</span></div>
+          </fieldset>
+          <h3 data-i18n="diagnostics">التشخيص</h3>
+          <div class="card">
+            <div class="row"><button class="btn ghost" id="exportBtn" data-i18n="export">تصدير التشخيص (منقّح)</button></div>
+            <pre class="muted" id="diag" style="white-space:pre-wrap; word-break:break-word;"></pre>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
     "use strict";
     // ---- i18n (Arabic is first-class; English is the alternate) ----
     const I18N = {
-      ar: { workspace:"مساحة العمل", approvals:"مركز الموافقات", models:"مدير الذكاء المحلي",
-        settings:"الإعدادات", diagnostics:"التشخيص", sessions:"المهام", activity:"سجل النشاط الحيّ",
+      ar: { homeTitle:"مركز القيادة", homeLead:"اكتب هدفك أو تحدّث به، وسيتولّى الوكيل التخطيط والتنفيذ والتحقق.",
+        home:"الرئيسية", agentsTitle:"الوكلاء المتخصصون", agentsLead:"كل وكيل هو نطاق أدوات فوق النواة نفسها. الحالة معروضة كما هي الحقيقة في هذه البيئة.",
+        agents:"الوكلاء", projectsTitle:"المشاريع والمستندات", projectsLead:"مهامك مجمّعة حسب مساحة العمل، ومستنداتها الناتجة قابلة للفتح مباشرة.",
+        projects:"المشاريع", activityTitle:"مركز التنفيذ والنشاط", activityLead:"ما يجري الآن، الخطوات، الأدوات، الموافقات، والأخطاء — كلها من سجل التدقيق الحقيقي.",
+        activity:"النشاط", settings:"الإعدادات", diagnostics:"التشخيص", voice:"المساعد الصوتي",
+        voiceLead:"تحدّث بأمرك، فيُفهم ويُنفّذ عبر الأدوات نفسها، ثم يجيبك بصوت.",
+        openVoice:"المساعد الصوتي", skipToMain:"تخطَّ إلى المحتوى", theme:"السمة", themeShort:"المظهر",
+        themeHint:"فاتح أو داكن", appearance:"المظهر", language:"اللغة", about:"حول", product:"المنتج",
+        brand:"العلامة", version:"الإصدار", advancedHint:"أدوات متقدمة وواجهات تشغيلية. لا تتغيّر هنا إلا عند الحاجة.",
+        general:"عام", workspace:"مساحة العمل", approvals:"مركز الموافقات", models:"مدير الذكاء المحلي",
         timeline:"الخط الزمني للمهمة", start:"ابدأ المهمة", selectRun:"اختر مهمة لعرض تفاصيلها",
-        goalPh:"اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا", privacy:"الخصوصية",
-        permissions:"الصلاحيات", modes:"وضع التشغيل", general:"عام", export:"تصدير التشخيص (منقّح)",
+        goalLabel:"هدف المهمة", goalPh:"اكتب هدفك… مثال: رتّب ملفات المشروع وأعدّ تقريرًا", privacy:"الخصوصية",
+        permissions:"الصلاحيات", modes:"وضع التشغيل", export:"تصدير التشخيص (منقّح)",
         stop:"إيقاف", approve:"موافقة", deny:"رفض", install:"تثبيت", verify:"تحقّق", health:"فحص",
         remove:"إزالة", installed:"مثبّت", notInstalled:"غير مثبّت", active:"نشط", empty:"لا يوجد",
         noRuns:"لا توجد مهام بعد", noApprovals:"لا توجد موافقات معلّقة", free:"متاح",
@@ -346,6 +584,9 @@
         printer:"الطابعة", jobId:"معرّف المهمة", created:"أُنشئت",
         memory:"الذاكرة", readyState:"جاهز للتشغيل", notReady:"غير جاهز", activate:"تنشيط",
         activeModel:"النموذج النشط", noActiveModel:"لا يوجد نموذج نشط", readiness:"الجاهزية",
+        localModel:"النموذج المحلي", microphone:"الميكروفون", tasks:"المهام", activeTasks:"المهام النشطة",
+        noActivity:"لا يوجد نشاط بعد", recentArtifacts:"أحدث المستندات", specialistsTitle:"الوكلاء المتخصصون",
+        specialistTable:"جدول الجهوزية", byWorkspace:"حسب مساحة العمل", filter:"تصفية…", refresh:"تحديث",
         setupNeeded:"يلزم الإعداد", firstRun:"الإعداد الأولي", runSetup:"إعداد النموذج",
         permissionsCol:"الصلاحيات", sideEffecting:"ذو أثر جانبي", yes:"نعم", no:"لا",
         noTools:"لا توجد أدوات", noWorkflows:"لا يوجد سير عمل", noConnectors:"لا توجد موصّلات",
@@ -358,11 +599,12 @@
         inferenceFailed:"فشل اختبار الاستدلال", inferenceNotRun:"لم يُجرَ اختبار الاستدلال بعد",
         previewEffect:"الأثر المتوقّع", specialist:"الوكيل المتخصص", degraded:"ناقص",
         missingTools:"أدوات غير متوفّرة", specialistCol:"الوكيل", noSpecialists:"لا يوجد وكلاء متخصصون",
-        voice:"المساعد الصوتي", listen:"استمع", stopListening:"إيقاف", sayIt:"انطق الردّ",
-        listenFor:"مدّة الاستماع (ثوانٍ)", microphone:"الميكروفون", heard:"ما سمعته", reply:"الردّ",
-        runHeard:"نفّذ ما سمعته", heardHint:"يمكنك تعديل النص قبل التنفيذ", voiceModels:"أصوات ونماذج الكلام", voiceLog:"سجل الإجراءات الصوتية",
-        noVoiceModels:"لا توجد نماذج كلام في الكتالوج", noVoiceActions:"لا توجد إجراءات صوتية بعد",
-        heardEmpty:"—", replyEmpty:"—", voiceDisabled:"الصوت غير مفعّل في الإعدادات",
+        listen:"استمع", stopListening:"إيقاف", sayIt:"انطق الردّ", audioDevice:"جهاز الصوت",
+        listenFor:"مدّة الاستماع (ثوانٍ)", heard:"ما سمعته", reply:"الردّ",
+        runHeard:"نفّذ ما سمعته", heardHint:"يمكنك تعديل النص قبل التنفيذ", voiceModels:"أصوات ونماذج الكلام",
+        voiceLog:"سجل الإجراءات الصوتية", noVoiceModels:"لا توجد نماذج كلام في الكتالوج",
+        noVoiceActions:"لا توجد إجراءات صوتية بعد", heardEmpty:"—", replyEmpty:"—",
+        voiceDisabled:"الصوت غير مفعّل في الإعدادات",
         micAllowed:"الميكروفون مسموح", micNeedsApproval:"الميكروفون يحتاج موافقة", micDenied:"الميكروفون ممنوع",
         speakerAllowed:"مكبّر الصوت مسموح", speakerNeedsApproval:"مكبّر الصوت يحتاج موافقة",
         speakerDenied:"مكبّر الصوت ممنوع", voiceIdle:"خامل", voiceListening:"يستمع",
@@ -370,12 +612,21 @@
         voiceSuccess:"تمّ", voiceError:"خطأ", voiceNotAvailable:"الصوت غير متاح",
         installVoice:"تثبيت", removeVoice:"إزالة", voiceInstalled:"مثبّت", voiceNotInstalled:"غير مثبّت",
         kindSTT:"تحويل الكلام إلى نص", kindTTS:"تحويل النص إلى كلام",
-        voiceStopped:"تمّ الإيقاف", voiceNothingHeard:"لم أسمع شيئًا", voiceNoReply:"لا يوجد ردّ بعد" },
-      en: { workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
-        settings:"Settings", diagnostics:"Diagnostics", sessions:"Tasks", activity:"Live activity",
+        voiceStopped:"تمّ الإيقاف", voiceNothingHeard:"لم أسمع شيئًا", voiceNoReply:"لا يوجد ردّ بعد",
+        capability:"القدرات", domains:"المجالات", missingCaps:"قدرات ناقصة", useAgent:"استخدم هذا الوكيل" },
+      en: { homeTitle:"Command Center", homeLead:"Type or speak your goal; the agent plans, executes and verifies.",
+        home:"Home", agentsTitle:"Specialist Agents", agentsLead:"Each agent is a tool scope over the same core. Status is shown as the environment truly reports it.",
+        agents:"Agents", projectsTitle:"Projects & Documents", projectsLead:"Your tasks grouped by workspace, with their generated documents ready to open.",
+        projects:"Projects", activityTitle:"Execution & Activity", activityLead:"What runs now, its steps, tools, approvals and errors — all from the real audit trail.",
+        activity:"Activity", settings:"Settings", diagnostics:"Diagnostics", voice:"Voice assistant",
+        voiceLead:"Speak your command; it is understood, executed with the same tools, and answered by voice.",
+        openVoice:"Voice assistant", skipToMain:"Skip to content", theme:"Theme", themeShort:"Theme",
+        themeHint:"Light or dark", appearance:"Appearance", language:"Language", about:"About", product:"Product",
+        brand:"Brand", version:"Version", advancedHint:"Advanced tools and operational surfaces. Rarely needed.",
+        general:"General", workspace:"Workspace", approvals:"Approval Center", models:"Local AI Manager",
         timeline:"Run timeline", start:"Start task", selectRun:"Select a task to see details",
-        goalPh:"Describe your goal… e.g. tidy the project files and write a report", privacy:"Privacy",
-        permissions:"Permissions", modes:"Operating mode", general:"General", export:"Export diagnostics (redacted)",
+        goalLabel:"Task goal", goalPh:"Describe your goal… e.g. tidy the project files and write a report", privacy:"Privacy",
+        permissions:"Permissions", modes:"Operating mode", export:"Export diagnostics (redacted)",
         stop:"Stop", approve:"Approve", deny:"Deny", install:"Install", verify:"Verify", health:"Health check",
         remove:"Remove", installed:"installed", notInstalled:"not installed", active:"active", empty:"none",
         noRuns:"No tasks yet", noApprovals:"No pending approvals", free:"free",
@@ -389,6 +640,9 @@
         printer:"Printer", jobId:"Job id", created:"Created",
         memory:"Memory", readyState:"Ready to run", notReady:"Not ready", activate:"Activate",
         activeModel:"Active model", noActiveModel:"No active model", readiness:"Readiness",
+        localModel:"Local model", microphone:"Microphone", tasks:"Tasks", activeTasks:"Active tasks",
+        noActivity:"No activity yet", recentArtifacts:"Recent documents", specialistsTitle:"Specialist agents",
+        specialistTable:"Readiness table", byWorkspace:"By workspace", filter:"Filter…", refresh:"Refresh",
         setupNeeded:"Setup required", firstRun:"First-run setup", runSetup:"Set up a model",
         permissionsCol:"Permissions", sideEffecting:"Side-effecting", yes:"yes", no:"no",
         noTools:"No tools", noWorkflows:"No workflows", noConnectors:"No connectors",
@@ -401,11 +655,12 @@
         inferenceFailed:"Inference test failed", inferenceNotRun:"Inference test not run yet",
         previewEffect:"Expected effect", specialist:"Specialist agent", degraded:"degraded",
         missingTools:"Missing tools", specialistCol:"Agent", noSpecialists:"No specialists",
-        voice:"Voice assistant", listen:"Listen", stopListening:"Stop", sayIt:"Speak reply",
-        listenFor:"Listen for (seconds)", microphone:"Microphone", heard:"What I heard", reply:"Reply",
-        runHeard:"Run what I heard", heardHint:"You can edit the text before running it", voiceModels:"Voices & speech models", voiceLog:"Voice action log",
-        noVoiceModels:"No speech models in the catalogue", noVoiceActions:"No voice actions yet",
-        heardEmpty:"—", replyEmpty:"—", voiceDisabled:"Voice is disabled in settings",
+        listen:"Listen", stopListening:"Stop", sayIt:"Speak reply", audioDevice:"Audio device",
+        listenFor:"Listen for (seconds)", heard:"What I heard", reply:"Reply",
+        runHeard:"Run what I heard", heardHint:"You can edit the text before running it", voiceModels:"Voices & speech models",
+        voiceLog:"Voice action log", noVoiceModels:"No speech models in the catalogue",
+        noVoiceActions:"No voice actions yet", heardEmpty:"—", replyEmpty:"—",
+        voiceDisabled:"Voice is disabled in settings",
         micAllowed:"Microphone allowed", micNeedsApproval:"Microphone needs approval", micDenied:"Microphone denied",
         speakerAllowed:"Speaker allowed", speakerNeedsApproval:"Speaker needs approval",
         speakerDenied:"Speaker denied", voiceIdle:"Idle", voiceListening:"Listening",
@@ -413,9 +668,11 @@
         voiceSuccess:"Done", voiceError:"Error", voiceNotAvailable:"Voice unavailable",
         installVoice:"Install", removeVoice:"Remove", voiceInstalled:"installed", voiceNotInstalled:"not installed",
         kindSTT:"Speech to text", kindTTS:"Text to speech",
-        voiceStopped:"Stopped", voiceNothingHeard:"I heard nothing", voiceNoReply:"No reply yet" }
+        voiceStopped:"Stopped", voiceNothingHeard:"I heard nothing", voiceNoReply:"No reply yet",
+        capability:"Capabilities", domains:"Domains", missingCaps:"Missing capabilities", useAgent:"Use this agent" }
     };
     let LANG = localStorage.getItem("aap_lang") || "ar";
+    let THEME = localStorage.getItem("aap_theme") || "dark";
     const t = (k) => (I18N[LANG][k] || k);
     const dir = () => (LANG === "ar" ? "rtl" : "ltr");
 
@@ -426,36 +683,74 @@
     let toastTimer = null;
     function toast(msg, kind) {
       const box = $("toast"); box.textContent = msg; box.className = "toast show" + (kind ? " " + kind : "");
-      clearTimeout(toastTimer); toastTimer = setTimeout(() => { box.className = "toast"; }, 4000);
+      clearTimeout(toastTimer); toastTimer = setTimeout(() => { box.className = "toast"; }, 4500);
+    }
+    function applyTheme() {
+      document.documentElement.setAttribute("data-theme", THEME);
+      const b = $("themeIcon"); if (b) b.textContent = THEME === "light" ? "☀" : "◐";
+      const s = $("setTheme"); if (s) s.value = THEME;
     }
     function setActive(section) {
       document.querySelectorAll("main section").forEach(s => s.classList.remove("active"));
-      $("s-" + section).classList.add("active");
+      const target = $("s-" + section); if (target) target.classList.add("active");
       document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.section === section));
-      if (section === "artifacts") refreshArtifacts();
-      if (section === "printing") refreshPrinting();
+      if (section === "projects") refreshProjects();
       if (section === "voice") refreshVoice();
+      if (section === "settings") refreshPrinting();
+      if (section === "activity") refreshActivity();
     }
 
-    // ---- navigation ----
-    const SECTIONS = ["workspace","voice","approvals","models","providers","tools","artifacts","workflows","connectors","computer","printing","memory","browser","settings","diagnostics"];
+    // ---- navigation: four destinations + voice + settings ----
+    const ICONS = {
+      home:'<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
+      agents:'<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M17 9h4M19 7v4"/>',
+      projects:'<path d="M3 7h6l2 2h10v9H3z"/>',
+      activity:'<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+      voice:'<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>',
+      settings:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>'
+    };
+    const SECTIONS = [
+      { id:"home", key:"home", icon:"home" },
+      { id:"agents", key:"agents", icon:"agents" },
+      { id:"projects", key:"projects", icon:"projects" },
+      { id:"activity", key:"activity", icon:"activity" },
+      { id:"voice", key:"voice", icon:"voice" },
+      { id:"settings", key:"settings", icon:"settings" }
+    ];
+    function navIcon(name) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "1.8");
+      svg.setAttribute("aria-hidden", "true");
+      svg.innerHTML = ICONS[name] || "";
+      return svg;
+    }
     function buildNav() {
       const nav = $("nav"); nav.replaceChildren();
       SECTIONS.forEach(s => {
-        const b = el("button", t(s)); b.dataset.section = s; b.onclick = () => setActive(s);
+        const b = el("button"); b.dataset.section = s.id; b.type = "button";
+        b.appendChild(navIcon(s.icon));
+        const span = el("span", t(s.key)); span.className = "txt"; b.appendChild(span);
+        b.setAttribute("aria-label", t(s.key));
+        b.onclick = () => setActive(s.id);
         nav.appendChild(b);
       });
-      document.querySelector('nav button[data-section="workspace"]').classList.add("active");
+      const active = document.querySelector("nav button.active");
+      const first = nav.querySelector('nav button[data-section="home"]');
+      if (!active && first) first.classList.add("active");
     }
 
     function applyI18n() {
       document.documentElement.lang = LANG; document.documentElement.dir = dir();
       document.querySelectorAll("[data-i18n]").forEach(n => { n.textContent = t(n.dataset.i18n); });
       document.querySelectorAll("[data-i18n-ph]").forEach(n => { n.placeholder = t(n.dataset.i18nPh); });
+      document.querySelectorAll("[data-i18n-title]").forEach(n => { n.title = t(n.dataset.i18nTitle); });
       $("langBtn").textContent = LANG === "ar" ? "EN" : "ع";
-      $("brand").textContent = LANG === "ar" ? "الوكيل العربي" : "Arabic AI Agent";
+      $("brand").textContent = LANG === "ar" ? "سوبر إي آي" : "SUPER AI";
+      $("brandSub").textContent = LANG === "ar" ? "SUPER AI AGENT" : "سوبر إي آي";
       $("stopBtn").textContent = t("stop");
       buildNav();
+      buildSettingsTabs();
     }
 
     // ---- rendering ----
@@ -495,6 +790,7 @@
       const fallback = (data && data.default) || SPECIALISTS[0].id;
       select.value = SPECIALISTS.some(s => s.id === previous) ? previous : fallback;
       renderSpecialistDetail();
+      renderAgentCards(SPECIALISTS);
     }
     function renderSpecialistDetail() {
       const id = $("specialistSelect").value;
@@ -509,11 +805,87 @@
       $("specialistMissing").textContent = (s.missing_tools && s.missing_tools.length)
         ? (t("missingTools") + ": " + s.missing_tools.join(", ")) : "";
     }
+    function agentIcon() {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "1.7");
+      svg.setAttribute("aria-hidden", "true");
+      svg.innerHTML = '<circle cx="12" cy="8" r="3.2"/><path d="M5 20a7 7 0 0 1 14 0"/>';
+      return svg;
+    }
+    // One card per specialist. Readiness, missing tools and capabilities are the
+    // service's real values — a degraded agent is shown degraded, never hidden.
+    function renderAgentCards(list) {
+      const home = $("homeSpecialists"); const hub = $("agents");
+      if (home) home.replaceChildren();
+      if (hub) hub.replaceChildren();
+      const bind = (card, s) => {
+        const btn = card.querySelector("button");
+        if (btn) btn.onclick = () => { $("specialistSelect").value = s.id;
+          renderSpecialistDetail(); renderAgentCards(SPECIALISTS); setActive("home"); };
+      };
+      const cards = (list || []).map(s => {
+        const card = el("div"); card.className = "agentcard";
+        if (s.id === $("specialistSelect").value) card.classList.add("sel");
+        const head = el("div"); head.className = "head";
+        const ico = el("span"); ico.className = "ico"; ico.appendChild(agentIcon()); head.appendChild(ico);
+        const nm = el("span", specialistName(s)); nm.className = "nm"; head.appendChild(nm);
+        head.appendChild(readinessPill(s.status));
+        card.appendChild(head);
+        const desc = el("div", LANG === "ar" ? s.description_ar : s.description_en);
+        desc.className = "desc"; card.appendChild(desc);
+        if (s.domains && s.domains.length) {
+          const row = el("div"); row.className = "row wrap";
+          s.domains.forEach(d => { const p = el("span", d); p.className = "pill"; row.appendChild(p); });
+          card.appendChild(row);
+        }
+        if (s.missing_tools && s.missing_tools.length) {
+          const miss = el("div", t("missingTools") + ": " + s.missing_tools.join(", "));
+          miss.className = "muted"; card.appendChild(miss);
+        }
+        const use = el("button", t("useAgent")); use.className = "btn ghost";
+        card.appendChild(use);
+        bind(card, s);
+        return card;
+      });
+      if (home) cards.forEach(c => { const clone = c.cloneNode(true); bind(clone, (list || [])[cards.indexOf(c)]); home.appendChild(clone); });
+      if (hub) cards.forEach(c => hub.appendChild(c));
+      renderAgentsSummary(list);
+    }
+    function renderAgentsSummary(list) {
+      const box = $("agentsSummary"); if (!box) return;
+      const items = list || [];
+      const avail = items.filter(s => s.status === "available").length;
+      const deg = items.filter(s => s.status === "degraded").length;
+      const un = items.filter(s => s.status === "unavailable").length;
+      box.textContent = `${items.length} · ${t("available")}: ${avail} · ${t("degraded")}: ${deg} · ${t("unavailable")}: ${un}`;
+      const table = $("agentsTable"); if (!table) return;
+      table.replaceChildren();
+      if (!items.length) { const d = el("div", t("noSpecialists")); d.className = "empty"; table.appendChild(d); return; }
+      const tb = el("table"); const head = el("tr");
+      [t("specialistCol"), t("status"), t("capability"), t("missingTools")].forEach(h => head.appendChild(el("th", h)));
+      tb.appendChild(head);
+      items.forEach(s => {
+        const tr = el("tr");
+        tr.appendChild(el("td", specialistName(s)));
+        const st = el("td"); st.appendChild(readinessPill(s.status)); tr.appendChild(st);
+        tr.appendChild(el("td", (s.tool_scope ? s.tool_scope.length : 0) + ""));
+        tr.appendChild(el("td", (s.missing_tools && s.missing_tools.length) ? s.missing_tools.join(", ") : "—"));
+        tb.appendChild(tr);
+      });
+      table.appendChild(tb);
+    }
     function renderRuns(runs) {
       const box = $("runs"); box.replaceChildren();
+      const count = $("homeRunsCount"); if (count) count.textContent = (runs || []).length + "";
+      const detail = $("homeRunsDetail");
+      if (detail) {
+        const active = (runs || []).filter(r => !["completed","failed","cancelled"].includes(r.status)).length;
+        detail.textContent = t("activeTasks") + ": " + active;
+      }
       if (!runs || !runs.length) { const d = el("div", t("noRuns")); d.className = "empty"; box.appendChild(d); return; }
       const table = el("table"); const head = el("tr");
-      [t("sessions"), t("specialistCol"), t("status"), ""].forEach(h => head.appendChild(el("th", h)));
+      [t("tasks"), t("specialistCol"), t("status"), ""].forEach(h => head.appendChild(el("th", h)));
       table.appendChild(head);
       runs.forEach(r => {
         const tr = el("tr");
@@ -523,7 +895,7 @@
         const statusTd = el("td"); statusTd.appendChild(pill(r.status)); tr.appendChild(statusTd);
         const actions = el("td");
         const open = el("button", "↗"); open.className = "btn ghost";
-        open.onclick = () => loadTimeline(r.id); actions.appendChild(open);
+        open.onclick = () => { setActive("activity"); loadTimeline(r.id); }; actions.appendChild(open);
         if (!["completed","failed","cancelled"].includes(r.status)) {
           const stop = el("button", t("stop")); stop.className = "btn danger";
           stop.onclick = () => stopRun(r.id); actions.appendChild(stop);
@@ -531,12 +903,50 @@
         tr.appendChild(actions); table.appendChild(tr);
       });
       box.appendChild(table);
+      renderProjects(runs);
+    }
+    // Projects are runs grouped by their real workspace directory — an honest
+    // grouping of existing data, not an invented project entity.
+    function renderProjects(runs) {
+      const box = $("projects"); if (!box) return;
+      const filter = (($("projectFilter") && $("projectFilter").value) || "").trim().toLowerCase();
+      box.replaceChildren();
+      const groups = new Map();
+      (runs || []).forEach(r => {
+        const key = r.workspace_dir || "—";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(r);
+      });
+      let shown = 0;
+      groups.forEach((items, key) => {
+        const match = items.filter(r => !filter || String(r.goal).toLowerCase().includes(filter));
+        if (!match.length) return;
+        shown += match.length;
+        const card = el("div"); card.className = "card";
+        const head = el("div"); head.className = "row wrap between";
+        head.appendChild(el("strong", key));
+        const p = el("span", match.length + ""); p.className = "pill brand"; head.appendChild(p);
+        card.appendChild(head);
+        const ul = el("ul"); ul.className = "timeline";
+        match.forEach(r => {
+          const li = el("li");
+          li.appendChild(el("div", r.goal));
+          const meta = el("div", r.status + " · " + new Date(r.created_at).toLocaleString()); meta.className = "t";
+          li.appendChild(meta);
+          ul.appendChild(li);
+        });
+        card.appendChild(ul); box.appendChild(card);
+      });
+      if (!shown) { const d = el("div", t("noRuns")); d.className = "empty"; box.appendChild(d); }
     }
     function renderTimeline(entries) {
       const box = $("timeline"); box.replaceChildren();
       if (!entries || !entries.length) { const li = el("li", t("empty")); li.className = "empty"; box.appendChild(li); return; }
       entries.forEach(e => {
         const li = el("li");
+        if (e.type && /fail|error|denied/i.test(e.type)) li.classList.add("danger");
+        else if (e.type && /approval/i.test(e.type)) li.classList.add("warn");
+        else if (e.type && /complete/i.test(e.type)) li.classList.add("ok");
         li.appendChild(el("div", e.message || e.type));
         const meta = el("div", e.type + " · " + new Date(e.timestamp).toLocaleTimeString());
         meta.className = "t"; li.appendChild(meta);
@@ -588,7 +998,15 @@
       } else if (am && am.model_id) {
         $("readinessDetail").textContent = (r && r.detail ? r.detail + " · " : "") + t("inferenceNotRun");
       }
+      // Home readiness strip — same real values, plain language.
+      const hs = $("homeModelState"), hd = $("homeModelDetail");
+      if (hs) {
+        hs.textContent = ready ? t("readyState") : (selected ? t("notReady") : t("noActiveModel"));
+        hs.className = "v " + (ready ? "ok" : "");
+      }
+      if (hd) hd.textContent = (am && am.model_id) ? am.model_id : t("runSetup");
     }
+
     function renderModels(models, recommendation) {
       if (recommendation) $("recommendation").textContent =
         (LANG === "ar" ? "التوصية: " : "Recommended: ") + recommendation.profile + " — " + recommendation.reason;
@@ -631,7 +1049,7 @@
       $("toolsCount").textContent = (data && data.count != null ? data.count : items.length) + "";
       if (!items.length) { const d = el("div", t("noTools")); d.className = "empty"; box.appendChild(d); return; }
       items.forEach(tool => {
-        const card = el("div"); card.className = "card";
+        const card = el("div"); card.className = "card tight";
         const head = el("div"); head.className = "row wrap";
         head.appendChild(el("strong", tool.name));
         (tool.permissions || []).forEach(p => { const s = el("span", p); s.className = "pill"; head.appendChild(s); });
@@ -641,33 +1059,39 @@
         box.appendChild(card);
       });
     }
+    function artifactRow(a) {
+      const row = el("div"); row.className = "artifact";
+      const ft = el("span", (a.format || "").toUpperCase()); ft.className = "ft"; row.appendChild(ft);
+      const body = el("div"); body.style.flex = "1";
+      body.appendChild(el("div", a.name));
+      const meta = el("div", `${t("size")}: ${a.bytes} B · ${a.run_id}`); meta.className = "muted tiny";
+      body.appendChild(meta); row.appendChild(body);
+      if (a.openable) {
+        const open = el("button", t("open")); open.className = "btn ghost";
+        open.onclick = () => openArtifact(a.run_id, a.path);
+        row.appendChild(open);
+      }
+      return row;
+    }
     function renderArtifacts(data) {
       const box = $("artifacts"); box.replaceChildren();
       const items = (data && data.artifacts) || [];
       $("artifactsCount").textContent = (data && data.count != null ? data.count : items.length) + "";
       if (!items.length) { const d = el("div", t("noArtifacts")); d.className = "empty"; box.appendChild(d); return; }
-      items.forEach(a => {
-        const card = el("div"); card.className = "card";
-        const head = el("div"); head.className = "row wrap";
-        head.appendChild(el("strong", a.name));
-        const f = el("span", a.format); f.className = "pill"; head.appendChild(f);
-        if (a.openable) {
-          const open = el("button", t("open")); open.className = "btn ghost";
-          open.onclick = () => openArtifact(a.run_id, a.path);
-          head.appendChild(open);
-        }
-        card.appendChild(head);
-        const meta = el("div", `${t("size")}: ${a.bytes} B · ${a.run_id}`); meta.className = "muted";
-        card.appendChild(meta);
-        box.appendChild(card);
-      });
+      items.forEach(a => box.appendChild(artifactRow(a)));
+      const home = $("homeArtifacts"); if (home) {
+        home.replaceChildren();
+        const recent = items.slice(0, 4);
+        if (!recent.length) { const d = el("div", t("noArtifacts")); d.className = "empty"; home.appendChild(d); }
+        else recent.forEach(a => home.appendChild(artifactRow(a)));
+      }
     }
     function renderWorkflows(data) {
       const box = $("workflows"); box.replaceChildren();
       const items = (data && data.workflows) || [];
       if (!items.length) { const d = el("div", t("noWorkflows")); d.className = "empty"; box.appendChild(d); return; }
       items.forEach(w => {
-        const card = el("div"); card.className = "card";
+        const card = el("div"); card.className = "card tight";
         const head = el("div"); head.className = "row wrap";
         head.appendChild(el("strong", w.name));
         const st = el("span", w.status); st.className = "pill"; head.appendChild(st);
@@ -683,7 +1107,7 @@
       const items = (data && data.connectors) || [];
       if (!items.length) { const d = el("div", t("noConnectors")); d.className = "empty"; box.appendChild(d); return; }
       items.forEach(c => {
-        const card = el("div"); card.className = "card";
+        const card = el("div"); card.className = "card tight";
         const head = el("div"); head.className = "row wrap";
         head.appendChild(el("strong", c.name));
         const st = el("span", c.state); st.className = "pill"; head.appendChild(st);
@@ -698,7 +1122,7 @@
       const box = $("computer"); box.replaceChildren();
       const rows = [
         [t("enabled"), c && c.enabled ? t("yes") : t("no")],
-        ["available", c && c.available ? t("yes") : t("no")],
+        [t("available"), c && c.available ? t("yes") : t("no")],
         [t("screenPolicy"), (c && c.screen_policy) || "—"],
         ["pointer", c && c.pointer_allowed ? t("yes") : t("no")],
         ["keyboard", c && c.keyboard_allowed ? t("yes") : t("no")],
@@ -720,7 +1144,7 @@
       $("printJobsCount").textContent = (jobs && jobs.count != null ? jobs.count : items.length) + "";
       if (!items.length) { const d = el("div", t("noPrintJobs")); d.className = "empty"; listBox.appendChild(d); return; }
       items.forEach(j => {
-        const card = el("div"); card.className = "card";
+        const card = el("div"); card.className = "card tight";
         const head = el("div"); head.className = "row wrap";
         head.appendChild(el("strong", j.title || j.job_id));
         const st = el("span", j.status); st.className = "pill"; head.appendChild(st);
@@ -736,7 +1160,7 @@
       const items = (data && data.entries) || [];
       if (!items.length) { const d = el("div", t("noMemory")); d.className = "empty"; box.appendChild(d); return; }
       items.forEach(e => {
-        const card = el("div"); card.className = "card";
+        const card = el("div"); card.className = "card tight";
         const head = el("div"); head.className = "row wrap";
         head.appendChild(el("strong", e.key));
         const k = el("span", e.kind); k.className = "pill"; head.appendChild(k);
@@ -756,11 +1180,13 @@
         ["connectors", String(p.connectors_enabled)],
       ];
       rows.forEach(([k, v]) => { const d = el("div", k + ": " + v); d.className = "muted"; box.appendChild(d); });
+      const vp = $("setVoicePrivacy");
+      if (vp) vp.textContent = t("modes") + ": " + p.mode;
     }
     function renderPermissions(p) {
       const box = $("permissions"); box.replaceChildren();
       const table = el("table"); const head = el("tr");
-      ["", "التأثير"].forEach(h => head.appendChild(el("th", h))); table.appendChild(head);
+      ["", t("importance")].forEach(h => head.appendChild(el("th", h))); table.appendChild(head);
       (p.capabilities || []).forEach(c => {
         const tr = el("tr"); tr.appendChild(el("td", LANG === "ar" ? c.label_ar : c.permission));
         const td = el("td"); const span = el("span", c.effect); span.className = "pill";
@@ -777,6 +1203,8 @@
         const b = el("button", m); b.className = "btn " + (m === modes.current ? "" : "ghost");
         b.onclick = () => setMode(m); box.appendChild(b);
       });
+      $("modeBadge").textContent = modes.current || "—";
+      const rb = $("runtimeBadge"); if (rb) rb.textContent = (modes.current || "—");
     }
     function renderBrowser(b) {
       const pillBox = $("browserState");
@@ -789,14 +1217,6 @@
       else pillBox.classList.add("warn");
       $("browserDetail").textContent = (b && b.detail) || "";
       $("browserLog").textContent = (b && b.log_tail) || "";
-      const p = [];
-      if (b) {
-        p.push("enabled: " + b.enabled, "headless: " + b.headless);
-        if (b.chromium_path) p.push("chromium: " + b.chromium_path);
-        if (b.allowed_domains && b.allowed_domains.length) p.push("allowed: " + b.allowed_domains.join(", "));
-        if (b.blocked_domains && b.blocked_domains.length) p.push("blocked: " + b.blocked_domains.join(", "));
-      }
-      $("browserPrivacy").textContent = p.join("  ·  ");
       const busy = state === "installing";
       $("provisionBtn").disabled = busy;
       $("cancelProvisionBtn").disabled = !busy;
@@ -819,84 +1239,77 @@
           btn.disabled = true; out.textContent = "…";
           try {
             const r = await api().test_provider(pr.name);
-            out.textContent = r.ok ? ("✓ " + (r.latency_ms != null ? r.latency_ms + "ms" : "")) : ("✗ " + (r.error || ""));
-            out.className = "pill " + (r.ok ? "ok" : "danger");
-          } catch (e) { out.textContent = "✗ " + e; out.className = "pill danger"; }
+            out.textContent = (r && r.ok ? "✓ " : "✗ ") + ((r && r.detail) || "");
+          } catch (e) { out.textContent = String(e); }
           finally { btn.disabled = false; }
         };
         row.appendChild(btn); row.appendChild(out);
-        card.appendChild(row);
-        if (pr.model || pr.base_url) {
-          const meta = el("div", [pr.model, pr.base_url].filter(Boolean).join("  ·  "));
-          meta.className = "muted"; card.appendChild(meta);
-        }
-        box.appendChild(card);
+        card.appendChild(row); box.appendChild(card);
       });
     }
     function renderSettings(s) {
       const box = $("settings"); box.replaceChildren();
-      [["locale", s.general.locale], ["environment", s.general.environment],
-       ["default model", s.ai.default_model], ["local model", s.ai.local_model_name],
-       ["store dir", s.storage.store_dir]].forEach(([k, v]) => {
-        const d = el("div", k + ": " + v); d.className = "muted"; box.appendChild(d);
+      const rows = [
+        [t("workspace"), s.workspace && s.workspace.workspace_dir],
+        [t("language"), s.general && s.general.locale],
+        ["runtime", s.general && s.general.runtime_kind],
+        [t("activeModel"), s.ai && (s.ai.local_model_name || s.ai.default_model)],
+        ["store", s.storage && s.storage.store_dir],
+      ];
+      rows.forEach(([k, v]) => {
+        const d = el("div", k + ": " + (v || "—")); d.className = "muted"; box.appendChild(d);
       });
+      const langSel = $("setLang"); if (langSel) langSel.value = LANG;
+      const ws = s.workspace && s.workspace.workspace_dir;
+      const wsd = $("homeWorkspace"); if (wsd) wsd.textContent = ws || "—";
     }
     function renderDiagnostics(d) {
-      $("diag").textContent = JSON.stringify(d, null, 2);
-      $("verBadge").textContent = d.version || "—";
-      $("runtimeBadge").textContent = (d.runtime && d.runtime.state) || "—";
+      const box = $("diag"); if (box) box.textContent = JSON.stringify(d, null, 2);
+      const v = $("aboutVersion"); if (v) v.textContent = (d && d.version) || "—";
+      const badge = $("verBadge"); if (badge) badge.textContent = (d && d.version) || "—";
     }
 
-    // ---- voice ----
-    // The character is real data from the service; the viseme map it ships is
-    // what animates the mouth from the same Arabic text the agent speaks. No
-    // second animation engine, no fabricated mouth movement.
-    let VOICE = null;
+    // ---- assistant character: real data from the service ----
+    // The viseme map the service ships is what animates the mouth from the same
+    // Arabic text the agent speaks. No second animation engine, no fabricated
+    // mouth movement. When voice is off the character still renders, in a
+    // neutral idle state — the assistant has a presence even before setup.
+    let VOICE = {};
     let VOICE_LAST_REPLY = "";
     let mouthTimer = null;
     function setCharacterState(state) {
       const box = $("character"); if (!box) return;
       box.dataset.state = state || "idle";
-      const label = { idle:t("voiceIdle"), listening:t("voiceListening"), thinking:t("voiceThinking"),
-        speaking:t("voiceSpeaking"), waiting_approval:t("voiceWaiting"),
-        success:t("voiceSuccess"), error:t("voiceError") }[state] || state;
-      const pill = $("voiceState"); pill.textContent = label; pill.className = "pill";
-      if (state === "success") pill.classList.add("ok");
-      else if (state === "error") pill.classList.add("danger");
-      else if (state === "waiting_approval") pill.classList.add("warn");
+      const labels = { idle: t("voiceIdle"), listening: t("voiceListening"), thinking: t("voiceThinking"),
+        speaking: t("voiceSpeaking"), waiting_approval: t("voiceWaiting"), success: t("voiceSuccess"),
+        error: t("voiceError") };
+      const pill = $("voiceState"); if (pill) { pill.textContent = labels[state] || state; pill.className = "pill"; }
       // The mouth rests closed unless the character is speaking.
-      if (state !== "speaking") setMouth("closed");
+      if (state !== "speaking") { if (mouthTimer) { clearInterval(mouthTimer); mouthTimer = null; } setMouth("closed"); }
     }
     function setMouth(shape) { const m = $("characterMouth"); if (m) m.dataset.shape = shape || "closed"; }
     // Animate the mouth across a reply's text using the character's viseme map.
     // This is a genuine text→viseme mapping, not a random flap: each character is
-    // matched to the viseme whose phoneme set contains it.
+    // looked up in the map the service ships with the character definition.
     function animateMouth(text) {
-      const map = (VOICE && VOICE.character && VOICE.character.visemes) || [];
-      if (!map.length || !text) { setMouth("closed"); return; }
+      const map = (VOICE.character && VOICE.character.visemes) || [];
+      if (!map.length) return;
+      const lookup = new Map();
+      map.forEach(v => (v.phonemes || []).forEach(p => lookup.set(p, v.shape)));
+      const chars = Array.from(String(text || "")).filter(c => c.trim());
       const seq = [];
-      for (const ch of text) {
-        const low = ch.toLowerCase();
-        const v = map.find(x => (x.phonemes || []).some(p => p.toLowerCase() === low));
-        seq.push(v ? v.shape : "closed");
-      }
+      chars.forEach((c, i) => { const shape = lookup.get(c) || lookup.get(c.toLowerCase());
+        if (shape) seq.push(shape); else if (i % 3 === 0) seq.push("closed"); });
       if (mouthTimer) clearInterval(mouthTimer);
       let i = 0;
       mouthTimer = setInterval(() => {
-        setMouth(seq[i % seq.length]); i += 1;
-        if (i >= seq.length) { clearInterval(mouthTimer); mouthTimer = null; setMouth("closed"); }
+        if (i >= seq.length) { clearInterval(mouthTimer); mouthTimer = null; setMouth("closed"); return; }
+        setMouth(seq[i]); i += 1;
       }, 110);
     }
     function speechPolicyPill(kind, allowed, reason) {
-      // Under the default policy a speech permission "requires approval"; the
-      // capability view reports allowed=false with the real reason, so the pill
-      // says "needs approval" rather than falsely claiming it is usable.
-      let label, cls;
-      if (allowed) { label = kind === "mic" ? t("micAllowed") : t("speakerAllowed"); cls = "pill ok"; }
-      else if ((reason || "").toLowerCase().includes("approv")) { label = kind === "mic" ? t("micNeedsApproval") : t("speakerNeedsApproval"); cls = "pill warn"; }
-      else { label = kind === "mic" ? t("micDenied") : t("speakerDenied"); cls = "pill danger"; }
-      const span = el("span", label); span.className = cls;
-      span.title = reason || "";
+      const span = el("span", reason || (allowed ? t("micAllowed") : t("micDenied")));
+      span.className = "pill " + (allowed ? "ok" : "warn");
       return span;
     }
     function renderVoice(caps) {
@@ -904,54 +1317,51 @@
       const character = VOICE.character || {};
       $("voiceName").textContent = (LANG === "ar" ? character.name_ar : character.name_en) || "—";
       $("voiceTagline").textContent = (LANG === "ar" ? character.tagline_ar : character.tagline_en) || "";
-      const mic = $("voiceMicState"); mic.replaceChildren(speechPolicyPill("mic", VOICE.record_allowed, VOICE.record_reason));
-      const spk = $("voiceSpeakerState"); spk.replaceChildren(speechPolicyPill("speaker", VOICE.playback_allowed, VOICE.playback_reason));
-      const engines = [];
-      if (VOICE.stt_engine) engines.push("STT: " + VOICE.stt_engine + (VOICE.cloud_stt ? " (cloud)" : " (local)"));
-      if (VOICE.tts_engine) engines.push("TTS: " + VOICE.tts_engine + (VOICE.cloud_tts ? " (cloud)" : " (local)"));
-      $("voiceEngines").textContent = engines.join("  ·  ");
-      $("voiceReason").textContent = VOICE.available ? (VOICE.unavailable_reason || "") : (VOICE.unavailable_reason || t("voiceNotAvailable"));
-      // Honest button state: a disabled button is one the runtime cannot honour.
-      $("voiceListenBtn").disabled = !VOICE.enabled || !VOICE.can_record;
-      $("voiceSpeakBtn").disabled = !VOICE.enabled || !VOICE.can_synthesize;
-      $("voiceRunBtn").disabled = !VOICE.enabled;
-      if (VOICE.recording) setCharacterState("listening");
-      else if (VOICE.playing) setCharacterState("speaking");
-      else if (!VOICE.available) setCharacterState("error");
-      else setCharacterState("idle");
-      renderVoiceDevices(VOICE.devices || []);
+      $("voiceEngines").textContent = (VOICE.engines || []).join(", ");
+      $("voiceReason").textContent = VOICE.enabled ? (VOICE.detail || "") : t("voiceDisabled");
+      const mic = $("voiceMicState"), spk = $("voiceSpeakerState");
+      mic.replaceChildren(); spk.replaceChildren();
+      mic.appendChild(speechPolicyPill("mic", VOICE.microphone_allowed, VOICE.microphone_reason));
+      spk.appendChild(speechPolicyPill("speaker", VOICE.speaker_allowed, VOICE.speaker_reason));
+      const mics = $("homeMicState"), mdetail = $("homeMicDetail");
+      if (mics) {
+        mics.textContent = VOICE.enabled ? (VOICE.available ? t("available") : t("voiceNotAvailable")) : t("voiceDisabled");
+        mics.className = "v " + (VOICE.enabled && VOICE.available ? "ok" : "");
+      }
+      if (mdetail) mdetail.textContent = VOICE.microphone_reason || "";
+      // Rest the character in a neutral state unless it is mid-turn. Voice being
+      // unavailable still shows the assistant, idle — presence does not require a
+      // working microphone.
+      const ch = $("character"); if (ch && !ch.dataset.state) setCharacterState("idle");
     }
     function renderVoiceDevices(devices) {
-      const select = $("voiceDevice"); const previous = select.value;
-      select.replaceChildren();
-      const inputs = (devices || []).filter(d => d.kind === "input");
-      if (!inputs.length) { const o = el("option", t("unavailable")); o.value = ""; select.appendChild(o); select.disabled = true; return; }
-      select.disabled = false;
-      inputs.forEach(d => { const o = el("option", d.name || d.id); o.value = d.id; select.appendChild(o); });
-      if (inputs.some(d => d.id === previous)) select.value = previous;
+      const list = (devices && devices.devices) || [];
+      [$("voiceDevice"), $("setDevice")].forEach(sel => {
+        if (!sel) return;
+        const prev = sel.value; sel.replaceChildren();
+        const auto = el("option", LANG === "ar" ? "تلقائي" : "Default"); auto.value = ""; sel.appendChild(auto);
+        list.forEach(d => { const o = el("option", d.name || d.id); o.value = d.id; sel.appendChild(o); });
+        if (list.some(d => d.id === prev)) sel.value = prev;
+      });
     }
     function renderVoiceModels(data) {
-      const box = $("voiceModels"); box.replaceChildren();
+      const box = $("voiceModels"); const note = $("voiceModelsNote");
+      if (!box) return;
+      box.replaceChildren();
       const items = (data && data.models) || [];
-      $("voiceModelsNote").textContent = VOICE && VOICE.available ? "" : t("voiceDisabled");
+      if (note) note.textContent = (data && data.detail) || "";
       if (!items.length) { const d = el("div", t("noVoiceModels")); d.className = "empty"; box.appendChild(d); return; }
       items.forEach(m => {
         const card = el("div"); card.className = "card";
         const head = el("div"); head.className = "row wrap";
-        head.appendChild(el("strong", LANG === "ar" ? (m.display_name_ar || m.display_name) : m.display_name));
-        const kind = el("span", m.kind === "stt" ? t("kindSTT") : t("kindTTS")); kind.className = "pill"; head.appendChild(kind);
-        head.appendChild(pill(m.installed ? t("voiceInstalled") : t("voiceNotInstalled")));
-        if (m.installed) { const s = head.lastChild; s.classList.add("ok"); }
-        if (m.languages && m.languages.length) { const s = el("span", m.languages.join(", ")); s.className = "pill"; head.appendChild(s); }
+        head.appendChild(el("strong", LANG === "ar" ? (m.display_name_ar || m.display_name || m.id) : (m.display_name || m.id)));
+        head.appendChild(pill(m.kind === "stt" ? t("kindSTT") : t("kindTTS")));
+        if (m.installed) head.appendChild(pill(t("voiceInstalled")));
+        if (m.runnable === false) { const p = pill(m.runnable_reason || "insufficient"); p.className = "pill danger"; head.appendChild(p); }
         card.appendChild(head);
-        const desc = el("div", LANG === "ar" ? (m.description_ar || m.description) : m.description);
-        desc.className = "muted"; card.appendChild(desc);
-        const spec = el("div", `${(m.size_mib || 0)} MiB · ${m.license || ""} · ${m.engine || ""}`);
-        spec.className = "muted"; card.appendChild(spec);
         const row = el("div"); row.className = "row wrap";
         if (!m.installed) {
-          const b = el("button", t("installVoice")); b.className = "btn";
-          b.disabled = !(VOICE && VOICE.enabled);
+          const b = el("button", t("installVoice")); b.className = "btn"; b.disabled = m.runnable === false;
           b.onclick = () => installVoiceModel(m.id); row.appendChild(b);
         } else {
           const r = el("button", t("removeVoice")); r.className = "btn danger";
@@ -961,24 +1371,20 @@
       });
     }
     function renderVoiceActions(data) {
-      const box = $("voiceActions"); box.replaceChildren();
+      const box = $("voiceActions"); if (!box) return;
+      box.replaceChildren();
       const items = (data && data.actions) || [];
       $("voiceActionsCount").textContent = (data && data.count != null ? data.count : items.length) + "";
       if (!items.length) { const d = el("div", t("noVoiceActions")); d.className = "empty"; box.appendChild(d); return; }
-      const table = el("table"); const head = el("tr");
-      [t("kind"), t("status"), t("size"), t("created")].forEach(h => head.appendChild(el("th", h)));
-      table.appendChild(head);
+      const ul = el("ul"); ul.className = "timeline";
       items.forEach(a => {
-        const tr = el("tr");
-        tr.appendChild(el("td", a.kind));
-        const st = el("td"); const s = el("span", a.state); s.className = "pill";
-        if (a.state === "ok") s.classList.add("ok"); else if (a.state === "cancelled") s.classList.add("warn"); else if (a.state === "failed") s.classList.add("danger");
-        st.appendChild(s); tr.appendChild(st);
-        tr.appendChild(el("td", (a.size_bytes || 0) + " B"));
-        tr.appendChild(el("td", a.created_at ? new Date(a.created_at).toLocaleTimeString() : "—"));
-        table.appendChild(tr);
+        const li = el("li");
+        li.appendChild(el("div", a.detail || a.action || a.op || "—"));
+        const meta = el("div", (a.op || a.action || "") + " · " + (a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : ""));
+        meta.className = "t"; li.appendChild(meta);
+        ul.appendChild(li);
       });
-      box.appendChild(table);
+      box.appendChild(ul);
     }
     function voiceRunId() {
       const runs = (VOICE && VOICE._runs) || [];
@@ -987,9 +1393,10 @@
     async function refreshVoice() {
       const a = api(); if (!a) return;
       try {
-        const [caps, models] = await Promise.all([a.voice(), a.voice_models()]);
+        const [caps, models, devices] = await Promise.all([a.voice(), a.voice_models(), a.voice_devices()]);
         renderVoice(caps);
         renderVoiceModels(models);
+        renderVoiceDevices(devices);
         try {
           const runs = await a.list_runs();
           VOICE._runs = (runs || []).map(r => r.id);
@@ -1002,6 +1409,7 @@
       const seconds = parseFloat($("voiceSeconds").value) || 5;
       const device = $("voiceDevice").value || "";
       setCharacterState("listening");
+      const hero = $("voiceListenBtn"); if (hero) hero.dataset.active = "true";
       $("voiceHeard").value = "…";
       try {
         const r = await a.voice_transcribe(null, seconds, device, LANG);
@@ -1010,6 +1418,7 @@
         setCharacterState(r && r.text ? "success" : "idle");
         refreshVoice();
       } catch (e) { setCharacterState("error"); toast(String(e)); }
+      finally { if (hero) hero.dataset.active = "false"; }
     }
     async function voiceStop() {
       const a = api(); if (!a) return;
@@ -1017,6 +1426,7 @@
         const r = await a.voice_stop(null);
         if (r && r.cancelled) toast(t("voiceStopped"));
         setCharacterState("idle");
+        const hero = $("voiceListenBtn"); if (hero) hero.dataset.active = "false";
         refreshVoice();
       } catch (e) { toast(String(e)); }
     }
@@ -1069,6 +1479,32 @@
       try { await a.remove_voice_model(id); await refreshVoice(); } catch (e) { toast(String(e)); }
     }
 
+    // ---- settings tabs ----
+    const SETTINGS_TABS = [
+      { id:"appearance", key:"appearance" }, { id:"voice", key:"voice" },
+      { id:"models", key:"models" }, { id:"providers", key:"providers" },
+      { id:"permissions", key:"permissions" }, { id:"workspace", key:"workspace" },
+      { id:"advanced", key:"tools" }, { id:"about", key:"about" }
+    ];
+    let SETTINGS_PANE = "appearance";
+    function buildSettingsTabs() {
+      const box = $("settingsTabs"); if (!box) return;
+      box.replaceChildren();
+      SETTINGS_TABS.forEach(tb => {
+        const b = el("button", t(tb.key)); b.type = "button";
+        b.setAttribute("role", "tab");
+        b.classList.toggle("active", tb.id === SETTINGS_PANE);
+        b.onclick = () => { SETTINGS_PANE = tb.id; buildSettingsTabs(); showSettingsPane(); };
+        box.appendChild(b);
+      });
+      showSettingsPane();
+    }
+    function showSettingsPane() {
+      document.querySelectorAll("#settingsPanes [data-pane]").forEach(p => {
+        p.hidden = p.dataset.pane !== SETTINGS_PANE;
+      });
+    }
+
     // ---- actions ----
     async function refresh() {
       const a = api(); if (!a) return;
@@ -1087,12 +1523,27 @@
         renderModes(boot.modes); renderSettings(boot.settings); renderDiagnostics(boot.diagnostics);
         renderBrowser(boot.browser);
         renderProviders(boot.providers);
-        $("modeBadge").textContent = boot.modes.current;
+        renderVoice(boot.voice);
+        renderVoiceModels(boot.voiceModels);
         // First-run setup: no model configured at all — surface it plainly.
         if (boot.providers && boot.providers.needs_setup) {
           toast(t("setupNeeded") + ": " + t("runSetup"));
         }
-      } catch (e) { toast("تعذّر تحميل الحالة: " + e); }
+      } catch (e) { toast((LANG === "ar" ? "تعذّر تحميل الحالة: " : "Could not load state: ") + e); }
+    }
+    async function refreshActivity() {
+      const a = api(); if (!a) return;
+      try {
+        const [runs, approvals, memory] = await Promise.all([a.list_runs(), a.list_approvals(), a.memory()]);
+        renderRuns(runs); renderApprovals(approvals); renderMemory(memory);
+      } catch (e) { toast(String(e)); }
+    }
+    async function refreshProjects() {
+      const a = api(); if (!a) return;
+      try {
+        const [runs, artifacts, workflows] = await Promise.all([a.list_runs(), a.artifacts(), a.workflows()]);
+        renderRuns(runs); renderArtifacts(artifacts); renderWorkflows(workflows);
+      } catch (e) { toast(String(e)); }
     }
     async function loadTimeline(runId) {
       const a = api(); if (!a) return;
@@ -1104,7 +1555,8 @@
       const specialist = $("specialistSelect").value || "general";
       $("runBtn").disabled = true;
       try { await a.start_run(goal, null, specialist); $("goal").value = ""; await refresh(); }
-      catch (e) { toast("تعذّر بدء المهمة: " + e); } finally { $("runBtn").disabled = false; }
+      catch (e) { toast((LANG === "ar" ? "تعذّر بدء المهمة: " : "Could not start task: ") + e); }
+      finally { $("runBtn").disabled = false; }
     }
     async function stopRun(id) { const a = api(); if (!a) return; try { await a.cancel_run(id); await refresh(); } catch (e) { toast(String(e)); } }
     async function decide(id, approve) {
@@ -1115,7 +1567,7 @@
       const a = api(); if (!a) return;
       const box = $("prog-" + id); box.textContent = "…";
       try { const res = await a.install_model(id); box.textContent = res.install.detail || ""; await refresh(); }
-      catch (e) { toast("تعذّر التثبيت: " + e); }
+      catch (e) { toast((LANG === "ar" ? "تعذّر التثبيت: " : "Install failed: ") + e); }
     }
     async function verifyModel(id) { const a = api(); if (!a) return; try { const r = await a.verify_model(id); toast(r.detail || "verified"); } catch (e) { toast(String(e)); } }
     async function activateModel(id) {
@@ -1137,14 +1589,8 @@
         if (!r || r.opened === false) toast(t("openFailed"));
       } catch (e) { toast(t("openFailed") + ": " + e); }
     }
-    // The artifacts listing is refreshed on demand from the bridge, so it
-    // reflects files written since the page loaded, not just at bootstrap.
-    async function refreshArtifacts() {
-      const a = api(); if (!a) return;
-      try { renderArtifacts(await a.artifacts()); } catch (e) { toast(String(e)); }
-    }
-    // Likewise for printing: opening the panel re-reads the live state and the
-    // tenant's job list, which can change while the page is open.
+    // Printing state and the tenant's job list are re-read when the Advanced pane
+    // is opened, so it reflects jobs queued since the page loaded.
     async function refreshPrinting() {
       const a = api(); if (!a) return;
       try {
@@ -1201,7 +1647,9 @@
         if (runs && runs.length) {
           const entries = await a.run_timeline(runs[0].id);
           const box = $("live"); box.replaceChildren();
-          (entries || []).slice(-12).forEach(e => { const li = el("li"); li.appendChild(el("div", e.message || e.type)); box.appendChild(li); });
+          const recent = (entries || []).slice(-12);
+          if (!recent.length) { const li = el("li", t("noActivity")); li.className = "empty"; box.appendChild(li); }
+          recent.forEach(e => { const li = el("li"); li.appendChild(el("div", e.message || e.type)); box.appendChild(li); });
           renderRuns(runs);
         }
       } catch (e) { /* transient; try again next tick */ }
@@ -1224,12 +1672,20 @@
       $("voiceStopBtn").onclick = voiceStop;
       $("voiceSpeakBtn").onclick = voiceSpeakReply;
       $("voiceRunBtn").onclick = voiceRunHeard;
+      $("micBtn").onclick = () => { setActive("voice"); refreshVoice(); };
+      $("homeVoiceBtn").onclick = () => { setActive("voice"); refreshVoice(); };
+      $("themeBtn").onclick = () => { THEME = THEME === "dark" ? "light" : "dark";
+        localStorage.setItem("aap_theme", THEME); applyTheme(); };
+      $("setTheme").onchange = (e) => { THEME = e.target.value; localStorage.setItem("aap_theme", THEME); applyTheme(); };
+      $("setLang").onchange = (e) => { LANG = e.target.value; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };
+      $("refreshProjects").onclick = refreshProjects;
+      $("projectFilter").oninput = () => api() && api().list_runs().then(renderRuns).catch(() => {});
       $("langBtn").onclick = () => { LANG = LANG === "ar" ? "en" : "ar"; localStorage.setItem("aap_lang", LANG); applyI18n(); refresh(); };
       $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun(); });
     }
 
     async function boot() {
-      applyI18n(); wire();
+      applyTheme(); applyI18n(); wire();
       if (api()) { await refresh(); }
       else { window.addEventListener("pywebviewready", async () => { await refresh(); }); }
       setInterval(pollLive, 2000);

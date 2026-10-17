@@ -20,17 +20,24 @@ or tooling) never requires model credentials.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 from .. import __version__
+from ..artifacts import list_artifacts, media_type_for, resolve_artifact, run_workspace
+from ..audit.base import AuditEventType
 from ..container import Platform
 from ..core.config import Settings
-from ..core.enums import RunStatus, TriggerKind
+from ..core.enums import OperatingMode, RunStatus, TriggerKind
 from ..core.errors import (
     ApprovalRequiredError,
     ConfigurationError,
@@ -53,12 +60,17 @@ from .auth import ApiKeyAuth, build_principal_dependency
 from .schemas import (
     ApprovalDecision,
     ApprovalSummary,
+    ArtifactCollectionResponse,
+    ArtifactSummary,
     AuditSummary,
     DomainEventRequest,
     HealthResponse,
     MemorySummary,
+    ModelStatusResponse,
+    ProviderStatus,
     ReadinessProbeResponse,
     ReadinessResponse,
+    RunArtifactsResponse,
     RunRequest,
     RunResponse,
     RunSummary,
@@ -71,6 +83,7 @@ from .schemas import (
     TriggerRequest,
     TriggerSummary,
     TriggerUpdateRequest,
+    VoiceStatusResponse,
     WorkflowRequest,
     WorkflowRunRequest,
     WorkflowRunResponse,
@@ -248,6 +261,57 @@ def _to_workflow_steps(steps: list[WorkflowStepRequest]) -> list[WorkflowStep]:
     return converted
 
 
+def _lifespan(platform: Platform) -> Any:
+    """Load the configured local model once at server start, then release it.
+
+    A server entry point must do this itself: the local model backend loads its
+    weights lazily on first inference, so without a startup load ``/models``
+    would report the configured model as unavailable until the first request —
+    and a first request would then pay the multi-second load inside a run's
+    deadline. The load is non-fatal (``Platform.initialize`` marks the provider
+    unavailable instead of raising), so a bad model path degrades to an honest
+    "not loaded" status rather than a crash loop.
+    """
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        await platform.initialize()
+        try:
+            yield
+        finally:
+            await platform.aclose()
+
+    return lifespan
+
+
+async def _provider_usability(provider: object) -> tuple[bool, str]:
+    """Whether a provider can actually serve a request, and why not.
+
+    A remote provider is usable when it carries a credential; a local provider
+    is usable when its engine reports healthy. This is a gate, not a benchmark:
+    it never makes a network call beyond the provider's own cheap probe, and it
+    never raises — an unreachable dependency is reported, not propagated.
+    """
+    from ..local.model import LocalModelProvider
+    from ..models.providers.setup_required import SetupRequiredProvider
+
+    if isinstance(provider, SetupRequiredProvider):
+        return False, "no model is configured yet"
+    if isinstance(provider, LocalModelProvider):
+        probe = getattr(provider, "probe", None)
+        if probe is None:
+            return False, "local engine does not report readiness"
+        try:
+            usable = bool(await probe())
+        except Exception:  # a status probe must never fail the request
+            return False, "local engine probe failed"
+        return (usable, "" if usable else "local engine is not loaded")
+    api_key = getattr(provider, "_api_key", None)
+    if api_key is None:
+        return True, ""
+    return (bool(api_key), "" if api_key else "no API key configured")
+
+
 def create_app(
     platform: Platform,
     *,
@@ -264,9 +328,10 @@ def create_app(
     trigger_service = platform.trigger_service
 
     app = FastAPI(
-        title="Arabic AI Agent Platform",
+        title="Super AI Agent Platform",
         version="0.2.0",
         description="Arabic-first Agent Operating Platform API.",
+        lifespan=_lifespan(platform),
     )
 
     if settings.cors_origins:
@@ -594,6 +659,124 @@ def create_app(
             reason=payload.reason,
         )
         return _run_response(record)
+
+    # --- Model status ---------------------------------------------------
+    @app.get("/models", response_model=ModelStatusResponse)
+    async def model_status(principal: Principal = Depends(principal_dep)) -> ModelStatusResponse:
+        """The live model routing state, reported from the running platform.
+
+        ``usable`` per provider is a real gate: a remote provider without a key
+        or a local provider whose engine is not loaded reports ``False`` with a
+        reason, so the Command Center can say "not configured" rather than
+        offering a model that would fail on the first request. The probe is
+        cheap and never raises.
+        """
+        gateway = platform.gateway
+        providers: list[ProviderStatus] = []
+        for provider in gateway.registry.all():
+            usable, detail = await _provider_usability(provider)
+            providers.append(
+                ProviderStatus(
+                    name=provider.name,
+                    is_local=bool(getattr(provider, "is_local", False)),
+                    usable=usable,
+                    detail=detail,
+                    capabilities=sorted(c.value for c in provider.capabilities),
+                    context_window=getattr(provider, "context_window", None),
+                )
+            )
+        return ModelStatusResponse(
+            default_model=gateway.default_model,
+            fallbacks=list(gateway.fallbacks),
+            local_only=platform.settings.local_mode is OperatingMode.OFFLINE,
+            providers=providers,
+        )
+
+    @app.get("/voice/status", response_model=VoiceStatusResponse)
+    async def voice_status(principal: Principal = Depends(principal_dep)) -> VoiceStatusResponse:
+        """Whether the speech surface exists on this build.
+
+        Speech is local-only and opt-in; on a cloud build the tools are not
+        registered at all, so this reports the truth instead of offering a
+        control that cannot work.
+        """
+        available = platform.tools.has("speech_to_text") and platform.tools.has("text_to_speech")
+        if available:
+            return VoiceStatusResponse(enabled=True, reason="")
+        return VoiceStatusResponse(
+            enabled=False,
+            reason=(
+                "speech is local-only and opt-in (AAP_RUNTIME_KIND=local, AAP_SPEECH_ENABLED=true)"
+            ),
+        )
+
+    # --- Generated artifacts --------------------------------------------
+    @app.get("/runs/{run_id}/artifacts", response_model=RunArtifactsResponse)
+    async def run_artifacts(
+        run_id: str, principal: Principal = Depends(principal_dep)
+    ) -> RunArtifactsResponse:
+        """Real files a run wrote into its sandboxed workspace, newest first."""
+        record = await service.get(run_id, tenant_id=principal.tenant_id)
+        root = run_workspace(record.workspace_dir)
+        if root is None or not root.is_dir():
+            return RunArtifactsResponse(run_id=run_id, artifacts=[], count=0)
+        items = list_artifacts(root, run_id=run_id)
+        return RunArtifactsResponse(
+            run_id=run_id,
+            artifacts=[ArtifactSummary(**item) for item in items],
+            count=len(items),
+        )
+
+    @app.get("/artifacts", response_model=ArtifactCollectionResponse)
+    async def list_all_artifacts(
+        principal: Principal = Depends(principal_dep),
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> ArtifactCollectionResponse:
+        """Generated documents across the tenant's most recent runs."""
+        records = await service.list(tenant_id=principal.tenant_id, limit=limit)
+        collected: list[ArtifactSummary] = []
+        for record in records:
+            root = run_workspace(record.workspace_dir)
+            if root is None or not root.is_dir():
+                continue
+            collected.extend(
+                ArtifactSummary(**item) for item in list_artifacts(root, run_id=record.id)
+            )
+        collected.sort(key=lambda a: a.modified_at, reverse=True)
+        return ArtifactCollectionResponse(artifacts=collected, count=len(collected))
+
+    @app.get("/runs/{run_id}/artifacts/download")
+    async def download_artifact(
+        run_id: str,
+        path: str = Query(min_length=1, max_length=1000),
+        principal: Principal = Depends(principal_dep),
+    ) -> Response:
+        """Download one generated artifact.
+
+        The path is resolved through the run's filesystem sandbox, so only a
+        real file inside that run's workspace can be read — a ``..`` escape or
+        an absolute path is refused. HTML/JSON are served as attachments with a
+        non-rendering content type so a generated page cannot execute script in
+        the API origin.
+        """
+        record = await service.get(run_id, tenant_id=principal.tenant_id)
+        resolved = resolve_artifact(record.workspace_dir, path)
+        await platform.audit.record(
+            AuditEventType.ARTIFACT_DOWNLOADED,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            run_id=run_id,
+            message="generated artifact downloaded",
+            data={"path": path, "bytes": resolved.stat().st_size},
+        )
+        media_type = media_type_for(resolved)
+        filename = resolved.name.replace('"', "")
+        return FileResponse(
+            resolved,
+            media_type=media_type,
+            filename=filename,
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
     # --- Memory ---------------------------------------------------------
     @app.get("/memory", response_model=list[MemorySummary])

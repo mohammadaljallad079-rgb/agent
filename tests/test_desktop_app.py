@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from arabic_agent.branding import PRODUCT_ID
 from arabic_agent.browser.provisioning import BrowserProvisioner
 from arabic_agent.core.config import Settings
 from arabic_agent.core.enums import OperatingMode, RuntimeKind
@@ -220,7 +221,7 @@ def test_settings_view_has_no_secrets(tmp_path):
 def test_diagnostics_export_is_redacted(tmp_path):
     client = TestClient(_app(tmp_path))
     exported = client.get("/desktop/diagnostics/export", headers=HEADERS).json()
-    assert exported["product"] == "Arabic AI Agent Platform"
+    assert exported["product"] == PRODUCT_ID
     assert "control-secret" not in str(exported)
     assert exported["export_kind"] == "diagnostics"
 

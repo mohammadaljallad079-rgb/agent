@@ -212,6 +212,44 @@ and secrets are reported by kind + locator only, never by value.
       incrementally.
 - [x] File move/delete tools (`MOVE_FILE`, `DELETE_FILE`), approval-gated.
 
+## Phase 12 — Super AI Agent branding & premium command-center UI (done)
+
+The product is renamed for the public to **Super AI Agent**, under the
+**SUPER AI** brand, and the desktop page is rebuilt as an Arabic-first premium
+command center. The rename is *presentation only*: the on-disk identity (data
+directory, uninstall key, single-instance mutex, Python distribution name) is
+deliberately unchanged so an upgrade keeps a user's runs, memory and documents.
+A test pins that, because changing storage identity would be a data migration.
+
+- [x] Single source of truth for the public identity
+      (`arabic_agent/branding.py`): `PRODUCT` / `BRAND` / `PRODUCT_ID` /
+      `WINDOW_TITLE` and locale helpers (`product_name`, `brand_name`). The
+      window title, the installer manifest, the service's product field and the
+      About panel all read from it, so they cannot drift apart.
+- [x] Desktop page rebuilt (`desktop/ui/index.html`): six destinations (home,
+      agents, projects, activity, voice, settings) instead of a long tab list;
+      operational surfaces (browser, tools, connectors, computer, printing)
+      grouped under Settings → Advanced; home is a command bar with a real
+      readiness strip and a live activity feed polled from the bridge.
+- [x] Assistant presence: the character renders in every voice state and its
+      mouth is animated from the shipped viseme map (`character.visemes`), so the
+      presenter shares the character's own data — no second animation engine and
+      no random flap.
+- [x] Arabic voice surface: listen/stop/speak/run-heard, device picker,
+      speech-model install/remove and an action log, all wired to real bridge
+      methods. The spoken reply is the run's stored result, never a predicted
+      string.
+- [x] Design tokens in one block with a light-theme override; logical properties
+      keep one stylesheet correct for RTL and LTR; 360→1920 responsive. The
+      isolation CSP is unchanged (`default-src 'none'`, `connect-src 'none'`).
+- [x] Self-check now fails a stale or unbranded packaged UI, so a build that
+      shipped an older page cannot pass by the directory merely existing.
+- [x] Tests: `tests/test_branding.py` (brand constants, Arabic-first identity,
+      on-disk identity preserved, assistant presence, voice wiring, honest
+      readiness, no network origin); desktop tests updated for the rename.
+- [ ] Real Windows user acceptance of the rebranded installer (Phase 10W): the
+      published `v0.1.0-rc.1`/`rc.2` artifacts predate this work.
+
 ## Phase 4 — Integrations
 
 - [ ] ERP connector (generic adapter + at least one concrete ERP).
@@ -717,10 +755,16 @@ sentinel for "the whole registry".
 
 ## Phase 7 — Product surface
 
-- [ ] Cloud/multi-tenant web UI with full RTL/LTR support, locale switching,
-      plan/timeline view, approval inbox, and tool-run visibility. Must be backed
-      by the real API. (The desktop UI inside the pywebview shell exists — see
-      Phase 10 — but a browser-served SaaS frontend does not.)
+- [x] Browser-served Arabic RTL **Command Center** over the real API
+      (`web/`, `agent-web` entry point): health, runs, approval inbox,
+      artifacts (list + download), model status, specialists and tool catalog.
+      Served with a same-origin policy (`default-src 'none'`, `connect-src
+      'self'`); every panel names a real route (`tests/test_web_ui.py`), and
+      artifact download refuses path escapes/absolute paths (403) and emits
+      `ARTIFACT_DOWNLOADED`.
+- [ ] Multi-tenant SaaS frontend: login/session, tenant switching, billing.
+      (The Command Center above is the single-tenant surface over the same
+      authenticated API.)
 - [ ] Admin console: tenants, users, roles, policies, integrations, audit search.
 - [ ] Billing/quotas for SaaS.
 
@@ -767,9 +811,13 @@ sentinel for "the whole registry".
   templating, approvals, retries), its HTTP API, the trigger/scheduler layer
   (cron, event, webhook, manual) and workflow-run worker recovery are
   implemented and tested.
-- A cloud/multi-tenant web UI does not exist yet; the HTTP API is the only
-  cloud interface. The Arabic-first RTL UI inside the desktop pywebview shell
-  is implemented (Phase 10) but is not a browser-served SaaS frontend.
+- A browser-served Arabic RTL Command Center (`web/`, `agent-web`) now drives
+  the real API: health, runs, approvals, artifacts (list + download), models,
+  specialists and tools. It is a static shell served with a same-origin policy
+  (`default-src 'none'`, `connect-src 'self'`), so it adds no new security
+  surface — it authenticates with the same API key. A multi-tenant SaaS frontend
+  (login, tenant switching, billing) and an admin console do not exist yet; the
+  HTTP API plus the Command Center are the cloud interfaces.
 - There is one known third-party deprecation warning from `starlette.testclient`
   with `httpx`; it does not affect runtime behavior.
 - Phase 5C closeout: the full suite is green (352 passed, 0 skipped) against

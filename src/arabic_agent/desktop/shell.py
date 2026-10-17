@@ -26,6 +26,7 @@ from typing import Any
 
 import httpx
 
+from ..branding import WINDOW_TITLE
 from ..core.resources import PACKAGE_DIR
 from ..specialists.base import GENERAL
 from .runtime_manager import DesktopRuntimeManager, RuntimeStartError
@@ -356,7 +357,7 @@ def _single_instance_guard() -> Any | None:
 def launch_shell(
     *,
     manager: DesktopRuntimeManager | None = None,
-    title: str = "Arabic AI Agent",
+    title: str = WINDOW_TITLE,
 ) -> int:
     """Start the runtime, open the native window, and block until it closes.
 
