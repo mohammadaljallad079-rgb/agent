@@ -755,10 +755,16 @@ sentinel for "the whole registry".
 
 ## Phase 7 — Product surface
 
-- [ ] Cloud/multi-tenant web UI with full RTL/LTR support, locale switching,
-      plan/timeline view, approval inbox, and tool-run visibility. Must be backed
-      by the real API. (The desktop UI inside the pywebview shell exists — see
-      Phase 10 — but a browser-served SaaS frontend does not.)
+- [x] Browser-served Arabic RTL **Command Center** over the real API
+      (`web/`, `agent-web` entry point): health, runs, approval inbox,
+      artifacts (list + download), model status, specialists and tool catalog.
+      Served with a same-origin policy (`default-src 'none'`, `connect-src
+      'self'`); every panel names a real route (`tests/test_web_ui.py`), and
+      artifact download refuses path escapes/absolute paths (403) and emits
+      `ARTIFACT_DOWNLOADED`.
+- [ ] Multi-tenant SaaS frontend: login/session, tenant switching, billing.
+      (The Command Center above is the single-tenant surface over the same
+      authenticated API.)
 - [ ] Admin console: tenants, users, roles, policies, integrations, audit search.
 - [ ] Billing/quotas for SaaS.
 
@@ -805,9 +811,13 @@ sentinel for "the whole registry".
   templating, approvals, retries), its HTTP API, the trigger/scheduler layer
   (cron, event, webhook, manual) and workflow-run worker recovery are
   implemented and tested.
-- A cloud/multi-tenant web UI does not exist yet; the HTTP API is the only
-  cloud interface. The Arabic-first RTL UI inside the desktop pywebview shell
-  is implemented (Phase 10) but is not a browser-served SaaS frontend.
+- A browser-served Arabic RTL Command Center (`web/`, `agent-web`) now drives
+  the real API: health, runs, approvals, artifacts (list + download), models,
+  specialists and tools. It is a static shell served with a same-origin policy
+  (`default-src 'none'`, `connect-src 'self'`), so it adds no new security
+  surface — it authenticates with the same API key. A multi-tenant SaaS frontend
+  (login, tenant switching, billing) and an admin console do not exist yet; the
+  HTTP API plus the Command Center are the cloud interfaces.
 - There is one known third-party deprecation warning from `starlette.testclient`
   with `httpx`; it does not affect runtime behavior.
 - Phase 5C closeout: the full suite is green (352 passed, 0 skipped) against

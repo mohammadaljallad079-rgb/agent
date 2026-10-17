@@ -1559,7 +1559,46 @@ Arabic is a design input, not a later translation.
 - API schemas and error messages are locale-aware; `Accept-Language` selects the
   locale for a request.
 
-The UI layer (future) must render RTL/LTR from the same locale signal.
+The UI layer renders RTL/LTR from the same locale signal: the desktop shell
+(§13e-bis) and the browser-served Command Center (§17a) both lay out RTL.
+
+---
+
+## 17a. The browser-served Command Center (Phase 12 online surface)
+
+`web/` serves a single Arabic-first RTL page over the *real* HTTP API. It is a
+static shell, not a second backend:
+
+- `agent-web` (`arabic_agent.web.app:main`) starts uvicorn around the same
+  `create_app(platform, ...)` the `agent-platform` entry point uses, so the page
+  and the API are one process and one auth boundary.
+- The page calls only routes that exist — `/health`, `/runs`, `/approvals`,
+  `/artifacts`, `/runs/{id}/artifacts/download`, `/models`, `/specialists`,
+  `/tools`. `tests/test_web_ui.py` asserts each panel references a real route
+  and that no `TODO`/`data-todo` placeholder control is present, so the UI
+  cannot silently drift into fake buttons.
+- It is served with a same-origin policy (`default-src 'none'`, `connect-src
+  'self'`); the page is inline-styled and fetches nothing external. It
+  authenticates with the same API key as any other client, so it widens no trust
+  boundary.
+- Artifacts: `GET /runs/{id}/artifacts` lists one run's outputs,
+  `GET /artifacts` lists the tenant's, and
+  `GET /runs/{id}/artifacts/download?path=...` streams one file through
+  `artifacts.resolve_artifact`, which resolves inside the run workspace and
+  refuses path escapes and absolute paths (`403`). A successful download emits
+  `ARTIFACT_DOWNLOADED`; the bytes are streamed, never stored in an audit event.
+- Model status is honest: `GET /models` reports each provider's real usability
+  via `_provider_usability` — a remote provider is usable when it carries a
+  credential, a local one when its engine reports healthy. This is a gate, not a
+  benchmark.
+- Startup: `create_app` runs a lifespan that calls `platform.initialize()` once
+  (loading the configured local model) and `platform.aclose()` on shutdown. The
+  local backend loads weights lazily, so without this the first `/models` read
+  reported the model as unavailable and the first run paid the load inside its
+  deadline.
+
+A multi-tenant SaaS frontend (login, tenant switching, billing) and an admin
+console are not implemented; see `TODO.md`.
 
 ---
 

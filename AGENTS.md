@@ -492,10 +492,35 @@ checks must be green. If you add behavior, add a test for it in `tests/`.
   model catalogue ship in the frozen payload. Acceptance procedure and the
   remaining interactive (real microphone/speaker) gates:
   `docs/VOICE_ACCEPTANCE.md`.
+- Browser-served Command Center (Phase 12 online surface): `web/` serves an
+  Arabic-first RTL page (`agent-web` entry point, `arabic_agent.web.app:main`)
+  that drives the *real* HTTP API — health, runs, approvals, artifacts, models,
+  specialists and tools — with no placeholder controls. Every panel names a
+  route that exists; `tests/test_web_ui.py` fails if a panel points at nothing
+  or if a `TODO`/`data-todo` control appears. The page is served with a
+  same-origin policy (`default-src 'none'`, `connect-src 'self'`), so it is a
+  static shell over the same authenticated API rather than a second security
+  surface. Artifacts are listable per-run and per-tenant
+  (`GET /runs/{id}/artifacts`, `GET /artifacts`) and downloadable
+  (`GET /runs/{id}/artifacts/download`) through
+  `artifacts.resolve_artifact`, which refuses path escapes and absolute paths
+  (403) and records an `ARTIFACT_DOWNLOADED` audit event. `GET /models` reports
+  each provider's real usability (`_provider_usability`: a remote provider needs
+  a credential, a local one needs a healthy engine) — an honest gate, not a
+  benchmark. `create_app()` now runs a lifespan that calls `platform.initialize()`
+  once at startup and `platform.aclose()` on shutdown: the local model backend
+  loads its weights lazily, so without the startup load `/models` reported the
+  configured model as unavailable until the first request, and that first
+  request paid the multi-second load inside a run's deadline. The UI assets live
+  under `src/arabic_agent/web/ui`, inside the packaged package tree, so they ship
+  with the wheel without a `force-include` (a duplicate entry there makes
+  hatchling refuse the build — verified by building and installing the wheel).
 - Not yet implemented (see `TODO.md`): a packaged/signed binary distribution,
-  image/video tools, social connectors, and a cloud web UI (the Arabic-first
-  desktop UI exists inside the pywebview shell and now includes a printing
-  panel; a browser-served multi-tenant frontend does not). Document *generation*
+  image/video tools, social connectors, and a multi-tenant SaaS frontend with
+  login/tenant switching (the Arabic-first desktop UI exists inside the
+  pywebview shell and now includes a printing panel, and a browser-served
+  Command Center over the real API exists; a multi-tenant login/billing
+  frontend does not). Document *generation*
   is implemented for PDF/DOCX/PPTX/XLSX/CSV/Markdown/HTML/JSON (see
   `documents/generation.py` and the `generate_document` / `create_spreadsheet` /
   `create_presentation` tools). Printing (Phase 11) and calendar (Phase 9)

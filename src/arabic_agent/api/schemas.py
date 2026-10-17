@@ -396,3 +396,77 @@ class SpecialistSummary(BaseModel):
     #: ``available`` | ``degraded`` | ``unavailable`` against the running tools.
     status: str = "available"
     missing_tools: list[str] = Field(default_factory=list)
+
+
+class ArtifactSummary(BaseModel):
+    """One real file a run generated into its sandboxed workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    name: str
+    path: str
+    format: str
+    bytes: int
+    modified_at: float
+    #: Whether the desktop surface can hand it to the OS default application.
+    openable: bool = False
+
+
+class RunArtifactsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    artifacts: list[ArtifactSummary]
+    count: int
+
+
+class ArtifactCollectionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifacts: list[ArtifactSummary]
+    count: int
+
+
+class ProviderStatus(BaseModel):
+    """One registered model provider and whether it can actually serve calls.
+
+    ``usable`` is an honest gate, not a benchmark: it is ``False`` for a
+    provider whose configuration is missing (no API key, no model file), so the
+    Command Center can say "not configured" instead of showing a model that
+    would fail at the first request.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    is_local: bool
+    usable: bool
+    detail: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    context_window: int | None = None
+
+
+class ModelStatusResponse(BaseModel):
+    """The live model routing state, reported from the running platform."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_model: str
+    fallbacks: list[str] = Field(default_factory=list)
+    local_only: bool = False
+    providers: list[ProviderStatus] = Field(default_factory=list)
+
+
+class VoiceStatusResponse(BaseModel):
+    """Whether the speech surface is available on this build.
+
+    Speech tools are local-only and opt-in. On a cloud build they do not exist,
+    so the browser UI hides the voice panel rather than offering a control that
+    cannot work.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    reason: str = ""

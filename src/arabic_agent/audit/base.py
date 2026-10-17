@@ -93,6 +93,7 @@ class AuditEventType(StrEnum):
     DOCUMENT_GENERATED = "document.generated"
     PROJECT_INSPECTED = "project.inspected"
     ARTIFACT_OPENED = "artifact.opened"
+    ARTIFACT_DOWNLOADED = "artifact.downloaded"
     SECRET_DETECTED = "security.secret_detected"  # noqa: S105 - event name, not a credential
     # Local / desktop runtime
     LOCAL_RUNTIME_STARTED = "local.runtime.started"
